@@ -1,0 +1,25 @@
+{
+  "name": "pala-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pala Platform - Document Processing and AI Enrichment",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/palasangha/pala-platform.git"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "clean": "turbo run clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "turbo": "^1.11.0"
+  },
+  "packageManager": "pnpm@8.0.0",
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  }
+}
