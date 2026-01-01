@@ -1,0 +1,103 @@
+name: Bug Report
+description: Use when something is broken
+title: "[Bug]: "
+labels: ["type: bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug! Please provide as much detail as possible.
+        
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What Happened
+      description: Describe the bug
+      placeholder: OCR engine returns empty string for rotated scanned documents
+    validations:
+      required: true
+      
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected Behavior
+      description: What should happen instead?
+      placeholder: Should detect rotation and auto-correct before processing
+    validations:
+      required: true
+      
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: How can we recreate this issue?
+      placeholder: |
+        1. Upload rotated scan
+        2. Run OCR processor
+        3. Get empty result
+    validations:
+      required: true
+      
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, browser, version, or any relevant environment details
+      placeholder: |
+        - OS: Ubuntu 22.04
+        - Browser: Chrome 120
+        - Node version: 20.x
+    validations:
+      required: false
+      
+  - type: textarea
+    id: root-cause
+    attributes:
+      label: Root Cause (if known)
+      description: What's causing this issue?
+      placeholder: Tesseract doesn't auto-rotate by default
+    validations:
+      required: false
+      
+  - type: textarea
+    id: proposed-fix
+    attributes:
+      label: Proposed Fix
+      description: Ideas for how to fix this
+      placeholder: |
+        - Add orientation detection
+        - Rotate image before OCR
+        - Add tests with rotated samples
+    validations:
+      required: false
+      
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which component is affected?
+      options:
+        - processors
+        - mcp-server
+        - agents
+        - storage
+        - enrichment
+        - web
+        - mobile
+        - infrastructure
+        - docs
+    validations:
+      required: true
+      
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How urgent is this?
+      options:
+        - low (someday)
+        - medium (this month)
+        - high (this week)
+        - urgent (drop everything)
+    validations:
+      required: true

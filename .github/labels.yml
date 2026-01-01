@@ -1,0 +1,92 @@
+# Label Configuration for Pala Platform
+# This file documents the labels used in the repository
+# Labels must be created through GitHub UI or API
+
+# Component Labels (Where)
+- name: "component: processors"
+  color: "0075ca"
+  description: "OCR, PalaScribe processors"
+
+- name: "component: mcp-server"
+  color: "0075ca"
+  description: "MCP orchestrator"
+
+- name: "component: agents"
+  color: "0075ca"
+  description: "All AI agents"
+
+- name: "component: storage"
+  color: "0075ca"
+  description: "Storage layer"
+
+- name: "component: enrichment"
+  color: "0075ca"
+  description: "Metadata, signing"
+
+- name: "component: web"
+  color: "0075ca"
+  description: "Web portal"
+
+- name: "component: mobile"
+  color: "0075ca"
+  description: "Mobile apps"
+
+- name: "component: infrastructure"
+  color: "0075ca"
+  description: "DevOps, CI/CD"
+
+- name: "component: docs"
+  color: "0075ca"
+  description: "Documentation"
+
+# Type Labels (What)
+- name: "type: feature"
+  color: "a2eeef"
+  description: "New capability"
+
+- name: "type: task"
+  color: "a2eeef"
+  description: "Work item (technical, non-user-facing)"
+
+- name: "type: bug"
+  color: "d73a4a"
+  description: "Something broken"
+
+- name: "type: docs"
+  color: "a2eeef"
+  description: "Documentation work"
+
+# Size Labels (How Big)
+- name: "size: small"
+  color: "c2e0c6"
+  description: "Few hours"
+
+- name: "size: medium"
+  color: "fef2c0"
+  description: "1-3 days"
+
+- name: "size: large"
+  color: "f9d0c4"
+  description: "1+ week, needs breakdown"
+
+# Priority Labels (When)
+- name: "priority: urgent"
+  color: "b60205"
+  description: "Drop everything"
+
+- name: "priority: high"
+  color: "d93f0b"
+  description: "This week"
+
+- name: "priority: medium"
+  color: "fbca04"
+  description: "This month"
+
+- name: "priority: low"
+  color: "0e8a16"
+  description: "Someday"
+
+# Status Labels (Optional)
+- name: "status: blocked"
+  color: "d4c5f9"
+  description: "Blocked by external dependency"
