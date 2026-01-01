@@ -1,0 +1,88 @@
+name: Task
+description: Use for technical work that isn't user-facing
+title: "[Task]: "
+labels: ["type: task"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for creating a task! Use this for technical work that isn't directly user-facing.
+        
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What needs to be done and why?
+      placeholder: Initialize monorepo with Turborepo for build optimization
+    validations:
+      required: true
+      
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Specific steps or implementation details
+      placeholder: |
+        - Install Turborepo as dev dependency
+        - Create turbo.json with pipeline config
+        - Configure caching strategy
+        - Update root package.json scripts
+        - Document in README
+    validations:
+      required: true
+      
+  - type: textarea
+    id: definition-of-done
+    attributes:
+      label: Definition of Done
+      description: Checkboxes for completion criteria
+      placeholder: |
+        - [ ] Configuration files created
+        - [ ] Tests passing
+        - [ ] Documentation updated
+        - [ ] Code reviewed
+    validations:
+      required: true
+      
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which component does this affect?
+      options:
+        - processors
+        - mcp-server
+        - agents
+        - storage
+        - enrichment
+        - web
+        - mobile
+        - infrastructure
+        - docs
+    validations:
+      required: true
+      
+  - type: dropdown
+    id: size
+    attributes:
+      label: Size Estimate
+      description: How big is this task?
+      options:
+        - small (few hours)
+        - medium (1-3 days)
+        - large (1+ week, needs breakdown)
+    validations:
+      required: true
+      
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: When should this be done?
+      options:
+        - low (someday)
+        - medium (this month)
+        - high (this week)
+        - urgent (drop everything)
+    validations:
+      required: true

@@ -1,0 +1,116 @@
+name: Feature Request
+description: Use for new capabilities or enhancements
+title: "[Feature]: "
+labels: ["type: feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to suggest a new feature!
+        
+  - type: textarea
+    id: what-and-why
+    attributes:
+      label: What & Why
+      description: What is this feature and why do we need it?
+      placeholder: |
+        **What:** Automatically detect the language of extracted text
+        **Why:** Users need to filter content by language
+    validations:
+      required: true
+      
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What's in scope and what's out of scope?
+      placeholder: |
+        **In Scope:**
+        - Feature A
+        - Feature B
+        
+        **Out of Scope:**
+        - Feature C (future)
+        - Feature D (future)
+    validations:
+      required: true
+      
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      description: How do we know it's done? (Use checkboxes)
+      placeholder: |
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+        - [ ] Tests with 80%+ coverage
+        - [ ] Documentation updated
+    validations:
+      required: true
+      
+  - type: textarea
+    id: technical-notes
+    attributes:
+      label: Technical Notes
+      description: Architecture decisions, dependencies, implementation details
+      placeholder: |
+        - Use specific library or approach
+        - Dependencies or prerequisites
+        - File locations or module structure
+    validations:
+      required: false
+      
+  - type: textarea
+    id: breakdown
+    attributes:
+      label: Breakdown (for large features)
+      description: For size:large features, list sub-tasks or related issues
+      placeholder: |
+        - [ ] #123 Sub-task 1
+        - [ ] #124 Sub-task 2
+        - [ ] #125 Sub-task 3
+    validations:
+      required: false
+      
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which component does this affect?
+      options:
+        - processors
+        - mcp-server
+        - agents
+        - storage
+        - enrichment
+        - web
+        - mobile
+        - infrastructure
+        - docs
+    validations:
+      required: true
+      
+  - type: dropdown
+    id: size
+    attributes:
+      label: Size Estimate
+      description: How big is this feature?
+      options:
+        - small (few hours)
+        - medium (1-3 days)
+        - large (1+ week, needs breakdown)
+    validations:
+      required: true
+      
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: When should this be done?
+      options:
+        - low (someday)
+        - medium (this month)
+        - high (this week)
+        - urgent (drop everything)
+    validations:
+      required: true
