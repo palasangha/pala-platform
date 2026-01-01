@@ -32,7 +32,8 @@ Pala is a comprehensive digital preservation platform designed for the Vipassana
 
 ## **High-Level Architecture**
 
-[Pala Architecture](docs/Pala Architecture.png)
+<img width="2052" height="1128" alt="Pala Architecture" src="https://github.com/user-attachments/assets/e4821231-6534-4e0c-89d9-45366ff8601d" />
+
 
 ---
 
