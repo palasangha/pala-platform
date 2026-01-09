@@ -1,0 +1,129 @@
+=======================================
+GVPOCR Docker Registry - Setup Info
+=======================================
+
+Registry Domain: registry.palatools.me
+Registry URL: https://registry.palatools.me:5005
+Web UI: http://172.12.0.132:8090
+
+Authentication:
+  Username: admin
+  Password: gvpocr2024
+
+SSL Certificate Location:
+  /mnt/sda1/mango1_home/registry/certs/domain.crt
+  /mnt/sda1/mango1_home/registry/certs/domain.key
+
+Registry Data:
+  /mnt/sda1/mango1_home/registry/data
+
+Registry Server IP:
+  172.12.0.132
+
+=======================================
+Usage Instructions
+=======================================
+
+1. LOGIN TO REGISTRY:
+   docker login registry.palatools.me:5005
+   (Enter username: admin, password: gvpocr2024)
+
+2. TAG AND PUSH IMAGES:
+   docker tag gvpocr-ocr-worker registry.palatools.me:5005/gvpocr/ocr-worker:latest
+   docker push registry.palatools.me:5005/gvpocr/ocr-worker:latest
+
+3. PULL IMAGES:
+   docker pull registry.palatools.me:5005/gvpocr/ocr-worker:latest
+
+4. CONFIGURE CLIENT MACHINES:
+   See: setup_worker_for_registry.sh
+
+=======================================
+Configure Worker Machines (Linux)
+=======================================
+
+# Step 1: Add DNS entry
+echo "172.12.0.132    registry.palatools.me" | sudo tee -a /etc/hosts
+
+# Step 2: Copy and install certificate
+sudo mkdir -p /etc/docker/certs.d/registry.palatools.me:5005
+sudo scp mango1@172.12.0.132:/mnt/sda1/mango1_home/registry/certs/domain.crt \
+    /etc/docker/certs.d/registry.palatools.me:5005/ca.crt
+
+# Step 3: Restart Docker
+sudo systemctl restart docker
+
+# Step 4: Login
+docker login registry.palatools.me:5005
+
+# Step 5: Pull worker image
+docker pull registry.palatools.me:5005/gvpocr/ocr-worker:latest
+
+=======================================
+Configure Worker Machines (macOS)
+=======================================
+
+# Step 1: Add DNS entry
+echo "172.12.0.132    registry.palatools.me" | sudo tee -a /etc/hosts
+
+# Step 2: Copy certificate
+scp mango1@172.12.0.132:/mnt/sda1/mango1_home/registry/certs/domain.crt ~/
+
+# Step 3: Install certificate
+sudo security add-trusted-cert -d -r trustRoot \
+    -k /Library/Keychains/System.keychain ~/domain.crt
+
+# Step 4: Restart Docker Desktop
+
+# Step 5: Login
+docker login registry.palatools.me:5005
+
+=======================================
+Management Commands
+=======================================
+
+cd /mnt/sda1/mango1_home/registry
+
+# Start registry
+docker-compose up -d
+
+# Stop registry
+docker-compose down
+
+# View logs
+docker logs -f docker-registry
+
+# Restart
+docker-compose restart
+
+# List images in registry
+curl -k -u admin:gvpocr2024 https://registry.palatools.me:5005/v2/_catalog
+
+# List tags for an image
+curl -k -u admin:gvpocr2024 \
+  https://registry.palatools.me:5005/v2/gvpocr/ocr-worker/tags/list
+
+=======================================
+Next Steps
+=======================================
+
+Run this script to push GVPOCR images:
+  cd /mnt/sda1/mango1_home/gvpocr
+  ./scripts/push_to_registry.sh
+
+View images in web UI:
+  http://172.12.0.132:8090
+
+=======================================
+Update Workflow
+=======================================
+
+1. Make code changes and commit
+2. Push to registry:
+   docker-compose build ocr-worker
+   docker tag gvpocr-ocr-worker registry.palatools.me:5005/gvpocr/ocr-worker:latest
+   docker push registry.palatools.me:5005/gvpocr/ocr-worker:latest
+
+3. On worker machines:
+   docker pull registry.palatools.me:5005/gvpocr/ocr-worker:latest
+   docker-compose restart ocr-worker
