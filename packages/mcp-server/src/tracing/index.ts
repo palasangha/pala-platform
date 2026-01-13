@@ -1,2 +1,3 @@
 /** Tracing exports */
-export { generateTraceId, ensureTraceId, TraceContext } from './trace';
+export { generateTraceId, ensureTraceId } from './trace';
+export type { TraceContext } from './trace';

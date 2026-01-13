@@ -5,7 +5,7 @@
  * Starts the server with configuration from environment variables
  */
 
-import { MCPServer } from '../src/index.js';
+import { MCPServer } from '../index.js';
 
 const port = parseInt(process.env.PORT || '3000', 10);
 const authSecret = process.env.MCP_AUTH_SECRET;
