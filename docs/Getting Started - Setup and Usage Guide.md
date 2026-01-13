@@ -96,11 +96,11 @@ Example tool invocations:
 ### MCP Server
 
 - `PORT` (default: 3000) - WebSocket server port
-- `MCP_AUTH_SECRET` (optional) - Enable JWT auth; if not set, auth is disabled
+- `MCP_JWT_SECRET` (optional) - Enable JWT auth; if not set, auth is disabled
 
 Example with auth:
 ```bash
-MCP_AUTH_SECRET="your-secret" npm run dev
+MCP_JWT_SECRET="your-secret" npm run dev
 ```
 
 ### Sample Agent
@@ -135,6 +135,8 @@ MCP_AGENT_TOKEN="your-token" python main.py
 │   - WebSocket transport                 │
 │   - JSON-RPC 2.0 protocol               │
 │   - Tool registry                       │
+│   - Connection tracking                 │
+│   - Response routing                    │
 │   - Request tracing                     │
 │   - JWT authentication (optional)       │
 └──────────────┬──────────────────────────┘
@@ -148,6 +150,23 @@ MCP_AGENT_TOKEN="your-token" python main.py
 │ - sum tool     │ │ - Business logic │
 └────────────────┘ └──────────────────┘
 ```
+
+### Tool Invocation Flow
+
+When a client invokes a tool, the server:
+
+1. **Receives invocation request** from dashboard with toolName, agentId, and arguments
+2. **Looks up agent connection** using the agentId-to-connectionId mapping (established during tool registration)
+3. **Routes request to agent** by sending JSON-RPC message over the agent's WebSocket connection
+4. **Tracks invocation** with a unique invocationId for response correlation
+5. **Receives agent response** with matching invocationId
+6. **Routes response back** to the original client connection that initiated the invocation
+
+This bidirectional routing is enabled by:
+- **Connection context tracking**: Module-level tracking of which connection is processing each message
+- **Agent connection mapping**: Maps agentId → connectionId when tools are registered
+- **Response detection**: Protocol handler identifies responses (messages with result/error but no method field)
+- **Response routing callback**: Routes responses to the ToolInvoker which correlates them with pending invocations
 
 ## Testing
 
@@ -168,17 +187,34 @@ Current test coverage: 127 tests passing
 - Request tracing: 3 tests
 
 ### Test with cURL
+## Troubleshooting
 
-While server and agent are running, test the WebSocket connection:
+### Server fails to start
+- Check port 3000 is not in use: `lsof -i :3000`
+- Verify Node.js version: `node --version` (need v18+)
+- Check logs for specific errors
 
-```bash
-# In Node.js or deno:
-const ws = new WebSocket('ws://localhost:3000');
-ws.onopen = () => {
-  ws.send(JSON.stringify({
-    jsonrpc: '2.0',
-    method: 'agents/list',
-    params: {},
+### Agent won't connect
+- Verify server is running on ws://localhost:3000
+- Check Python version: `python --version` (need 3.10+)
+- Verify websockets library: `pip list | grep websockets` (needs 16.0+)
+
+### Tool invocation times out
+If tool invocations consistently timeout after 30 seconds:
+- Verify the agent is receiving the invocation request (check agent logs)
+- Ensure the agent sends a proper JSON-RPC response with matching `id` field
+- Check that response contains either `result` or `error` field
+- Server logs should show "Routing response for invocation" when response arrives
+
+### Agents don't appear in dashboard
+- Check that agent successfully registered tools (server logs show "Registering X tools")
+- Verify agents/list endpoint returns the agent (test with browser dev tools)
+- Dashboard finds agents from registered tools, not from connection metadata
+
+### Configuration errors
+- Ensure JWT secret is passed as nested property: `auth: { jwtSecret: "..." }`
+- Use environment variable `MCP_JWT_SECRET` (not `MCP_AUTH_SECRET`)
+- Verify auth configuration in server logs on startup
     id: 1
   }));
 };

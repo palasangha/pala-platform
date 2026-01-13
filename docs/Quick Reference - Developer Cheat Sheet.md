@@ -43,7 +43,7 @@ npm run clean
 | Env Variable | Description | Default |
 |---|---|---|
 | `PORT` | MCP server WebSocket port | `3000` |
-| `MCP_AUTH_SECRET` | Enable JWT auth (leave unset for disabled) | `unset` |
+| `MCP_JWT_SECRET` | Enable JWT auth (leave unset for disabled) | `unset` |
 | `MCP_AGENT_TOKEN` | Agent auth token (set if server has auth enabled) | `unset` |
 | `MCP_SERVER_URL` | Server URL for agent connection | `ws://localhost:3000` |
 | `NEXT_PUBLIC_MCP_SERVER_URL` | Server URL for web dashboard | `ws://localhost:3000` |
@@ -64,6 +64,8 @@ npm run clean
 │  • JSON-RPC 2.0 protocol            │
 │  • WebSocket transport               │
 │  • Tool registry                    │
+│  • Connection tracking              │
+│  • Response routing                 │
 │  • Agent orchestration              │
 └──────────────────┬────────────────────┘
                    │ WebSocket JSON-RPC
