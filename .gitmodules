@@ -1,3 +1,0 @@
-[submodule "packages/processors/packages/processors/OCR_metadata_extraction"]
-	path = packages/processors/packages/processors/OCR_metadata_extraction
-	url = https://github.com/palasangha/OCR_metadata_extraction.git
