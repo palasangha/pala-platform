@@ -1,0 +1,5 @@
+# EasyOCR dependencies
+# Warning: Large download size due to PyTorch
+easyocr==1.7.1
+#torch==2.1.0
+#torchvision==0.16.0

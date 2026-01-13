@@ -1,0 +1,89 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Flask
+instance/
+.webassets-cache
+
+# Environment variables - DO NOT COMMIT THESE
+.env
+.env.*
+!.env.example
+!.env.docker
+!.env.worker.example
+.env.local
+.env.production
+.env.development
+.env.worker
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Uploads
+backend/uploads/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+yarn-debug.log
+
+# Frontend build
+frontend/dist/
+frontend/build/
+
+# Logs
+*.log
+logs/
+
+# Google credentials
+*.json
+!package.json
+!tsconfig.json
+!tsconfig.node.json
+
+# SSH Keys - DO NOT COMMIT THESE
+ssh_keys/
+
+test/
+*.deb
+*.pem
+docker-registry/*
+Bhushanji/*
+exports/*
+shared/*

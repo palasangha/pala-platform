@@ -1,0 +1,244 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                                                                            ║
+║              DOCKER SWARM OCR WORKER MANAGEMENT - QUICK START              ║
+║                                                                            ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+
+📋 SETUP (One-time)
+═══════════════════════════════════════════════════════════════════════════
+
+1. Initialize Swarm on Main Server (already done):
+   $ docker swarm init --advertise-addr 172.12.0.132
+
+2. Add Worker Nodes to Swarm:
+   $ docker swarm join-token worker
+   
+   (Copy the command and run on each worker node)
+
+3. Verify Nodes:
+   $ docker node ls
+
+
+🚀 DEPLOY WORKERS
+═══════════════════════════════════════════════════════════════════════════
+
+Deploy 3 workers:
+  $ cd /mnt/sda1/mango1_home/gvpocr
+  $ ./swarm-manage.sh deploy
+
+Expected output:
+  ✓ Stack deployed successfully
+
+
+📊 MANAGE WORKERS
+═══════════════════════════════════════════════════════════════════════════
+
+Check status:
+  $ ./swarm-manage.sh status
+  Shows: nodes, services, running tasks
+
+Scale workers:
+  $ ./swarm-manage.sh scale 5      # Increase to 5
+  $ ./swarm-manage.sh scale 3      # Decrease to 3
+
+View logs:
+  $ ./swarm-manage.sh logs         # View all logs
+  $ ./swarm-manage.sh logs task-id # View specific task
+
+Resource stats:
+  $ ./swarm-manage.sh stats
+
+Health check:
+  $ ./swarm-manage.sh health
+
+Restart service:
+  $ ./swarm-manage.sh restart
+
+
+🛠️ MAINTENANCE
+═══════════════════════════════════════════════════════════════════════════
+
+Drain node (for maintenance):
+  $ ./swarm-manage.sh drain <node_id>
+  (Tasks move to other nodes)
+
+Restore node:
+  $ ./swarm-manage.sh restore <node_id>
+  (Resume task placement)
+
+Update service:
+  $ ./swarm-manage.sh update --image registry.docgenai.com:5010/gvpocr-worker-updated:v2
+
+Remove all workers:
+  $ ./swarm-manage.sh remove
+  (Requires confirmation)
+
+
+🔍 MONITORING
+═══════════════════════════════════════════════════════════════════════════
+
+List all nodes:
+  $ docker node ls
+
+View running tasks:
+  $ docker service ps gvpocr_ocr-worker
+
+Inspect service:
+  $ docker service inspect gvpocr_ocr-worker
+
+View detailed logs:
+  $ docker service logs gvpocr_ocr-worker -f
+
+
+📚 USEFUL COMMANDS
+═══════════════════════════════════════════════════════════════════════════
+
+# List all nodes with details
+$ docker node ls -q | xargs docker node inspect
+
+# Get worker join token
+$ docker swarm join-token worker
+
+# Get manager join token
+$ docker swarm join-token manager
+
+# Check swarm status
+$ docker info | grep Swarm
+
+# View service tasks by node
+$ docker service ps gvpocr_ocr-worker --no-trunc
+
+
+⚡ COMMON SCENARIOS
+═══════════════════════════════════════════════════════════════════════════
+
+Scenario 1: High load - need more workers
+  $ ./swarm-manage.sh scale 10
+  Wait a few seconds, verify with:
+  $ ./swarm-manage.sh status
+
+Scenario 2: Update worker image
+  $ ./swarm-manage.sh update --image registry.docgenai.com:5010/gvpocr-worker-updated:v2
+  Workers automatically restart with new image
+
+Scenario 3: Perform maintenance on a worker node
+  $ ./swarm-manage.sh drain <node_id>
+  (Do maintenance)
+  $ ./swarm-manage.sh restore <node_id>
+
+Scenario 4: Worker node crashed
+  Swarm automatically restarts tasks on healthy nodes
+  View status: $ ./swarm-manage.sh status
+
+Scenario 5: Monitor resource usage
+  $ ./swarm-manage.sh stats
+  Shows memory, CPU, network I/O per worker
+
+
+📍 KEY CONCEPTS
+═══════════════════════════════════════════════════════════════════════════
+
+Manager Node:
+  - Controls the swarm
+  - Assigns tasks to worker nodes
+  - Main server: 172.12.0.132
+
+Worker Nodes:
+  - Run the actual tasks (workers)
+  - Report status to manager
+  - Can be added/removed dynamically
+
+Service:
+  - Definition of what to run (OCR worker)
+  - Can have multiple replicas (instances)
+
+Task:
+  - Individual running instance
+  - Each replica = one task
+
+Replica:
+  - One running instance of the service
+  - Currently running 3 replicas
+
+
+🎯 PERFORMANCE TIPS
+═══════════════════════════════════════════════════════════════════════════
+
+1. Monitor queue depth and scale accordingly:
+   High queue → scale up
+   Low queue → scale down
+
+2. Set appropriate resource limits:
+   Edit docker-stack.yml → resources section
+
+3. Use health checks:
+   $ ./swarm-manage.sh health
+   (Every 30 seconds by default)
+
+4. Drain nodes before maintenance:
+   $ ./swarm-manage.sh drain <node_id>
+   (Prevents task interruption)
+
+5. Monitor logs for errors:
+   $ ./swarm-manage.sh logs
+   (Helpful for debugging)
+
+
+💾 BACKUP
+═══════════════════════════════════════════════════════════════════════════
+
+Backup swarm configuration:
+  $ docker swarm info > swarm-info.txt
+  $ cp docker-stack.yml docker-stack.backup.yml
+
+Backup swarm keys (manager only):
+  $ sudo tar -czf swarm-backup.tar.gz /var/lib/docker/swarm/
+
+
+❓ HELP
+═══════════════════════════════════════════════════════════════════════════
+
+Show help:
+  $ ./swarm-manage.sh help
+
+Read full guide:
+  $ cat DOCKER_SWARM_GUIDE.md
+
+Check Docker docs:
+  https://docs.docker.com/engine/swarm/
+
+
+🚨 TROUBLESHOOTING
+═══════════════════════════════════════════════════════════════════════════
+
+Problem: Worker not starting
+Solution: $ ./swarm-manage.sh logs
+         Check for errors, fix, then restart:
+         $ ./swarm-manage.sh restart
+
+Problem: Node not in swarm
+Solution: Get join token: $ docker swarm join-token worker
+         Run on target node
+
+Problem: Tasks not starting on node
+Solution: Check if node is drained:
+         $ docker node ls
+         If AVAILABILITY = "Drain", restore:
+         $ ./swarm-manage.sh restore <node_id>
+
+Problem: Service not responding
+Solution: Check health: $ ./swarm-manage.sh health
+         Restart: $ ./swarm-manage.sh restart
+
+
+═══════════════════════════════════════════════════════════════════════════
+
+For detailed documentation, see: DOCKER_SWARM_GUIDE.md
+
+Current Status:
+  Main Server: 172.12.0.132 (Manager)
+  Worker Nodes: Add with "docker swarm join" command
+  Default Workers: 3 replicas
+
+═══════════════════════════════════════════════════════════════════════════

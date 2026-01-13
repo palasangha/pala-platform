@@ -1,0 +1,7 @@
+tunnel: fba23071-1f55-453d-9f00-4ec2fd6fed6c
+credentials-file: /etc/cloudflared/fba23071-1f55-453d-9f00-4ec2fd6fed6c.json
+
+ingress:
+  - hostname: docgenai1.webhop.me
+    service: http://frontend:80
+  - service: http_status:404

@@ -1,0 +1,92 @@
+version: '3.8'
+
+# Development Docker Compose with hot-reload support
+# Usage: docker-compose -f docker-compose.dev.yml up
+
+services:
+  # MongoDB Database
+  mongodb:
+    image: mongo:7.0
+    container_name: gvpocr-mongodb-dev
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: gvpocr
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data_dev:/data/db
+    networks:
+      - gvpocr-network-dev
+
+  # Backend API with hot-reload
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: gvpocr-backend-dev
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=development
+      - PORT=5000
+      - MONGO_URI=mongodb://mongodb:27017/gvpocr
+      - SECRET_KEY=${SECRET_KEY}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}
+      - DEFAULT_OCR_PROVIDER=${DEFAULT_OCR_PROVIDER:-google_vision}
+      - GOOGLE_VISION_ENABLED=${GOOGLE_VISION_ENABLED:-true}
+      - AZURE_ENABLED=${AZURE_ENABLED:-false}
+      - OLLAMA_ENABLED=${OLLAMA_ENABLED:-true}
+      - VLLM_ENABLED=${VLLM_ENABLED:-false}
+      - TESSERACT_ENABLED=${TESSERACT_ENABLED:-true}
+      - EASYOCR_ENABLED=${EASYOCR_ENABLED:-false}
+      - AZURE_VISION_ENDPOINT=${AZURE_VISION_ENDPOINT}
+      - AZURE_VISION_KEY=${AZURE_VISION_KEY}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://172.12.0.83:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2-vision}
+      - VLLM_HOST=${VLLM_HOST:-http://172.12.0.132:8000}
+      - VLLM_MODEL=${VLLM_MODEL:-llama-3.2-11b-vision-instruct}
+      - TESSERACT_CMD=${TESSERACT_CMD:-/usr/bin/tesseract}
+      - EASYOCR_GPU=${EASYOCR_GPU:-False}
+      - CORS_ORIGINS=http://localhost:5173
+    volumes:
+      # Mount source code for hot-reload
+      - ./backend:/app
+      - ./backend/uploads:/app/uploads
+      - ./backend/google-credentials.json:/app/google-credentials.json:ro
+    depends_on:
+      - mongodb
+    networks:
+      - gvpocr-network-dev
+    command: python run.py
+
+  # Frontend with Vite dev server (hot-reload built-in)
+  frontend:
+    image: node:20-alpine
+    container_name: gvpocr-frontend-dev
+    restart: unless-stopped
+    working_dir: /app
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:5000/api
+    depends_on:
+      - backend
+    networks:
+      - gvpocr-network-dev
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+
+volumes:
+  mongodb_data_dev:
+    driver: local
+
+networks:
+  gvpocr-network-dev:
+    driver: bridge

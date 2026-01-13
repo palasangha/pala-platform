@@ -1,0 +1,79 @@
+# Docker Compose Override for SSHFS Mounts on Remote Workers
+#
+# This file provides volume mount overrides to use SSHFS instead of SMB shares.
+# The SSHFS mounts should be already set up on the remote worker machine at:
+#   /mnt/sshfs/main-server/
+#
+# Usage:
+#   # Method 1: Direct override
+#   docker-compose -f docker-compose.worker.yml -f docker-compose.sshfs-override.yml up -d
+#
+#   # Method 2: Rename this file to docker-compose.override.yml and docker-compose will auto-load it
+#   mv docker-compose.sshfs-override.yml docker-compose.override.yml
+#   docker-compose -f docker-compose.worker.yml up -d
+#
+# Setup Instructions:
+#   1. On the remote worker machine, run:
+#      sudo ./setup-sshfs-remote-worker.sh <MAIN_SERVER_IP>
+#
+#   2. Verify the mount:
+#      ls -la /mnt/sshfs/main-server/
+#      # You should see: Bhushanji, newsletters, models, .cache
+#
+#   3. Then deploy the worker with this override:
+#      docker-compose -f docker-compose.worker.yml -f docker-compose.sshfs-override.yml up -d
+
+services:
+  worker:
+    # Override volume mounts to use SSHFS mounts from main server
+    volumes:
+      # Google Cloud Vision credentials (mount from host or use existing)
+      - ./backend/google-credentials.json:/app/google-credentials:ro
+
+      # Local uploads cache (keep local for performance)
+      - gvpocr-uploads:/app/uploads
+      
+      # Shared data from main server via SSHFS
+      # These mounts should already exist on the host machine at /mnt/sshfs/main-server/
+      # Set up using: sudo ./setup-sshfs-remote-worker.sh <MAIN_SERVER_IP>
+      
+      # Main OCR data directory (Bhushanji)
+      - /mnt/sshfs/main-server/Bhushanji:/app/Bhushanji:ro
+      
+      # Newsletter data
+      - /mnt/sshfs/main-server/newsletters:/app/newsletters:ro
+      
+      # Model files (for llamacpp, vllm, etc.)
+      - /mnt/sshfs/main-server/models:/app/models:ro
+      
+      # HuggingFace model cache for efficient model loading
+      - /mnt/sshfs/main-server/.cache/huggingface/hub:/root/.cache/huggingface/hub:ro
+
+  # If using llamacpp service locally on this worker
+  llamacpp:
+    volumes:
+      # Mount models from main server via SSHFS (read-only)
+      - /mnt/sshfs/main-server/models:/models:ro
+      
+      # Cache for downloaded models (local to this machine)
+      - llamacpp_cache:/root/.cache/huggingface/hub
+
+  # If using Ollama service locally on this worker
+  ollama:
+    volumes:
+      # Ollama model cache (local to this machine)
+      - ollama_data:/root/.ollama
+      
+      # Optionally mount shared models from main server
+      # - /mnt/sshfs/main-server/models:/shared/models:ro
+
+# Volumes remain the same
+volumes:
+  gvpocr-uploads:
+    driver: local
+  
+  ollama_data:
+    driver: local
+  
+  llamacpp_cache:
+    driver: local

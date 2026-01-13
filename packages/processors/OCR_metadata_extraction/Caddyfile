@@ -1,0 +1,42 @@
+# Caddyfile - HTTPS only with mkcert
+# Local certificates for docgenai.com and local IP addresses
+
+{
+    email bhushan0508@gmail.com
+}
+
+# HTTPS with mkcert certificates - supports docgenai.com, www.docgenai.com, registry.docgenai.com, localhost, and local IP
+https://docgenai.com, www.docgenai.com, localhost, 127.0.0.1, 10.10.0.179 {
+    tls /certs/docgenai.com+5.pem /certs/docgenai.com+5-key.pem
+    
+    # Proxy API requests to backend (use service name for Docker DNS resolution)
+    handle /api/* {
+        reverse_proxy backend:5000
+    }
+
+    # Proxy all other requests to frontend
+    handle {
+        reverse_proxy frontend:80
+    }
+
+    encode gzip
+    log
+}
+
+# Docker Registry HTTPS endpoint
+# Serves the registry on registry.docgenai.com:5010 with HTTPS
+https://registry.docgenai.com:5010 {
+    tls /certs/docgenai.com+5.pem /certs/docgenai.com+5-key.pem
+    
+    # Proxy all requests to the Docker registry container
+    # Use the container name since both are on gvpocr-network
+    reverse_proxy gvpocr-registry:5000 {
+        # Preserve host header for registry compatibility
+        header_up Host {host}
+        header_up X-Forwarded-Proto https
+    }
+    
+    encode gzip
+    log
+}
+

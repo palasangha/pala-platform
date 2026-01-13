@@ -1,0 +1,881 @@
+"""
+SupervisorService for managing remote OCR workers via SSH
+
+Handles SSH deployment, lifecycle management, health monitoring, and log streaming
+for remote worker instances.
+"""
+import paramiko
+import logging
+import os
+import time
+import json
+from typing import Dict, List, Optional, Tuple, Generator
+from datetime import datetime
+from app.config import Config
+
+
+logger = logging.getLogger(__name__)
+
+
+class SupervisorService:
+    """Service for managing remote OCR workers via SSH"""
+
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+        self.ssh_keys_path = os.getenv('SUPERVISOR_SSH_KEYS_PATH', '/app/ssh_keys')
+        self.connection_timeout = 30  # seconds
+
+    def _get_ssh_key_path(self, key_name: str) -> str:
+        """
+        Get full path to SSH private key
+
+        Args:
+            key_name: Name of the SSH key file
+
+        Returns:
+            Full path to key file
+        """
+        return os.path.join(self.ssh_keys_path, key_name)
+
+    def _get_ssh_client(self, host: str, port: int, username: str, key_name: str) -> paramiko.SSHClient:
+        """
+        Create and return authenticated SSH client
+
+        Args:
+            host: Remote server IP/hostname
+            port: SSH port
+            username: SSH username
+            key_name: SSH key file name
+
+        Returns:
+            Authenticated paramiko SSH client
+
+        Raises:
+            Exception: If SSH connection fails
+        """
+        try:
+            key_path = self._get_ssh_key_path(key_name)
+
+            if not os.path.exists(key_path):
+                raise FileNotFoundError(f"SSH key not found: {key_path}")
+
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+            # Load private key
+            private_key = paramiko.RSAKey.from_private_key_file(key_path)
+
+            # Connect
+            ssh.connect(
+                hostname=host,
+                port=port,
+                username=username,
+                pkey=private_key,
+                timeout=self.connection_timeout,
+                look_for_keys=False,
+                allow_agent=False
+            )
+
+            self.logger.info(f"SSH connection established to {username}@{host}:{port}")
+            return ssh
+
+        except Exception as e:
+            self.logger.error(f"Failed to connect via SSH to {host}: {str(e)}")
+            raise
+
+    def _execute_command(self, ssh: paramiko.SSHClient, command: str) -> Tuple[str, str, int]:
+        """
+        Execute command on remote host via SSH
+
+        Args:
+            ssh: SSH client connection
+            command: Command to execute
+
+        Returns:
+            Tuple of (stdout, stderr, exit_code)
+        """
+        try:
+            stdin, stdout, stderr = ssh.exec_command(command)
+            exit_code = stdout.channel.recv_exit_status()
+            stdout_str = stdout.read().decode('utf-8')
+            stderr_str = stderr.read().decode('utf-8')
+
+            return stdout_str, stderr_str, exit_code
+
+        except Exception as e:
+            self.logger.error(f"Error executing command: {str(e)}")
+            raise
+
+    def _detect_and_configure_docker(self, ssh: paramiko.SSHClient, username: str) -> Tuple[str, str]:
+        """
+        Detect Docker installation in non-standard paths and configure PATH
+
+        Args:
+            ssh: SSH client connection
+            username: Remote username
+
+        Returns:
+            Tuple of (docker_path, docker_compose_command)
+        """
+        # Common Docker installation paths
+        docker_paths = [
+            '/usr/bin/docker',
+            '/usr/local/bin/docker',
+            '/opt/docker/bin/docker',
+            '/snap/bin/docker',
+            '~/bin/docker'
+        ]
+
+        docker_path = None
+
+        # Check each path
+        for path in docker_paths:
+            stdout, stderr, exit_code = self._execute_command(ssh, f'test -f {path} && echo "found"')
+            if exit_code == 0 and 'found' in stdout:
+                docker_path = path
+                self.logger.info(f"Found Docker at: {docker_path}")
+                break
+
+        if not docker_path:
+            # Try to find docker using 'which' or 'find'
+            stdout, stderr, exit_code = self._execute_command(ssh, 'which docker 2>/dev/null || find /usr /opt -name docker -type f 2>/dev/null | head -1')
+            if exit_code == 0 and stdout.strip():
+                docker_path = stdout.strip().split('\n')[0]
+                self.logger.info(f"Found Docker via search: {docker_path}")
+
+        if not docker_path:
+            raise Exception("Docker not found on remote system. Please install Docker first.")
+
+        # Determine docker compose command (could be "docker compose" or "docker-compose")
+        docker_dir = os.path.dirname(docker_path)
+        docker_compose_cmd = f'{docker_path} compose'
+
+        # Test if "docker compose" works
+        stdout, stderr, exit_code = self._execute_command(ssh, f'{docker_path} compose version 2>/dev/null')
+        if exit_code != 0:
+            # Try docker-compose as separate command
+            docker_compose_path = os.path.join(docker_dir, 'docker-compose')
+            stdout, stderr, exit_code = self._execute_command(ssh, f'test -f {docker_compose_path} && echo "found"')
+            if exit_code == 0 and 'found' in stdout:
+                docker_compose_cmd = docker_compose_path
+            else:
+                # Try to find docker-compose
+                stdout, stderr, exit_code = self._execute_command(ssh, 'which docker-compose 2>/dev/null')
+                if exit_code == 0 and stdout.strip():
+                    docker_compose_cmd = stdout.strip()
+
+        # Configure PATH in .bashrc and .zshrc if Docker is not in standard location
+        if docker_dir not in ['/usr/bin', '/bin']:
+            self.logger.info(f"Configuring PATH in shell rc files for Docker at {docker_dir}")
+
+            # Update .bashrc
+            bashrc_cmd = f'''
+            if ! grep -q "{docker_dir}" ~/.bashrc 2>/dev/null; then
+                echo 'export PATH="{docker_dir}:$PATH"' >> ~/.bashrc
+            fi
+            '''
+            self._execute_command(ssh, bashrc_cmd)
+
+            # Update .zshrc if it exists
+            zshrc_cmd = f'''
+            if [ -f ~/.zshrc ] && ! grep -q "{docker_dir}" ~/.zshrc 2>/dev/null; then
+                echo 'export PATH="{docker_dir}:$PATH"' >> ~/.zshrc
+            fi
+            '''
+            self._execute_command(ssh, zshrc_cmd)
+
+            # Update .profile as fallback
+            profile_cmd = f'''
+            if [ -f ~/.profile ] && ! grep -q "{docker_dir}" ~/.profile 2>/dev/null; then
+                echo 'export PATH="{docker_dir}:$PATH"' >> ~/.profile
+            fi
+            '''
+            self._execute_command(ssh, profile_cmd)
+
+        self.logger.info(f"Docker configuration complete. Docker: {docker_path}, Compose: {docker_compose_cmd}")
+        return docker_path, docker_compose_cmd
+
+    def test_ssh_connectivity(self, host: str, port: int, username: str, key_name: str) -> Dict:
+        """
+        Test SSH connectivity to remote host
+
+        Args:
+            host: Remote server IP/hostname
+            port: SSH port
+            username: SSH username
+            key_name: SSH key file name
+
+        Returns:
+            Dictionary with test results
+        """
+        try:
+            ssh = self._get_ssh_client(host, port, username, key_name)
+            stdout, stderr, exit_code = self._execute_command(ssh, 'echo "Connection test successful"')
+            ssh.close()
+
+            return {
+                'success': True,
+                'message': 'SSH connection successful',
+                'output': stdout.strip()
+            }
+
+        except Exception as e:
+            self.logger.error(f"SSH connectivity test failed: {str(e)}")
+            return {
+                'success': False,
+                'message': f'SSH connection failed: {str(e)}'
+            }
+
+    def check_docker_installed(self, ssh: paramiko.SSHClient) -> bool:
+        """
+        Check if Docker is installed on remote host
+
+        Args:
+            ssh: SSH client connection
+
+        Returns:
+            True if Docker is installed, False otherwise
+        """
+        try:
+            stdout, stderr, exit_code = self._execute_command(ssh, 'command -v docker')
+            return exit_code == 0
+
+        except Exception as e:
+            self.logger.error(f"Error checking Docker installation: {str(e)}")
+            return False
+
+    def check_docker_compose_installed(self, ssh: paramiko.SSHClient) -> bool:
+        """
+        Check if docker-compose is installed on remote host
+
+        Args:
+            ssh: SSH client connection
+
+        Returns:
+            True if docker-compose is installed, False otherwise
+        """
+        try:
+            # Try docker compose (v2 plugin)
+            stdout, stderr, exit_code = self._execute_command(ssh, 'docker compose version')
+            if exit_code == 0:
+                return True
+
+            # Try docker-compose (v1 standalone)
+            stdout, stderr, exit_code = self._execute_command(ssh, 'command -v docker-compose')
+            return exit_code == 0
+
+        except Exception as e:
+            self.logger.error(f"Error checking docker-compose installation: {str(e)}")
+            return False
+
+    def deploy_worker(self, deployment_config: Dict) -> Dict:
+        """
+        Deploy worker to remote host
+
+        Steps:
+        1. SSH into remote server
+        2. Check Docker installation
+        3. Create deployment directory
+        4. Transfer docker-compose.worker.yml
+        5. Create .env file with worker config
+        6. Pull Docker images
+        7. Start worker containers
+        8. Verify deployment
+
+        Args:
+            deployment_config: Dictionary with deployment configuration
+
+        Returns:
+            Dictionary with deployment results
+        """
+        ssh = None
+        try:
+            host = deployment_config['host']
+            port = deployment_config.get('port', 22)
+            username = deployment_config['username']
+            key_name = deployment_config['ssh_key_name']
+            worker_count = deployment_config.get('worker_count', 1)
+            worker_id = deployment_config.get('worker_id', f"worker-{int(time.time())}")
+
+            self.logger.info(f"Starting deployment to {host} with {worker_count} worker(s)")
+
+            # Step 1: Connect via SSH
+            ssh = self._get_ssh_client(host, port, username, key_name)
+
+            # Step 2: Check Docker installation
+            if not self.check_docker_installed(ssh):
+                return {
+                    'success': False,
+                    'error': 'Docker is not installed on remote host. Please install Docker first.'
+                }
+
+            if not self.check_docker_compose_installed(ssh):
+                return {
+                    'success': False,
+                    'error': 'docker-compose is not installed on remote host. Please install docker-compose first.'
+                }
+
+            # Step 3: Create deployment directory
+            deploy_dir = '~/gvpocr-worker'
+            self._execute_command(ssh, f'mkdir -p {deploy_dir}')
+            self.logger.info(f"Created deployment directory: {deploy_dir}")
+
+            # Step 4: Transfer docker-compose.worker.yml
+            local_compose_file = os.path.join(os.getcwd(), 'docker-compose.worker.yml')
+            remote_compose_file = f'{deploy_dir}/docker-compose.worker.yml'
+
+            sftp = ssh.open_sftp()
+            if os.path.exists(local_compose_file):
+                sftp.put(local_compose_file, remote_compose_file.replace('~', f'/home/{username}'))
+                self.logger.info(f"Transferred docker-compose.worker.yml")
+            else:
+                self.logger.warning(f"Local docker-compose.worker.yml not found at {local_compose_file}")
+
+            # Step 5: Transfer .env.worker file
+            local_env_file = os.path.join(os.getcwd(), '.env.worker')
+            remote_env_file = f'{deploy_dir}/.env'
+
+            if os.path.exists(local_env_file):
+                sftp.put(local_env_file, remote_env_file.replace('~', f'/home/{username}'))
+                self.logger.info(f"Transferred .env.worker as .env")
+            else:
+                self.logger.warning(f"Local .env.worker not found, generating .env")
+                env_content = self._generate_env_file(deployment_config)
+                with sftp.file(remote_env_file.replace('~', f'/home/{username}'), 'w') as f:
+                    f.write(env_content)
+                self.logger.info(f"Generated .env file")
+
+            # Step 6: Transfer backend directory for building worker image
+            self.logger.info(f"Transferring backend directory...")
+            import tarfile
+            import io
+
+            backend_dir = '/app/backend'
+            tar_buffer = io.BytesIO()
+
+            with tarfile.open(fileobj=tar_buffer, mode='w:gz') as tar:
+                tar.add(backend_dir, arcname='backend')
+
+            tar_buffer.seek(0)
+            remote_tar = f'{deploy_dir}/backend.tar.gz'.replace('~', f'/home/{username}')
+            with sftp.file(remote_tar, 'wb') as f:
+                f.write(tar_buffer.read())
+
+            sftp.close()
+            self.logger.info(f"Transferred backend directory")
+
+            # Extract backend directory on remote
+            self._execute_command(ssh, f'cd {deploy_dir} && tar -xzf backend.tar.gz && rm backend.tar.gz')
+            self.logger.info(f"Extracted backend directory")
+
+            # Step 7: Start worker containers (will build from source on first run)
+            self.logger.info(f"Starting {worker_count} worker container(s)...")
+            stdout, stderr, exit_code = self._execute_command(
+                ssh,
+                f'cd {deploy_dir} && docker-compose -f docker-compose.worker.yml up -d --scale worker={worker_count}'
+            )
+
+            if exit_code != 0:
+                return {
+                    'success': False,
+                    'error': f'Failed to start workers: {stderr}'
+                }
+
+            # Step 8: Verify deployment
+            time.sleep(2)  # Give containers time to start
+            containers = self._get_container_status(ssh, deploy_dir)
+
+            self.logger.info(f"Deployment successful: {len(containers)} container(s) running")
+
+            ssh.close()
+
+            return {
+                'success': True,
+                'message': f'Deployed {len(containers)} worker(s) successfully',
+                'containers': containers,
+                'worker_id': worker_id
+            }
+
+        except Exception as e:
+            self.logger.error(f"Deployment failed: {str(e)}", exc_info=True)
+            if ssh:
+                ssh.close()
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def _generate_env_file(self, config: Dict) -> str:
+        """
+        Generate .env file content for worker deployment
+
+        Args:
+            config: Deployment configuration
+
+        Returns:
+            .env file content as string
+        """
+        # Extract MongoDB credentials and server IP from mongo_uri
+        # Format: mongodb://username:password@host:port/database?authSource=admin
+        import re
+        from urllib.parse import unquote
+
+        mongo_uri = config['mongo_uri']
+        mongo_match = re.search(r'mongodb://([^:]+):([^@]+)@([^:]+):', mongo_uri)
+
+        if mongo_match:
+            mongo_username = unquote(mongo_match.group(1))
+            mongo_password = unquote(mongo_match.group(2))
+            main_server_ip = mongo_match.group(3)
+        else:
+            # Fallback to defaults if parsing fails
+            mongo_username = 'gvpocr_admin'
+            mongo_password = 'gvp@123'
+            main_server_ip = config.get('server_url', 'http://localhost:5000').replace('http://', '').split(':')[0]
+
+        env_lines = [
+            f"# GVPOCR Worker Configuration",
+            f"# Generated at {datetime.utcnow().isoformat()}",
+            f"",
+            f"# Main Server IP (used by docker-compose.worker.yml)",
+            f"MAIN_SERVER_IP={main_server_ip}",
+            f"",
+            f"# MongoDB Connection",
+            f"MONGO_URI={config['mongo_uri']}",
+            f"MONGO_USERNAME={mongo_username}",
+            f"MONGO_PASSWORD={mongo_password}",
+            f"",
+            f"# NSQ Configuration",
+            f"USE_NSQ=true",
+            f"NSQD_ADDRESS={config['nsqd_address']}",
+            f"NSQLOOKUPD_ADDRESSES={config['nsqlookupd_addresses'][0]}",
+            f"",
+            f"# Worker Configuration",
+            f"WORKER_ID={config.get('worker_id', 'worker-auto')}",
+            f"GVPOCR_SERVER_URL={config['server_url']}",
+            f"",
+            f"# Samba Configuration",
+            f"SAMBA_HOST={main_server_ip}",
+            f"SAMBA_USER=gvpocr",
+            f"SAMBA_PASS=mango1",
+            f"",
+            f"# OCR Provider Configuration",
+        ]
+
+        providers = config.get('providers', {})
+        env_lines.append(f"GOOGLE_VISION_ENABLED={'true' if providers.get('google_vision_enabled') else 'false'}")
+        env_lines.append(f"TESSERACT_ENABLED={'true' if providers.get('tesseract_enabled') else 'false'}")
+        env_lines.append(f"OLLAMA_ENABLED={'true' if providers.get('ollama_enabled') else 'false'}")
+        env_lines.append(f"VLLM_ENABLED={'true' if providers.get('vllm_enabled') else 'false'}")
+        env_lines.append(f"EASYOCR_ENABLED={'true' if providers.get('easyocr_enabled') else 'false'}")
+        env_lines.append(f"AZURE_ENABLED={'true' if providers.get('azure_enabled') else 'false'}")
+
+        return '\n'.join(env_lines)
+
+    def _get_container_status(self, ssh: paramiko.SSHClient, deploy_dir: str) -> List[Dict]:
+        """
+        Get status of running containers
+
+        Args:
+            ssh: SSH client connection
+            deploy_dir: Deployment directory path
+
+        Returns:
+            List of container status dictionaries
+        """
+        try:
+            stdout, stderr, exit_code = self._execute_command(
+                ssh,
+                f'cd {deploy_dir} && docker-compose -f docker-compose.worker.yml ps --format json'
+            )
+
+            if exit_code != 0:
+                self.logger.warning(f"Failed to get container status: {stderr}")
+                return []
+
+            containers = []
+            for line in stdout.strip().split('\n'):
+                if line:
+                    try:
+                        container_data = json.loads(line)
+                        containers.append({
+                            'container_id': container_data.get('ID', ''),
+                            'container_name': container_data.get('Name', ''),
+                            'status': container_data.get('State', ''),
+                            'started_at': datetime.utcnow(),
+                            'health': 'healthy' if container_data.get('State') == 'running' else 'unhealthy'
+                        })
+                    except json.JSONDecodeError:
+                        continue
+
+            return containers
+
+        except Exception as e:
+            self.logger.error(f"Error getting container status: {str(e)}")
+            return []
+
+    def start_workers(self, deployment_config: Dict) -> bool:
+        """
+        Start stopped worker containers
+
+        Args:
+            deployment_config: Deployment configuration
+
+        Returns:
+            True if successful, False otherwise
+        """
+        ssh = None
+        try:
+            ssh = self._get_ssh_client(
+                deployment_config['host'],
+                deployment_config.get('port', 22),
+                deployment_config['username'],
+                deployment_config['ssh_key_name']
+            )
+
+            deploy_dir = '~/gvpocr-worker'
+            stdout, stderr, exit_code = self._execute_command(
+                ssh,
+                f'cd {deploy_dir} && docker-compose -f docker-compose.worker.yml start'
+            )
+
+            ssh.close()
+            return exit_code == 0
+
+        except Exception as e:
+            self.logger.error(f"Failed to start workers: {str(e)}")
+            if ssh:
+                ssh.close()
+            return False
+
+    def stop_workers(self, deployment_config: Dict) -> bool:
+        """
+        Stop running worker containers
+
+        Args:
+            deployment_config: Deployment configuration
+
+        Returns:
+            True if successful, False otherwise
+        """
+        ssh = None
+        try:
+            ssh = self._get_ssh_client(
+                deployment_config['host'],
+                deployment_config.get('port', 22),
+                deployment_config['username'],
+                deployment_config['ssh_key_name']
+            )
+
+            deploy_dir = '~/gvpocr-worker'
+            stdout, stderr, exit_code = self._execute_command(
+                ssh,
+                f'cd {deploy_dir} && docker-compose -f docker-compose.worker.yml stop'
+            )
+
+            ssh.close()
+            return exit_code == 0
+
+        except Exception as e:
+            self.logger.error(f"Failed to stop workers: {str(e)}")
+            if ssh:
+                ssh.close()
+            return False
+
+    def restart_workers(self, deployment_config: Dict) -> bool:
+        """
+        Restart worker containers
+
+        Args:
+            deployment_config: Deployment configuration
+
+        Returns:
+            True if successful, False otherwise
+        """
+        ssh = None
+        try:
+            ssh = self._get_ssh_client(
+                deployment_config['host'],
+                deployment_config.get('port', 22),
+                deployment_config['username'],
+                deployment_config['ssh_key_name']
+            )
+
+            deploy_dir = '~/gvpocr-worker'
+            stdout, stderr, exit_code = self._execute_command(
+                ssh,
+                f'cd {deploy_dir} && docker-compose -f docker-compose.worker.yml restart'
+            )
+
+            ssh.close()
+            return exit_code == 0
+
+        except Exception as e:
+            self.logger.error(f"Failed to restart workers: {str(e)}")
+            if ssh:
+                ssh.close()
+            return False
+
+    def scale_workers(self, deployment_config: Dict, count: int) -> bool:
+        """
+        Scale worker instances up or down
+
+        Args:
+            deployment_config: Deployment configuration
+            count: Target number of workers
+
+        Returns:
+            True if successful, False otherwise
+        """
+        ssh = None
+        try:
+            ssh = self._get_ssh_client(
+                deployment_config['host'],
+                deployment_config.get('port', 22),
+                deployment_config['username'],
+                deployment_config['ssh_key_name']
+            )
+
+            deploy_dir = '~/gvpocr-worker'
+            stdout, stderr, exit_code = self._execute_command(
+                ssh,
+                f'cd {deploy_dir} && docker-compose -f docker-compose.worker.yml up -d --scale worker={count}'
+            )
+
+            ssh.close()
+            return exit_code == 0
+
+        except Exception as e:
+            self.logger.error(f"Failed to scale workers: {str(e)}")
+            if ssh:
+                ssh.close()
+            return False
+
+    def remove_workers(self, deployment_config: Dict) -> bool:
+        """
+        Remove worker deployment completely
+
+        Args:
+            deployment_config: Deployment configuration
+
+        Returns:
+            True if successful, False otherwise
+        """
+        ssh = None
+        try:
+            ssh = self._get_ssh_client(
+                deployment_config['host'],
+                deployment_config.get('port', 22),
+                deployment_config['username'],
+                deployment_config['ssh_key_name']
+            )
+
+            deploy_dir = '~/gvpocr-worker'
+
+            # Stop and remove containers
+            self._execute_command(ssh, f'cd {deploy_dir} && docker-compose -f docker-compose.worker.yml down -v')
+
+            # Remove deployment directory
+            self._execute_command(ssh, f'rm -rf {deploy_dir}')
+
+            ssh.close()
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to remove workers: {str(e)}")
+            if ssh:
+                ssh.close()
+            return False
+
+    def get_container_logs(self, deployment_config: Dict, container_name: str, lines: int = 100) -> str:
+        """
+        Fetch logs from remote container
+
+        Args:
+            deployment_config: Deployment configuration
+            container_name: Name of container
+            lines: Number of log lines to fetch
+
+        Returns:
+            Container logs as string
+        """
+        ssh = None
+        try:
+            ssh = self._get_ssh_client(
+                deployment_config['host'],
+                deployment_config.get('port', 22),
+                deployment_config['username'],
+                deployment_config['ssh_key_name']
+            )
+
+            stdout, stderr, exit_code = self._execute_command(
+                ssh,
+                f'docker logs --tail {lines} {container_name}'
+            )
+
+            ssh.close()
+            return stdout if exit_code == 0 else stderr
+
+        except Exception as e:
+            self.logger.error(f"Failed to get container logs: {str(e)}")
+            if ssh:
+                ssh.close()
+            return f"Error: {str(e)}"
+
+    def stream_container_logs(self, deployment_config: Dict, container_name: str) -> Generator[str, None, None]:
+        """
+        Stream logs from remote container (for SSE)
+
+        Args:
+            deployment_config: Deployment configuration
+            container_name: Name of container
+
+        Yields:
+            Log lines as they are generated
+        """
+        ssh = None
+        try:
+            ssh = self._get_ssh_client(
+                deployment_config['host'],
+                deployment_config.get('port', 22),
+                deployment_config['username'],
+                deployment_config['ssh_key_name']
+            )
+
+            # Execute docker logs -f command
+            stdin, stdout, stderr = ssh.exec_command(f'docker logs -f --tail 50 {container_name}')
+
+            # Stream logs line by line
+            while True:
+                line = stdout.readline()
+                if not line:
+                    break
+                yield line.strip()
+
+        except Exception as e:
+            self.logger.error(f"Failed to stream container logs: {str(e)}")
+            yield f"Error streaming logs: {str(e)}"
+        finally:
+            if ssh:
+                ssh.close()
+
+    def check_worker_health(self, deployment_config: Dict) -> Dict:
+        """
+        Check health of remote workers
+
+        Returns:
+        - SSH connectivity
+        - Docker daemon status
+        - Container status
+        - Resource usage (CPU, memory, disk)
+
+        Args:
+            deployment_config: Deployment configuration
+
+        Returns:
+            Dictionary with health information
+        """
+        ssh = None
+        try:
+            ssh = self._get_ssh_client(
+                deployment_config['host'],
+                deployment_config.get('port', 22),
+                deployment_config['username'],
+                deployment_config['ssh_key_name']
+            )
+
+            deploy_dir = '~/gvpocr-worker'
+
+            # Get container status
+            containers = self._get_container_status(ssh, deploy_dir)
+
+            # Get resource usage
+            stdout, stderr, exit_code = self._execute_command(
+                ssh,
+                'top -bn1 | grep "Cpu(s)" | sed "s/.*, *\\([0-9.]*\\)%* id.*/\\1/" | awk \'{print 100 - $1}\''
+            )
+            cpu_usage = float(stdout.strip()) if exit_code == 0 else 0.0
+
+            stdout, stderr, exit_code = self._execute_command(
+                ssh,
+                'free | grep Mem | awk \'{print ($3/$2) * 100.0}\''
+            )
+            mem_usage = float(stdout.strip()) if exit_code == 0 else 0.0
+
+            ssh.close()
+
+            # Determine overall health
+            running_containers = sum(1 for c in containers if c.get('status') == 'running')
+            total_containers = len(containers)
+
+            if running_containers == 0:
+                health_status = 'unhealthy'
+            elif running_containers < total_containers:
+                health_status = 'degraded'
+            else:
+                health_status = 'healthy'
+
+            return {
+                'health_status': health_status,
+                'containers': containers,
+                'running_containers': running_containers,
+                'total_containers': total_containers,
+                'cpu_usage': cpu_usage,
+                'memory_usage': mem_usage,
+                'ssh_connected': True
+            }
+
+        except Exception as e:
+            self.logger.error(f"Health check failed: {str(e)}")
+            if ssh:
+                ssh.close()
+            return {
+                'health_status': 'unreachable',
+                'error_message': str(e),
+                'ssh_connected': False
+            }
+
+    def get_worker_stats(self, deployment_config: Dict) -> Dict:
+        """
+        Get detailed statistics for worker
+
+        Args:
+            deployment_config: Deployment configuration
+
+        Returns:
+            Dictionary with worker statistics
+        """
+        try:
+            health_data = self.check_worker_health(deployment_config)
+
+            return {
+                'health': health_data,
+                'deployment_info': {
+                    'host': deployment_config.get('host'),
+                    'worker_count': deployment_config.get('worker_count'),
+                    'worker_name': deployment_config.get('worker_name'),
+                }
+            }
+
+        except Exception as e:
+            self.logger.error(f"Failed to get worker stats: {str(e)}")
+            return {
+                'error': str(e)
+            }
+
+    def list_available_ssh_keys(self) -> List[str]:
+        """
+        List available SSH keys in the SSH keys directory
+
+        Returns:
+            List of SSH key filenames
+        """
+        try:
+            if not os.path.exists(self.ssh_keys_path):
+                return []
+
+            return [f for f in os.listdir(self.ssh_keys_path) if not f.startswith('.')]
+
+        except Exception as e:
+            self.logger.error(f"Failed to list SSH keys: {str(e)}")
+            return []

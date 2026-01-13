@@ -1,0 +1,49 @@
+gvpocr-backend   | 
+gvpocr-backend   | A module that was compiled using NumPy 1.x cannot be run in
+gvpocr-backend   | NumPy 2.2.6 as it may crash. To support both 1.x and 2.x
+gvpocr-backend   | versions of NumPy, modules must be compiled with NumPy 2.0.
+gvpocr-backend   | Some module may need to rebuild instead e.g. with 'pybind11>=2.12'.
+gvpocr-backend   | 
+gvpocr-backend   | If you are a user of the module, the easiest solution will be to
+gvpocr-backend   | downgrade to 'numpy<2' or try to upgrade the affected module.
+gvpocr-backend   | We expect that some modules will need time to support NumPy 2.
+gvpocr-backend   | 
+gvpocr-backend   | Traceback (most recent call last):  File "/app/run.py", line 4, in <module>
+gvpocr-backend   |     app = create_app()
+gvpocr-backend   |   File "/app/app/__init__.py", line 29, in create_app
+gvpocr-backend   |     register_blueprints(app)
+gvpocr-backend   |   File "/app/app/routes/__init__.py", line 7, in register_blueprints
+gvpocr-backend   |     from app.routes.ocr import ocr_bp
+gvpocr-backend   |   File "/app/app/routes/ocr.py", line 6, in <module>
+gvpocr-backend   |     from app.services.ocr_service import OCRService
+gvpocr-backend   |   File "/app/app/services/ocr_service.py", line 2, in <module>
+gvpocr-backend   |     from .ocr_providers import (
+gvpocr-backend   |   File "/app/app/services/ocr_providers/__init__.py", line 8, in <module>
+gvpocr-backend   |     from .easyocr_provider import EasyOCRProvider
+gvpocr-backend   |   File "/app/app/services/ocr_providers/easyocr_provider.py", line 5, in <module>
+gvpocr-backend   |     import easyocr
+gvpocr-backend   |   File "/usr/local/lib/python3.11/site-packages/easyocr/__init__.py", line 1, in <module>
+gvpocr-backend   |     from .easyocr import Reader
+gvpocr-backend   |   File "/usr/local/lib/python3.11/site-packages/easyocr/easyocr.py", line 3, in <module>
+gvpocr-backend   |     from .recognition import get_recognizer, get_text
+gvpocr-backend   |   File "/usr/local/lib/python3.11/site-packages/easyocr/recognition.py", line 2, in <module>
+gvpocr-backend   |     import torch
+gvpocr-backend   |   File "/usr/local/lib/python3.11/site-packages/torch/__init__.py", line 1382, in <module>
+gvpocr-backend   |     from .functional import *  # noqa: F403
+gvpocr-backend   |   File "/usr/local/lib/python3.11/site-packages/torch/functional.py", line 7, in <module>
+gvpocr-backend   |     import torch.nn.functional as F
+gvpocr-backend   |   File "/usr/local/lib/python3.11/site-packages/torch/nn/__init__.py", line 1, in <module>
+gvpocr-backend   |     from .modules import *  # noqa: F403
+gvpocr-backend   |   File "/usr/local/lib/python3.11/site-packages/torch/nn/modules/__init__.py", line 35, in <module>
+gvpocr-backend   |     from .transformer import TransformerEncoder, TransformerDecoder, \
+gvpocr-backend   |   File "/usr/local/lib/python3.11/site-packages/torch/nn/modules/transformer.py", line 20, in <module>
+gvpocr-backend   |     device: torch.device = torch.device(torch._C._get_default_device()),  # torch.device('cpu'),
+gvpocr-backend   | /usr/local/lib/python3.11/site-packages/torch/nn/modules/transformer.py:20: UserWarning: Failed to initialize NumPy: _ARRAY_API not found (Triggered internally at ../torch/csrc/utils/tensor_numpy.cpp:84.)
+gvpocr-backend   |   device: torch.device = torch.device(torch._C._get_default_device()),  # torch.device('cpu'),
+gvpocr-mongodb   | {"t":{"$date":"2025-11-13T10:48:57.004+00:00"},"s":"I",  "c":"FTDC",     "id":20631,   "ctx":"ftdc","msg":"Unclean full-time diagnostic data capture shutdown detected, found interim file, some metrics may have been lost","attr":{"error":{"code":0,"codeName":"OK"}}}
+gvpocr-backend   | VLLM server not available: HTTPConnectionPool(host='172.12.0.132', port=8000): Max retries exceeded with url: /v1/models (Caused by ConnectTimeoutError(<urllib3.connection.HTTPConnection object at 0x7f390435ea90>, 'Connection to 172.12.0.132 timed out. (connect timeout=5)'))
+gvpocr-backend   | Tesseract version 5.5.0 initialized
+gvpocr-backend   | EasyOCR initialized successfully
+gvpocr-backend   | Starting GVPOCR API server on port 5000...
+gvpocr-backend   |  * Serving Flask app 'app'
+gvpocr-backend   |  * Debug mode: off
