@@ -131,9 +131,12 @@ async def main() -> None:
     agent_id = os.getenv("MCP_AGENT_ID", "sample-agent")
     agent_token = os.getenv("MCP_AGENT_TOKEN")
 
-    extra_headers = {"Authorization": f"Bearer {agent_token}"} if agent_token else None
+    # Prepare headers for auth if token is provided
+    headers = {}
+    if agent_token:
+        headers["Authorization"] = f"Bearer {agent_token}"
 
-    async with websockets.connect(url, extra_headers=extra_headers) as ws:
+    async with websockets.connect(url, additional_headers=headers if headers else None) as ws:
         print(f"Connected to MCP server at {url} as {agent_id}")
 
         # Optional: send registration (server-side handling pending)

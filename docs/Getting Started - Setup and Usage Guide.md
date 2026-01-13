@@ -45,6 +45,15 @@ In another terminal:
 
 ```bash
 cd packages/agents/sample-agent
+
+# Create and activate virtual environment (first time only)
+python3 -m venv venv
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the agent
 python main.py
 ```
 

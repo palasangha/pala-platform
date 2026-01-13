@@ -14,7 +14,7 @@ pnpm install
 cd packages/mcp-server && npm run dev
 
 # 3. Terminal 2 - Connect sample agent
-cd packages/agents/sample-agent && python main.py
+cd packages/agents/sample-agent && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python main.py
 
 # 4. Terminal 3 - Start web dashboard
 cd apps/web && npm run dev

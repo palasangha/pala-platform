@@ -11,9 +11,15 @@ It registers simple tools and handles `tools/invoke` requests.
 ## Quick start
 ```bash
 cd packages/agents/sample-agent
-python -m venv .venv
-source .venv/bin/activate
+
+# Create and activate virtual environment
+python3 -m venv venv
+source venv/bin/activate  # On macOS/Linux
+# OR on Windows: venv\Scripts\activate
+
+# Install dependencies
 pip install -r requirements.txt
+
 # Ensure MCP server is running on ws://localhost:3000
 python main.py
 ```
