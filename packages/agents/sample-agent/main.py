@@ -23,9 +23,12 @@ import websockets
 # Simple tool implementations -------------------------------------------------
 
 async def tool_echo(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Echo back provided text."""
     return {"echo": params.get("text", "")}
 
+
 async def tool_sum(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Sum a list of numbers with simple validation."""
     numbers = params.get("numbers", [])
     if not isinstance(numbers, list):
         raise ValueError("'numbers' must be a list")
@@ -41,6 +44,7 @@ TOOLS: Dict[str, Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]] = {
 # JSON-RPC helpers ------------------------------------------------------------
 
 def make_request(method: str, params: Any | None = None, id: str | None = None) -> str:
+    """Create a JSON-RPC request string."""
     payload = {"jsonrpc": "2.0", "method": method}
     if params is not None:
         payload["params"] = params
@@ -50,10 +54,12 @@ def make_request(method: str, params: Any | None = None, id: str | None = None) 
 
 
 def make_response(result: Any, id: str) -> str:
+    """Create a JSON-RPC success response string."""
     return json.dumps({"jsonrpc": "2.0", "result": result, "id": id})
 
 
 def make_error(message: str, id: str | None = None, code: int = -32000) -> str:
+    """Create a JSON-RPC error response string."""
     return json.dumps({"jsonrpc": "2.0", "error": {"code": code, "message": message}, "id": id})
 
 
@@ -78,6 +84,7 @@ async def register_tools(ws: websockets.WebSocketClientProtocol, agent_id: str) 
             }
         )
 
+    # Send registration so the server can discover this agent's tools
     await ws.send(
         make_request(
             method="tools/register",
@@ -88,6 +95,7 @@ async def register_tools(ws: websockets.WebSocketClientProtocol, agent_id: str) 
 
 
 async def handle_invoke(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    """Dispatch a tools/invoke request to the local tool map."""
     name = params.get("name")
     arguments = params.get("arguments", {})
     if name not in TOOLS:
@@ -96,6 +104,7 @@ async def handle_invoke(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def handle_message(ws: websockets.WebSocketClientProtocol, raw: str) -> None:
+    """Handle a single incoming JSON-RPC message from the server."""
     try:
         message = json.loads(raw)
     except json.JSONDecodeError:
@@ -117,6 +126,7 @@ async def handle_message(ws: websockets.WebSocketClientProtocol, raw: str) -> No
 
 
 async def main() -> None:
+    """Connect to the MCP server, register tools, and handle invocations."""
     url = os.getenv("MCP_SERVER_URL", "ws://localhost:3000")
     agent_id = os.getenv("MCP_AGENT_ID", "sample-agent")
 
