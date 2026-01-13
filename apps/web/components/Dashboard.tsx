@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useWebSocket } from './useWebSocket';
+import { useWebSocket } from '../hooks/useWebSocket';
 
 interface ToolDefinition {
   name: string;
