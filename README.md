@@ -22,7 +22,7 @@ cd apps/web && npm run dev
 
 Then open your browser to `http://localhost:3000` and start invoking tools!
 
-**[→ Full Getting Started Guide](GETTING_STARTED.md)**
+**[→ Full Getting Started Guide](docs/Getting%20Started%20-%20Setup%20and%20Usage%20Guide.md)**
 
 ## Features
 
@@ -135,8 +135,11 @@ npm run clean     # Clean dist/coverage
 
 ## Documentation
 
-- **[GETTING_STARTED.md](GETTING_STARTED.md)** - Complete setup and usage guide
-- **[docs/](docs/)** - Architecture, project management, conventions
+- **[Getting Started - Setup and Usage Guide](docs/Getting%20Started%20-%20Setup%20and%20Usage%20Guide.md)** - Complete setup, troubleshooting, and usage
+- **[Quick Reference - Developer Cheat Sheet](docs/Quick%20Reference%20-%20Developer%20Cheat%20Sheet.md)** - TL;DR commands and API reference
+- **[Slice 01 - MVP Foundation Completion Summary](docs/Slice%2001%20-%20MVP%20Foundation%20Completion%20Summary.md)** - Implementation details and test coverage
+- **[Pala Platform - Architecture & Repository Strategy](docs/Pala%20Platform%20-%20Architecture%20%26%20Repository%20Strategy.md)** - Overall architecture
+- **[Pala Platform - Project Management Guide](docs/Pala%20Platform%20-%20Project%20Management%20Guide.md)** - Development workflow
 - **[packages/mcp-server/README.md](packages/mcp-server/README.md)** - Server details
 - **[packages/agents/sample-agent/README.md](packages/agents/sample-agent/README.md)** - Agent guide
 - **[apps/web/README.md](apps/web/README.md)** - Dashboard details
