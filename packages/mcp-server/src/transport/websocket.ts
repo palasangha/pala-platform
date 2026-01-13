@@ -4,15 +4,22 @@
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
-import { createServer, Server as HTTPServer } from 'http';
+import { createServer, Server as HTTPServer, IncomingMessage } from 'http';
 import { EventEmitter } from 'events';
 import type { ProtocolHandler } from '../protocol/handler';
+import jwt from 'jsonwebtoken';
 
 export interface TransportConfig {
   port: number;
   host?: string;
   pingInterval?: number; // ms, default 30000
   pingTimeout?: number; // ms, default 5000
+  auth?: {
+    enabled?: boolean;
+    sharedSecret?: string;
+    audience?: string;
+    issuer?: string;
+  };
 }
 
 export interface Connection {
@@ -38,6 +45,13 @@ export class WebSocketTransport extends EventEmitter {
       host: '0.0.0.0',
       pingInterval: 30000,
       pingTimeout: 5000,
+      auth: {
+        enabled: false,
+        sharedSecret: undefined,
+        audience: undefined,
+        issuer: undefined,
+        ...config.auth,
+      },
       ...config,
     };
   }
@@ -58,11 +72,25 @@ export class WebSocketTransport extends EventEmitter {
       this.httpServer = createServer();
 
       // Create WebSocket server
-      this.wss = new WebSocketServer({ server: this.httpServer });
+      this.wss = new WebSocketServer({
+        server: this.httpServer,
+        verifyClient: (info, done) => {
+          this.handleAuth(info.req)
+            .then((principal) => {
+              (info.req as any).principal = principal;
+              done(true);
+            })
+            .catch((err: any) => {
+              const statusCode = typeof err?.code === 'number' ? err.code : 401;
+              const message = err?.message || 'Unauthorized';
+              done(false, statusCode, message);
+            });
+        },
+      });
 
       // Handle new connections
-      this.wss.on('connection', (ws: WebSocket) => {
-        this.handleConnection(ws);
+      this.wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
+        this.handleConnection(ws, req);
       });
 
       // Handle server errors
@@ -108,12 +136,21 @@ export class WebSocketTransport extends EventEmitter {
   /**
    * Handle new WebSocket connection
    */
-  private handleConnection(ws: WebSocket): void {
+  private handleConnection(ws: WebSocket, req?: IncomingMessage): void {
     const connectionId = this.generateConnectionId();
+    const principal = (req as any)?.principal as
+      | { id: string; claims?: jwt.JwtPayload | string }
+      | undefined;
     const connection: Connection = {
       id: connectionId,
       ws,
       isAlive: true,
+      metadata: principal
+        ? {
+            principalId: principal.id,
+            claims: principal.claims,
+          }
+        : undefined,
     };
 
     this.connections.set(connectionId, connection);
@@ -142,6 +179,45 @@ export class WebSocketTransport extends EventEmitter {
     ws.on('error', (error) => {
       this.emit('connectionError', { connectionId, error });
     });
+  }
+
+  /**
+   * Validate auth token during WebSocket upgrade
+   */
+  private async handleAuth(req: IncomingMessage): Promise<
+    | {
+        id: string;
+        claims?: jwt.JwtPayload | string;
+      }
+    | undefined
+  > {
+    const authConfig = this.config.auth;
+    if (!authConfig?.enabled) return undefined; // Auth disabled
+    if (!authConfig.sharedSecret) {
+      throw { code: 500, message: 'Auth misconfigured: sharedSecret required' };
+    }
+
+    const authHeader = req.headers['authorization'] || req.headers['Authorization' as any];
+    if (!authHeader || Array.isArray(authHeader)) {
+      throw { code: 401, message: 'Missing Authorization header' };
+    }
+
+    const [scheme, token] = authHeader.split(' ');
+    if (!token || scheme !== 'Bearer') {
+      throw { code: 401, message: 'Invalid Authorization header' };
+    }
+
+    try {
+      const payload = jwt.verify(token, authConfig.sharedSecret, {
+        audience: authConfig.audience,
+        issuer: authConfig.issuer,
+      });
+
+      const principalId = typeof payload === 'string' ? payload : payload.sub || 'unknown';
+      return { id: principalId, claims: payload };
+    } catch (err: any) {
+      throw { code: 403, message: err?.message || 'Invalid token' };
+    }
   }
 
   /**

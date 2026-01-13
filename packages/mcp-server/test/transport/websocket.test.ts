@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { WebSocketTransport } from '../../src/transport/websocket';
 import { ProtocolHandler } from '../../src/protocol/handler';
 import WebSocket from 'ws';
+import jwt from 'jsonwebtoken';
 
 describe('WebSocketTransport', () => {
   let transport: WebSocketTransport;
@@ -277,6 +278,72 @@ describe('WebSocketTransport', () => {
       } finally {
         // Ensure cleanup happens even if test fails
         await shortPingTransport.stop();
+      }
+    });
+  });
+
+  describe('auth', () => {
+    const AUTH_PORT = TEST_PORT + 200;
+    const SECRET = 'test-secret';
+
+    it('should accept connection with valid JWT', async () => {
+      const authTransport = new WebSocketTransport({
+        port: AUTH_PORT,
+        auth: {
+          enabled: true,
+          sharedSecret: SECRET,
+        },
+      });
+
+      await authTransport.start();
+
+      try {
+        const token = jwt.sign({ sub: 'agent-1' }, SECRET);
+        const client = new WebSocket(`ws://localhost:${AUTH_PORT}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        await new Promise((resolve, reject) => {
+          client.on('open', resolve);
+          client.on('error', reject);
+        });
+
+        const connections = authTransport.getConnections();
+        expect(connections).toHaveLength(1);
+        expect(connections[0].metadata?.principalId).toBe('agent-1');
+
+        client.close();
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      } finally {
+        await authTransport.stop();
+      }
+    });
+
+    it('should reject connection without token when auth enabled', async () => {
+      const authTransport = new WebSocketTransport({
+        port: AUTH_PORT + 1,
+        auth: {
+          enabled: true,
+          sharedSecret: SECRET,
+        },
+      });
+
+      await authTransport.start();
+
+      try {
+        const client = new WebSocket(`ws://localhost:${AUTH_PORT + 1}`);
+
+        await expect(
+          new Promise((resolve, reject) => {
+            client.on('open', () => reject(new Error('should not open')));
+            client.on('error', () => resolve(true));
+            client.on('close', () => resolve(true));
+          })
+        ).resolves.toBe(true);
+
+        expect(authTransport.getConnectionCount()).toBe(0);
+      } finally {
+        await authTransport.stop();
       }
     });
   });

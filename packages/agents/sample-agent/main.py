@@ -129,8 +129,11 @@ async def main() -> None:
     """Connect to the MCP server, register tools, and handle invocations."""
     url = os.getenv("MCP_SERVER_URL", "ws://localhost:3000")
     agent_id = os.getenv("MCP_AGENT_ID", "sample-agent")
+    agent_token = os.getenv("MCP_AGENT_TOKEN")
 
-    async with websockets.connect(url) as ws:
+    extra_headers = {"Authorization": f"Bearer {agent_token}"} if agent_token else None
+
+    async with websockets.connect(url, extra_headers=extra_headers) as ws:
         print(f"Connected to MCP server at {url} as {agent_id}")
 
         # Optional: send registration (server-side handling pending)

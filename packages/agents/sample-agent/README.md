@@ -21,6 +21,7 @@ python main.py
 Environment variables:
 - `MCP_SERVER_URL` (default `ws://localhost:3000`)
 - `MCP_AGENT_ID` (default `sample-agent`)
+- `MCP_AGENT_TOKEN` (optional bearer token for auth; set when server auth is enabled)
 
 ## Tools implemented
 - `echo`: returns the provided `text`
