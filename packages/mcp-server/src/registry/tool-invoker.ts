@@ -9,6 +9,7 @@
 
 import { EventEmitter } from 'events';
 import { ToolRegistry, ToolInvocationRequest, ToolInvocationResult } from './tool-registry';
+import { ensureTraceId } from '../tracing';
 
 /**
  * Agent connection interface (implemented by transport layer)
@@ -45,17 +46,19 @@ export class ToolInvoker extends EventEmitter {
    */
   async invoke(request: ToolInvocationRequest): Promise<ToolInvocationResult> {
     const { toolName, arguments: args, requestId } = request;
+    const traceId = ensureTraceId(request.traceId);
 
     // Validate tool exists
     const tool = this.registry.getTool(toolName);
     if (!tool) {
       const error = `Tool '${toolName}' not found`;
-      this.emit('invocation:failed', request, new Error(error));
+      this.emit('invocation:failed', { ...request, traceId }, new Error(error));
       return {
         success: false,
         error,
         agentId: '',
         toolName,
+        traceId,
       };
     }
 
@@ -64,12 +67,13 @@ export class ToolInvoker extends EventEmitter {
       this.registry.validateArguments(toolName, args);
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      this.emit('invocation:failed', request, err as Error);
+      this.emit('invocation:failed', { ...request, traceId }, err as Error);
       return {
         success: false,
         error,
         agentId: tool.agentId,
         toolName,
+        traceId,
       };
     }
 
@@ -77,17 +81,18 @@ export class ToolInvoker extends EventEmitter {
     const connection = this.getAgentConnection(tool.agentId);
     if (!connection) {
       const error = `Agent '${tool.agentId}' not connected`;
-      this.emit('invocation:failed', request, new Error(error));
+      this.emit('invocation:failed', { ...request, traceId }, new Error(error));
       return {
         success: false,
         error,
         agentId: tool.agentId,
         toolName,
+        traceId,
       };
     }
 
     // Emit started event
-    this.emit('invocation:started', request);
+    this.emit('invocation:started', { ...request, traceId });
 
     // Generate invocation ID
     const invocationId = requestId || this.generateInvocationId();
@@ -98,7 +103,8 @@ export class ToolInvoker extends EventEmitter {
         connection,
         invocationId,
         toolName,
-        args
+        args,
+        traceId
       );
 
       const successResult: ToolInvocationResult = {
@@ -106,6 +112,7 @@ export class ToolInvoker extends EventEmitter {
         result,
         agentId: tool.agentId,
         toolName,
+        traceId,
       };
 
       this.emit('invocation:completed', successResult);
@@ -117,9 +124,10 @@ export class ToolInvoker extends EventEmitter {
         error,
         agentId: tool.agentId,
         toolName,
+        traceId,
       };
 
-      this.emit('invocation:failed', request, err as Error);
+      this.emit('invocation:failed', { ...request, traceId }, err as Error);
       return errorResult;
     }
   }
@@ -131,7 +139,8 @@ export class ToolInvoker extends EventEmitter {
     connection: AgentConnection,
     invocationId: string,
     toolName: string,
-    args: Record<string, any>
+    args: Record<string, any>,
+    traceId: string
   ): Promise<any> {
     return new Promise((resolve, reject) => {
       // Set timeout
@@ -160,6 +169,7 @@ export class ToolInvoker extends EventEmitter {
             arguments: args,
           },
           id: invocationId,
+          traceId,
         })
         .catch((err) => {
           clearTimeout(timeout);

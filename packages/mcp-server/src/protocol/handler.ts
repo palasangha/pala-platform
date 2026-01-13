@@ -34,7 +34,7 @@ export class ProtocolHandler {
   /**
    * Process incoming raw message
    */
-  async processMessage(rawMessage: string): Promise<string | null> {
+  async processMessage(rawMessage: string, traceId?: string): Promise<string | null> {
     // Parse message
     const parseResult = this.protocol.parseMessage(rawMessage);
     if (!parseResult.success) {

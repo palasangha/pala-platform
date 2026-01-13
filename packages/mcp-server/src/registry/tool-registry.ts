@@ -43,6 +43,7 @@ export interface ToolInvocationRequest {
   toolName: string;
   arguments: Record<string, any>;
   requestId?: string;
+  traceId?: string;
 }
 
 /**
@@ -54,6 +55,7 @@ export interface ToolInvocationResult {
   error?: string;
   agentId: string;
   toolName: string;
+  traceId?: string;
 }
 
 /**

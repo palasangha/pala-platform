@@ -8,6 +8,7 @@ import { createServer, Server as HTTPServer, IncomingMessage } from 'http';
 import { EventEmitter } from 'events';
 import type { ProtocolHandler } from '../protocol/handler';
 import jwt from 'jsonwebtoken';
+import { generateTraceId } from '../tracing';
 
 export interface TransportConfig {
   port: number;
@@ -227,7 +228,8 @@ export class WebSocketTransport extends EventEmitter {
     const connection = this.connections.get(connectionId);
     if (!connection) return;
 
-    this.emit('message', { connectionId, message });
+    const traceId = generateTraceId();
+    this.emit('message', { connectionId, message, traceId });
 
     if (!this.protocolHandler) {
       const errorResponse = JSON.stringify({
@@ -243,7 +245,7 @@ export class WebSocketTransport extends EventEmitter {
     }
 
     try {
-      const response = await this.protocolHandler.processMessage(message);
+      const response = await this.protocolHandler.processMessage(message, traceId);
       if (response) {
         connection.ws.send(response);
       }

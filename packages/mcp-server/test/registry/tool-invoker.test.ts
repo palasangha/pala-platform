@@ -158,8 +158,31 @@ describe('ToolInvoker', () => {
 
       await invoker.invoke(request);
 
-      expect(startedSpy).toHaveBeenCalledWith(request);
+      const startedArg = startedSpy.mock.calls[0][0];
+      expect(startedArg.traceId).toBeDefined();
+      expect(startedArg.toolName).toBe('test-tool');
+      expect(startedArg.arguments).toEqual({ input: 'test' });
       expect(completedSpy).toHaveBeenCalled();
+    });
+
+    it('should propagate provided traceId', async () => {
+      const traceId = 'trace-123';
+      const request = {
+        toolName: 'test-tool',
+        arguments: { input: 'test' },
+        traceId,
+      };
+
+      setTimeout(() => {
+        const calls = (mockConnection.sendMessage as any).mock.calls;
+        const lastCall = calls[calls.length - 1][0];
+        invoker.handleInvocationResponse(lastCall.id, {
+          data: { output: 'success' },
+        });
+      }, 20);
+
+      const result = await invoker.invoke(request);
+      expect(result.traceId).toBe(traceId);
     });
 
     it('should emit failed event on error', async () => {
@@ -288,6 +311,7 @@ describe('ToolInvoker', () => {
             arguments: { input: 'test-value' },
           },
           id: expect.any(String),
+          traceId: expect.any(String),
         })
       );
     });
