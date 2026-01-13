@@ -10,9 +10,10 @@ Complete guide to running the MCP server, sample agent, and web dashboard.
 
 ## 1. Install Dependencies
 
-From the workspace root:
+From the workspace root (`pala-platform` directory):
 
 ```bash
+cd /path/to/pala-platform  # Navigate to the cloned repository
 pnpm install
 ```
 
