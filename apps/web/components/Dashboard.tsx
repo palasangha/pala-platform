@@ -22,11 +22,9 @@ interface InvocationResult {
 }
 
 export default function Dashboard() {
-  const { connected, error: wsError, send } = useWebSocket(
-    typeof window !== 'undefined'
-      ? `ws://${window.location.hostname}:3000`
-      : 'ws://localhost:3000'
-  );
+  // Always connect to MCP server on localhost:3000
+  // (Next.js may run on a different port like 3001)
+  const { connected, error: wsError, send } = useWebSocket('ws://localhost:3000');
 
   const [agents, setAgents] = useState<Agent[]>([]);
   const [tools, setTools] = useState<ToolDefinition[]>([]);
