@@ -12,7 +12,8 @@
     }
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/bin/start.ts",
+    "dev": "tsx watch src/bin/start.ts",
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
