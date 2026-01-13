@@ -22,9 +22,20 @@ interface InvocationResult {
 }
 
 export default function Dashboard() {
-  // Always connect to MCP server on localhost:3000
-  // (Next.js may run on a different port like 3001)
-  const { connected, error: wsError, send } = useWebSocket('ws://localhost:3000');
+  // Connect to MCP server - handle both client-side and SSR
+  const [wsUrl, setWsUrl] = useState('');
+  
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      // Determine the correct WebSocket URL
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.hostname;
+      // Try port 3000 first (where MCP server runs), fallback to same port
+      setWsUrl(`${protocol}//${host}:3000`);
+    }
+  }, []);
+
+  const { connected, error: wsError, send } = useWebSocket(wsUrl);
 
   const [agents, setAgents] = useState<Agent[]>([]);
   const [tools, setTools] = useState<ToolDefinition[]>([]);
