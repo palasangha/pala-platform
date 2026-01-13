@@ -153,9 +153,10 @@ export class ToolInvoker extends EventEmitter {
       this.pendingInvocations.set(invocationId, (result) => {
         clearTimeout(timeout);
         if (result.error) {
-          reject(new Error(result.error));
+          reject(new Error(result.error.message || result.error));
         } else {
-          resolve(result.data);
+          // JSON-RPC response has result field directly
+          resolve(result.result);
         }
       });
 

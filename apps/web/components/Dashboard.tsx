@@ -46,6 +46,28 @@ export default function Dashboard() {
   const [invocationResult, setInvocationResult] = useState<InvocationResult | null>(null);
   const [invoking, setInvoking] = useState(false);
 
+  const getToolPlaceholder = (toolName: string): string => {
+    switch (toolName) {
+      case 'echo':
+        return '{"text": "hello world"}';
+      case 'sum':
+        return '{"numbers": [1, 2, 3, 4, 5]}';
+      default:
+        return '{}';
+    }
+  };
+
+  const getToolHint = (toolName: string): string => {
+    switch (toolName) {
+      case 'echo':
+        return 'Example: {"text": "hello world"}';
+      case 'sum':
+        return 'Example: {"numbers": [1, 2, 3, 4, 5]}';
+      default:
+        return 'Enter JSON arguments for this tool';
+    }
+  };
+
   useEffect(() => {
     if (connected) {
       refreshData();
@@ -217,7 +239,11 @@ export default function Dashboard() {
                       onChange={(e) => setInvocationArgs(e.target.value)}
                       className="mt-2 w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
                       rows={4}
+                      placeholder={getToolPlaceholder(selectedTool.name)}
                     />
+                    <p className="mt-1 text-xs text-gray-500">
+                      {getToolHint(selectedTool.name)}
+                    </p>
                   </div>
                   <button
                     onClick={handleInvokeTool}

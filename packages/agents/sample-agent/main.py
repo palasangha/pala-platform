@@ -97,6 +97,7 @@ async def register_tools(ws: websockets.WebSocketClientProtocol, agent_id: str) 
 async def handle_invoke(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
     """Dispatch a tools/invoke request to the local tool map."""
     name = params.get("name")
+    # The server sends arguments nested in params.arguments
     arguments = params.get("arguments", {})
     if name not in TOOLS:
         raise ValueError(f"Unknown tool '{name}'")
