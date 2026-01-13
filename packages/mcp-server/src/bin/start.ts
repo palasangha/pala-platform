@@ -8,11 +8,11 @@
 import { MCPServer } from '../index.js';
 
 const port = parseInt(process.env.PORT || '3000', 10);
-const authSecret = process.env.MCP_AUTH_SECRET;
+const jwtSecret = process.env.MCP_JWT_SECRET;
 
 const server = new MCPServer({
   port,
-  authSecret,
+  auth: jwtSecret ? { jwtSecret } : undefined,
 });
 
 process.on('SIGINT', async () => {

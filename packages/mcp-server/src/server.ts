@@ -10,6 +10,7 @@ import { ToolRegistry } from './registry/tool-registry';
 import { ToolInvoker } from './registry/tool-invoker';
 import { ServerHandlers } from './handlers';
 import { Logger } from './logging/logger';
+import { WebSocket } from 'ws';
 
 const logger = new Logger({ name: 'MCPServer' });
 
@@ -20,6 +21,7 @@ export class MCPServer {
   private registry?: ToolRegistry;
   private invoker?: ToolInvoker;
   private handlers?: ServerHandlers;
+  private agentConnections: Map<string, string> = new Map(); // agentId -> connectionId
 
   constructor(config: ServerConfig) {
     this.config = config;
@@ -28,20 +30,55 @@ export class MCPServer {
   async start(): Promise<void> {
     logger.info('Starting MCP Server', {
       port: this.config.port,
-      authEnabled: !!this.config.authSecret,
+      authEnabled: !!this.config.auth?.jwtSecret,
     });
 
     // Initialize protocol handler
     this.protocolHandler = new ProtocolHandler();
     logger.debug('Protocol handler initialized');
 
-    // Initialize registry and invoker
+    // Initialize registry
     this.registry = new ToolRegistry();
-    this.invoker = new ToolInvoker(this.registry);
+    logger.debug('Registry initialized');
+
+    // Initialize transport
+    this.transport = new WebSocketTransport({
+      port: this.config.port,
+      auth: {
+        enabled: !!this.config.auth?.jwtSecret,
+        sharedSecret: this.config.auth?.jwtSecret,
+      },
+    });
+    this.transport.setProtocolHandler(this.protocolHandler);
+
+    // Initialize invoker with callback to get agent connections
+    this.invoker = new ToolInvoker(
+      this.registry,
+      (agentId: string) => {
+        // Return a wrapper that can send messages to the agent connection
+        const agentConnectionId = this.agentConnections.get(agentId);
+        if (!agentConnectionId) {
+          return undefined;
+        }
+        return {
+          sendMessage: async (message: any) => {
+            const conn = this.transport!.getConnections().find((c) => c.id === agentConnectionId);
+            if (conn && conn.ws.readyState === WebSocket.OPEN) {
+              conn.ws.send(JSON.stringify(message));
+            }
+          },
+        };
+      }
+    );
     logger.debug('Registry and invoker initialized');
 
+    // Set response handler on protocol handler to route tool invocation responses
+    this.protocolHandler.setResponseHandler((invocationId: string, response: any) => {
+      this.invoker!.handleInvocationResponse(invocationId, response);
+    });
+
     // Initialize server handlers
-    this.handlers = new ServerHandlers(this.registry, this.transport!);
+    this.handlers = new ServerHandlers(this.registry, this.transport, this.agentConnections);
 
     // Register JSON-RPC method handlers
     this.protocolHandler.registerHandler('tools/list', async (method, params) => {
@@ -57,10 +94,9 @@ export class MCPServer {
     });
 
     this.protocolHandler.registerHandler('tools/invoke', async (method, params: any) => {
-      const { toolName, agentId, arguments: args } = params;
+      const { toolName, arguments: args } = params;
       const result = await this.invoker!.invoke({
         toolName,
-        agentId,
         arguments: args || {},
       });
       return result;
@@ -69,18 +105,6 @@ export class MCPServer {
     logger.debug('Method handlers registered', {
       methods: ['tools/list', 'tools/register', 'agents/list', 'tools/invoke'],
     });
-
-    // Initialize transport
-    this.transport = new WebSocketTransport({
-      port: this.config.port,
-      authSecret: this.config.authSecret,
-    });
-    this.transport.setProtocolHandler(this.protocolHandler);
-
-    // Update handlers with transport (needs to be set after transport is created)
-    if (this.handlers) {
-      this.handlers = new ServerHandlers(this.registry, this.transport);
-    }
 
     await this.transport.start();
     logger.info('WebSocket transport started', { port: this.config.port });

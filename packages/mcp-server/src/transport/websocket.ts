@@ -10,6 +10,17 @@ import type { ProtocolHandler } from '../protocol/handler';
 import jwt from 'jsonwebtoken';
 import { generateTraceId } from '../tracing';
 
+// Context tracking for current connection (for message handlers)
+let currentConnectionId: string | null = null;
+
+export function getCurrentConnectionId(): string | null {
+  return currentConnectionId;
+}
+
+export function setCurrentConnectionId(id: string | null): void {
+  currentConnectionId = id;
+}
+
 export interface TransportConfig {
   port: number;
   host?: string;
@@ -245,11 +256,16 @@ export class WebSocketTransport extends EventEmitter {
     }
 
     try {
+      // Set current connection context for handlers
+      setCurrentConnectionId(connectionId);
       const response = await this.protocolHandler.processMessage(message, traceId);
+      setCurrentConnectionId(null);
+      
       if (response) {
         connection.ws.send(response);
       }
     } catch (error) {
+      setCurrentConnectionId(null);
       const errorResponse = JSON.stringify({
         jsonrpc: '2.0',
         id: null,

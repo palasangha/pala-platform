@@ -117,7 +117,8 @@ async def handle_message(ws: websockets.WebSocketClientProtocol, raw: str) -> No
     if method == "tools/invoke":
         try:
             result = await handle_invoke(method, message.get("params", {}))
-            await ws.send(make_response(result, msg_id))
+            response = make_response(result, msg_id)
+            await ws.send(response)
         except Exception as err:
             await ws.send(make_error(str(err), msg_id))
     else:

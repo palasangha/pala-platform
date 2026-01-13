@@ -7,14 +7,23 @@ import { JSONRPCProtocol, ErrorCodes } from './jsonrpc';
 import type { JSONRPCRequest, JSONRPCResponse } from '../types';
 
 export type MessageHandler = (method: string, params: unknown) => Promise<unknown>;
+export type ResponseHandler = (invocationId: string, response: any) => void;
 
 export class ProtocolHandler {
   private protocol: JSONRPCProtocol;
   private handlers: Map<string, MessageHandler>;
+  private responseHandler?: ResponseHandler;
 
   constructor() {
     this.protocol = new JSONRPCProtocol();
     this.handlers = new Map();
+  }
+
+  /**
+   * Register a response handler for tool invocation responses
+   */
+  setResponseHandler(handler: ResponseHandler): void {
+    this.responseHandler = handler;
   }
 
   /**
@@ -47,8 +56,18 @@ export class ProtocolHandler {
       return this.protocol.stringifyResponse(errorResponse);
     }
 
-    // Check if notification (no id field, no response needed)
     const data = parseResult.data as any;
+
+    // Check if this is a response (has result or error field, not method field)
+    if ((data.result !== undefined || data.error) && data.id && !data.method) {
+      // This is a response from an agent to a tool invocation request
+      if (this.responseHandler) {
+        this.responseHandler(data.id, data);
+      }
+      return null; // Don't send a response for responses
+    }
+
+    // Check if notification (no id field, no response needed)
     if (!data.id && this.protocol.validateNotification(data)) {
       await this.handleNotification(data.method, data.params);
       return null; // No response for notifications

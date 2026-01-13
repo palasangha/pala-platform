@@ -3,12 +3,14 @@
  */
 
 import { ToolRegistry } from './registry/tool-registry';
-import { WebSocketTransport, Connection } from './transport/websocket';
+import { WebSocketTransport } from './transport/websocket';
+import { getCurrentConnectionId } from './transport/websocket';
 
 export class ServerHandlers {
   constructor(
     private registry: ToolRegistry,
-    private transport: WebSocketTransport
+    private transport: WebSocketTransport,
+    private agentConnections?: Map<string, string>
   ) {}
 
   /**
@@ -21,13 +23,25 @@ export class ServerHandlers {
     }
 
     let count = 0;
+    let firstAgentId = '';
     for (const tool of params.tools) {
       try {
         this.registry.register(tool);
         count++;
+        if (!firstAgentId && tool.agentId) {
+          firstAgentId = tool.agentId;
+        }
       } catch (err: any) {
         // Log but continue registering other tools
         console.warn(`Failed to register tool ${tool.name}:`, err.message);
+      }
+    }
+
+    // Track the agent connection using current connection context
+    if (firstAgentId && this.agentConnections) {
+      const connectionId = getCurrentConnectionId();
+      if (connectionId) {
+        this.agentConnections.set(firstAgentId, connectionId);
       }
     }
 
@@ -45,17 +59,25 @@ export class ServerHandlers {
 
   /**
    * Handle agents/list request
-   * Returns connected agents with metadata
+   * Returns connected agents with their tools
    */
   async handleAgentsList(): Promise<{ agents: any[] }> {
-    const connections = this.transport.getConnections();
-    const agents = connections
-      .filter((conn) => conn.metadata?.principalId)
-      .map((conn) => ({
-        id: conn.id,
-        principalId: conn.metadata?.principalId,
-        tools: this.registry.listAgentTools(conn.metadata?.principalId || ''),
-      }));
+    // Get all unique agent IDs from registered tools
+    const tools = this.registry.listTools();
+    const agentIds = new Set<string>();
+    
+    for (const tool of tools) {
+      if (tool.agentId) {
+        agentIds.add(tool.agentId);
+      }
+    }
+
+    // Return agents with their tools
+    const agents = Array.from(agentIds).map((agentId) => ({
+      id: agentId,
+      name: agentId,
+      tools: this.registry.listAgentTools(agentId),
+    }));
 
     return { agents };
   }
