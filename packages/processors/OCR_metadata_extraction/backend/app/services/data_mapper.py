@@ -16,6 +16,222 @@ logger = logging.getLogger(__name__)
 class DataMapper:
     """Maps data from input OCR format to Archipelago template format"""
 
+    # Class-level variable to cache the required format schema
+    _required_format_schema = None
+
+    @staticmethod
+    def _load_required_format_schema() -> Optional[Dict]:
+        """
+        Load the required format schema from required-format.json
+
+        Returns:
+            Dictionary with schema properties or None if file not found
+        """
+        if DataMapper._required_format_schema is not None:
+            return DataMapper._required_format_schema
+
+        try:
+            # Try multiple possible locations for the schema file
+            possible_paths = [
+                '/mnt/sda1/mango1_home/gvpocr/backend/required-format.json',
+                os.path.join(os.path.dirname(__file__), '../../required-format.json'),
+                'required-format.json',
+                '/required-format.json'
+            ]
+
+            schema_path = None
+            for path in possible_paths:
+                if os.path.exists(path):
+                    schema_path = path
+                    break
+
+            if not schema_path:
+                logger.warning("required-format.json not found in any expected location")
+                return None
+
+            with open(schema_path, 'r', encoding='utf-8') as f:
+                schema = json.load(f)
+
+            logger.info(f"Successfully loaded required format schema from {schema_path}")
+            DataMapper._required_format_schema = schema
+            return schema
+
+        except Exception as e:
+            logger.warning(f"Error loading required-format.json: {str(e)}")
+            return None
+
+    @staticmethod
+    def _apply_required_format_schema(data: Dict[str, Any], schema: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Apply required format schema to data, ensuring all required fields are populated
+
+        Args:
+            data: The input data
+            schema: The JSON schema from required-format.json
+
+        Returns:
+            Data enriched with schema-compliant fields
+        """
+        if not schema:
+            return data
+
+        try:
+            # Extract schema structure
+            required_top_level = schema.get('required', [])
+            properties = schema.get('properties', {})
+
+            enriched_data = data.copy()
+
+            # Ensure top-level required fields exist
+            for field in required_top_level:
+                if field not in enriched_data:
+                    if field in properties:
+                        # Initialize with appropriate empty structure
+                        field_schema = properties[field]
+                        if field_schema.get('type') == 'object':
+                            enriched_data[field] = {}
+                        elif field_schema.get('type') == 'array':
+                            enriched_data[field] = []
+                        else:
+                            enriched_data[field] = None
+
+            # Build metadata section from schema
+            if 'metadata' in properties and 'metadata' in required_top_level:
+                metadata_schema = properties['metadata']
+                metadata_props = metadata_schema.get('properties', {})
+                metadata_required = metadata_schema.get('required', [])
+
+                if 'metadata' not in enriched_data:
+                    enriched_data['metadata'] = {}
+
+                metadata = enriched_data['metadata']
+
+                # Populate metadata with available data
+                if 'id' not in metadata and 'id' in data:
+                    metadata['id'] = data['id']
+                elif 'id' not in metadata:
+                    metadata['id'] = str(uuid.uuid4())
+
+                if 'collection_id' not in metadata and 'ismemberof' in data and data['ismemberof']:
+                    metadata['collection_id'] = data['ismemberof'][0] if isinstance(data['ismemberof'], list) else data['ismemberof']
+
+                if 'document_type' not in metadata:
+                    metadata['document_type'] = 'letter'  # Default type
+
+                if 'access_level' not in metadata:
+                    metadata['access_level'] = 'public'  # Default access level
+
+                # Ensure all required metadata fields
+                for field in metadata_required:
+                    if field not in metadata:
+                        field_schema = metadata_props.get(field, {})
+                        if field_schema.get('type') == 'object':
+                            metadata[field] = {}
+                        elif field_schema.get('type') == 'array':
+                            metadata[field] = []
+                        else:
+                            metadata[field] = None
+
+            # Build document section
+            if 'document' in properties and 'document' in required_top_level:
+                document_schema = properties['document']
+                document_props = document_schema.get('properties', {})
+                document_required = document_schema.get('required', [])
+
+                if 'document' not in enriched_data:
+                    enriched_data['document'] = {}
+
+                document = enriched_data['document']
+
+                # Populate document with available data
+                if 'date' not in document:
+                    document['date'] = {}
+
+                if 'languages' not in document:
+                    if 'language' in data:
+                        languages = data['language']
+                        if not isinstance(languages, list):
+                            languages = [languages]
+                        document['languages'] = languages
+                    else:
+                        document['languages'] = ['en']
+
+                if 'physical_attributes' not in document:
+                    document['physical_attributes'] = {}
+
+                if 'correspondence' not in document:
+                    document['correspondence'] = {}
+
+                # Ensure all required document fields
+                for field in document_required:
+                    if field not in document:
+                        field_schema = document_props.get(field, {})
+                        if field_schema.get('type') == 'object':
+                            document[field] = {}
+                        elif field_schema.get('type') == 'array':
+                            document[field] = []
+                        else:
+                            document[field] = None
+
+            # Build content section
+            if 'content' in properties and 'content' in required_top_level:
+                content_schema = properties['content']
+                content_props = content_schema.get('properties', {})
+                content_required = content_schema.get('required', [])
+
+                if 'content' not in enriched_data:
+                    enriched_data['content'] = {}
+
+                content = enriched_data['content']
+
+                # Populate content with available data
+                if 'full_text' not in content:
+                    # Try to find text from various possible fields
+                    text = data.get('text', '') or data.get('ocr_full_text', '') or data.get('note', '')
+                    content['full_text'] = text
+
+                if 'summary' not in content:
+                    content['summary'] = data.get('description', '')
+
+                # Ensure all required content fields
+                for field in content_required:
+                    if field not in content:
+                        field_schema = content_props.get(field, {})
+                        if field_schema.get('type') == 'object':
+                            content[field] = {}
+                        elif field_schema.get('type') == 'array':
+                            content[field] = []
+                        else:
+                            content[field] = None
+
+            # Build analysis section (optional)
+            if 'analysis' in properties:
+                if 'analysis' not in enriched_data:
+                    enriched_data['analysis'] = {}
+
+                analysis = enriched_data['analysis']
+
+                # Populate analysis with keywords if available
+                if 'keywords' not in analysis:
+                    if 'keywords' in data:
+                        analysis['keywords'] = data['keywords']
+                    elif 'subjects_local' in data:
+                        # Convert subjects_local string to keywords array
+                        subjects = data['subjects_local']
+                        if isinstance(subjects, str):
+                            analysis['keywords'] = [s.strip() for s in subjects.split(',')]
+                        else:
+                            analysis['keywords'] = subjects
+                    else:
+                        analysis['keywords'] = []
+
+            logger.debug(f"Successfully applied required format schema to data")
+            return enriched_data
+
+        except Exception as e:
+            logger.warning(f"Error applying required format schema: {str(e)}")
+            return data
+
     @staticmethod
     def upload_file_to_minio(
         file_path: str,
@@ -88,7 +304,8 @@ class DataMapper:
         ocr_data: Dict[str, Any],
         collection_id: Optional[str] = None,
         file_id: Optional[int] = None,
-        include_file_reference: bool = False
+        include_file_reference: bool = False,
+        apply_required_format: bool = True
     ) -> Dict[str, Any]:
         """
         Map OCR data format to Archipelago template format
@@ -99,12 +316,22 @@ class DataMapper:
             file_id: Optional file ID for the document reference
             include_file_reference: Whether to include as:document S3 file references
                                    (only set True if Archipelago has S3 storage configured)
+            apply_required_format: Whether to apply the required format schema (default: True)
 
         Returns:
-            Data in Archipelago template format
+            Data in Archipelago template format with required format schema applied
         """
         print("DataMapper.map_ocr_to_archipelago method called.")
         print(f"Input OCR data for mapping: {json.dumps(ocr_data, indent=2)}")
+
+        # Load and apply required format schema if requested
+        required_format_schema = None
+        if apply_required_format:
+            required_format_schema = DataMapper._load_required_format_schema()
+            if required_format_schema:
+                logger.info("Required format schema loaded, will be applied to output")
+            else:
+                logger.warning("Required format schema not available, continuing without it")
         try:
             # Extract basic information from OCR data
             name = ocr_data.get('name', '')
@@ -415,6 +642,14 @@ class DataMapper:
                 # Also store in note field (truncated for display)
                 archipelago_data['note'] = text[:5000]  # Limit to first 5000 chars for note field display
 
+            # Apply required format schema if available
+            if apply_required_format and required_format_schema:
+                archipelago_data = DataMapper._apply_required_format_schema(
+                    archipelago_data,
+                    required_format_schema
+                )
+                logger.info("Required format schema applied to Archipelago data")
+
             logger.info(f"Successfully mapped OCR data to Archipelago format: {label}")
             logger.info(f"OCR text preserved: {len(text)} characters")
             return archipelago_data
@@ -427,7 +662,8 @@ class DataMapper:
     def map_bulk_ocr_to_archipelago(
         ocr_data_list: List[Dict[str, Any]],
         collection_id: Optional[str] = None,
-        start_file_id: int = 1
+        start_file_id: int = 1,
+        apply_required_format: bool = True
     ) -> List[Dict[str, Any]]:
         """
         Map a list of OCR data items to Archipelago format
@@ -436,9 +672,10 @@ class DataMapper:
             ocr_data_list: List of OCR data items
             collection_id: Optional collection ID to link documents to
             start_file_id: Starting file ID for documents
+            apply_required_format: Whether to apply the required format schema (default: True)
 
         Returns:
-            List of mapped Archipelago data
+            List of mapped Archipelago data with required format schema applied
         """
         mapped_items = []
 
@@ -448,7 +685,8 @@ class DataMapper:
                 mapped_item = DataMapper.map_ocr_to_archipelago(
                     ocr_data,
                     collection_id=collection_id,
-                    file_id=file_id
+                    file_id=file_id,
+                    apply_required_format=apply_required_format
                 )
                 mapped_items.append(mapped_item)
             except Exception as e:
