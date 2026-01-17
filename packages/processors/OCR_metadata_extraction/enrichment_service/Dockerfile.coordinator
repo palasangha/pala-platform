@@ -1,0 +1,35 @@
+# Enrichment Coordinator Dockerfile
+# Monitors OCR job completion and creates enrichment tasks in NSQ
+
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements from parent enrichment_service directory
+COPY enrichment_service/requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy enrichment service code
+COPY enrichment_service/ ./enrichment_service/
+
+# Copy any shared dependencies
+COPY backend/requirements.txt /tmp/backend_requirements.txt 2>/dev/null || true
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+
+# Health check - test if coordinator is running and responsive
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python -c "import pymongo; pymongo.MongoClient(os.getenv('MONGO_URI')).server_info(); print('healthy')" || exit 1
+
+# Run the coordinator
+CMD ["python", "-u", "-m", "enrichment_service.coordinator.enrichment_coordinator"]

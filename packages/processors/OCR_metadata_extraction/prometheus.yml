@@ -1,0 +1,81 @@
+# Prometheus Configuration for Enrichment Pipeline Monitoring
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'enrichment-pipeline'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+# Load rules once and periodically evaluate them
+rule_files:
+  - "enrichment_service/utils/prometheus_alerts.yaml"
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # MCP Server metrics
+  - job_name: 'mcp-server'
+    static_configs:
+      - targets: ['mcp-server:3000']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Enrichment Worker metrics
+  - job_name: 'enrichment-worker'
+    static_configs:
+      - targets:
+          - 'enrichment-worker:8001'
+          - 'enrichment-worker-2:8001'
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Enrichment Coordinator metrics
+  - job_name: 'enrichment-coordinator'
+    static_configs:
+      - targets: ['enrichment-coordinator:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  # Review API metrics
+  - job_name: 'review-api'
+    static_configs:
+      - targets: ['review-api:5001']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  # Cost API metrics
+  - job_name: 'cost-api'
+    static_configs:
+      - targets: ['cost-api:5002']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  # NSQ monitoring via HTTP interface
+  - job_name: 'nsqd'
+    static_configs:
+      - targets: ['nsqd:4151']
+    metrics_path: '/stats'
+    scrape_interval: 30s
+
+  # MongoDB exporter (optional - requires mongodb_exporter container)
+  - job_name: 'mongodb'
+    static_configs:
+      - targets: ['localhost:9216']
+    scrape_interval: 30s
+
+# Remote storage configuration (optional)
+# remote_write:
+#   - url: "http://remote-storage:9009/api/v1/push"
+#
+# remote_read:
+#   - url: "http://remote-storage:9009/api/v1/read"
