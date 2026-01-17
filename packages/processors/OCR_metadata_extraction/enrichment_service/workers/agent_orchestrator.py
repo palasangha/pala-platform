@@ -28,6 +28,8 @@ from typing import Dict, Any, Optional, List, Tuple
 from enrichment_service.mcp_client.client import MCPClient, MCPInvocationError
 from enrichment_service.schema.validator import HistoricalLettersValidator
 from enrichment_service.config import config
+from enrichment_service.utils.budget_manager import BudgetManager
+from enrichment_service.utils.cost_tracker import CostTracker
 
 logger = logging.getLogger(__name__)
 
@@ -42,17 +44,23 @@ class AgentOrchestrator:
     CONTENT_AGENT = "content-agent"
     CONTEXT_AGENT = "context-agent"
 
-    def __init__(self, mcp_client: Optional[MCPClient] = None, schema_path: Optional[str] = None):
+    def __init__(self, mcp_client: Optional[MCPClient] = None, schema_path: Optional[str] = None, db=None):
         """
         Initialize orchestrator
 
         Args:
             mcp_client: MCP client instance
             schema_path: Path to schema JSON
+            db: MongoDB database instance for cost tracking
         """
         self.mcp_client = mcp_client or MCPClient()
         self.schema_path = schema_path or config.SCHEMA_PATH
         self.validator = HistoricalLettersValidator(self.schema_path)
+
+        # Cost tracking and budget management
+        self.db = db
+        self.budget_manager = BudgetManager(db)
+        self.cost_tracker = CostTracker(db)
 
         # Track enrichment per document
         self.enrichment_id = str(uuid.uuid4())
@@ -91,9 +99,18 @@ class AgentOrchestrator:
             phase2_results = await self._run_phase2(ocr_data, phase1_results)
             phase2_duration = (datetime.utcnow() - phase2_start).total_seconds() * 1000
 
-            # Phase 3: Historical context (Claude Opus)
+            # Check budget before expensive Phase 3
+            enable_context_agent = self.budget_manager.should_enable_context_agent()
+            if not enable_context_agent:
+                logger.info(f"Budget limit reached, skipping context agent for document {document_id}")
+
+            # Phase 3: Historical context (Claude Opus) - optional based on budget
             phase3_start = datetime.utcnow()
-            phase3_results = await self._run_phase3(ocr_data, phase1_results, phase2_results)
+            if enable_context_agent:
+                phase3_results = await self._run_phase3(ocr_data, phase1_results, phase2_results)
+            else:
+                # Skip context agent, use empty results
+                phase3_results = {'historical_context': '', 'significance': '', 'biographies': {}}
             phase3_duration = (datetime.utcnow() - phase3_start).total_seconds() * 1000
 
             # Merge results into target schema
@@ -120,7 +137,9 @@ class AgentOrchestrator:
                     "phase_2_duration_ms": phase2_duration,
                     "phase_3_duration_ms": phase3_duration,
                     "total_processing_time_ms": enrichment_duration,
-                    "enrichment_id": self.enrichment_id
+                    "enrichment_id": self.enrichment_id,
+                    "context_agent_enabled": enable_context_agent,
+                    "budget_status": self.budget_manager.check_budget('daily') if self.budget_manager else None
                 },
                 "review_required": completeness["requires_review"],
                 "review_reason": completeness["review_reason"] if completeness["requires_review"] else None
