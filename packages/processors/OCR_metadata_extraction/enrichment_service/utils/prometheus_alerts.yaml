@@ -1,0 +1,216 @@
+groups:
+  - name: enrichment_alerts
+    interval: 30s
+    rules:
+      # ===================== Quality Alerts =====================
+
+      - alert: LowCompletenessRate
+        expr: histogram_quantile(0.50, enrichment_completeness_score) < 0.80
+        for: 15m
+        annotations:
+          summary: "Low document completeness"
+          description: "Median completeness score is {{ $value | humanizePercentage }}. Target is ≥95%."
+        labels:
+          severity: warning
+          component: quality
+
+      - alert: HighReviewQueueBacklog
+        expr: enrichment_review_queue_size > 100
+        for: 30m
+        annotations:
+          summary: "Review queue has large backlog"
+          description: "{{ $value }} documents pending review. Manual review may be bottleneck."
+        labels:
+          severity: warning
+          component: review
+
+      - alert: NoDocumentsProcessing
+        expr: increase(enrichment_documents_total[5m]) == 0
+        for: 10m
+        annotations:
+          summary: "No documents processed in 5 minutes"
+          description: "Enrichment pipeline appears to be stalled. Check logs for errors."
+        labels:
+          severity: critical
+          component: processing
+
+      # ===================== Cost/Budget Alerts =====================
+
+      - alert: DailyBudgetExceeded
+        expr: enrichment_budget_remaining_usd <= 0
+        annotations:
+          summary: "Daily budget exceeded"
+          description: "Daily budget overrun by ${{ (0 - $value) | humanize }}."
+        labels:
+          severity: critical
+          component: budget
+
+      - alert: DailyBudgetNearLimit
+        expr: enrichment_budget_percentage_used > 80
+        for: 5m
+        annotations:
+          summary: "Daily budget near limit"
+          description: "Daily budget is {{ $value | humanizePercentage }} spent. Only {{ $value | humanizePercentage }}% remaining."
+        labels:
+          severity: warning
+          component: budget
+
+      - alert: DailyBudgetAlmostExhausted
+        expr: enrichment_budget_percentage_used > 95
+        for: 2m
+        annotations:
+          summary: "Daily budget almost exhausted"
+          description: "Daily budget is {{ $value | humanizePercentage }} spent. Stop processing to avoid overages."
+        labels:
+          severity: critical
+          component: budget
+
+      - alert: HighCostPerDocument
+        expr: increase(enrichment_claude_cost_usd_total[1h]) / increase(enrichment_documents_total{status="success"}[1h]) > 1.00
+        for: 10m
+        annotations:
+          summary: "Abnormally high cost per document"
+          description: "Average cost per document is ${{ $value | humanize }}. Investigate for inefficiency."
+        labels:
+          severity: warning
+          component: cost
+
+      # ===================== Agent Health Alerts =====================
+
+      - alert: AgentUnavailable
+        expr: enrichment_agent_available == 0
+        for: 5m
+        annotations:
+          summary: "Agent {{ $labels.agent_id }} is unavailable"
+          description: "Agent has been down for 5+ minutes. Enrichment may be degraded."
+        labels:
+          severity: critical
+          component: agent
+
+      - alert: HighAgentErrorRate
+        expr: increase(enrichment_agent_errors_total[5m]) / increase(enrichment_mcp_requests_total[5m]) > 0.1
+        for: 5m
+        annotations:
+          summary: "High error rate for {{ $labels.agent_id }}"
+          description: "Error rate is {{ $value | humanizePercentage }}. Agent may be flaky."
+        labels:
+          severity: warning
+          component: agent
+
+      - alert: SlowAgentResponse
+        expr: histogram_quantile(0.95, enrichment_agent_response_seconds) > 30
+        for: 10m
+        annotations:
+          summary: "Slow agent response for {{ $labels.agent_id }}"
+          description: "95th percentile response time is {{ $value | humanizeDuration }}. Investigate performance."
+        labels:
+          severity: warning
+          component: performance
+
+      - alert: MCP_ConnectionPoolExhausted
+        expr: enrichment_mcp_pool_size >= 100
+        for: 5m
+        annotations:
+          summary: "MCP connection pool may be exhausted"
+          description: "{{ $value }} connections in use. May indicate resource leak or high load."
+        labels:
+          severity: warning
+          component: mcp
+
+      # ===================== Performance Alerts =====================
+
+      - alert: LowProcessingThroughput
+        expr: enrichment_throughput_docs_per_hour < 10
+        for: 30m
+        annotations:
+          summary: "Low document processing throughput"
+          description: "Throughput is {{ $value | humanize }} docs/hour. Expected minimum: 50 docs/hour."
+        labels:
+          severity: warning
+          component: performance
+
+      - alert: LongEnrichmentTime
+        expr: histogram_quantile(0.95, enrichment_duration_seconds{phase="total"}) > 300
+        for: 15m
+        annotations:
+          summary: "Long document enrichment time"
+          description: "95th percentile enrichment time is {{ $value | humanizeDuration }}. Check for bottlenecks."
+        labels:
+          severity: warning
+          component: performance
+
+      # ===================== OCR Quality Alerts =====================
+
+      - alert: LowOCRQuality
+        expr: histogram_quantile(0.25, enrichment_ocr_confidence) < 0.70
+        for: 20m
+        annotations:
+          summary: "Low OCR confidence in input documents"
+          description: "25th percentile OCR confidence is {{ $value | humanizePercentage }}. May impact enrichment quality."
+        labels:
+          severity: info
+          component: quality
+
+      # ===================== Operational Alerts =====================
+
+      - alert: LargeProcessingQueue
+        expr: enrichment_processing_queue_size > 500
+        for: 10m
+        annotations:
+          summary: "Large document processing queue"
+          description: "{{ $value }} documents queued. May need to scale workers."
+        labels:
+          severity: warning
+          component: operations
+
+      - alert: DocumentEnrichmentErrors
+        expr: increase(enrichment_documents_total{status="error"}[1h]) > 5
+        for: 5m
+        annotations:
+          summary: "Multiple document enrichment errors"
+          description: "{{ $value }} errors in last hour. Check error logs."
+        labels:
+          severity: warning
+          component: errors
+
+      - alert: MongoDBOperationSlow
+        expr: histogram_quantile(0.95, enrichment_mongodb_operation_seconds) > 1
+        for: 10m
+        annotations:
+          summary: "Slow MongoDB operations"
+          description: "95th percentile MongoDB response time is {{ $value | humanizeDuration }}. Database may be slow."
+        labels:
+          severity: warning
+          component: database
+
+      - alert: NSQMessageProcessingBacklog
+        expr: increase(enrichment_nsq_messages_consumed{status="success"}[5m]) == 0 and increase(enrichment_nsq_messages_published[5m]) > 0
+        for: 10m
+        annotations:
+          summary: "NSQ messages not being processed"
+          description: "Messages are being published but not consumed. Worker may be stuck."
+        labels:
+          severity: critical
+          component: queue
+
+      # ===================== SLA Alerts =====================
+
+      - alert: MissingSLA_Completeness
+        expr: histogram_quantile(0.90, enrichment_completeness_score) < 0.95
+        for: 60m
+        annotations:
+          summary: "Missing SLA: Document Completeness"
+          description: "90th percentile completeness is {{ $value | humanizePercentage }}. SLA requires ≥95%."
+        labels:
+          severity: warning
+          component: sla
+
+      - alert: MissingSLA_ProcessingTime
+        expr: histogram_quantile(0.95, enrichment_duration_seconds{phase="total"}) > 120
+        for: 60m
+        annotations:
+          summary: "Missing SLA: Processing Time"
+          description: "95th percentile processing time is {{ $value | humanizeDuration }}. SLA requires <2m."
+        labels:
+          severity: warning
+          component: sla
