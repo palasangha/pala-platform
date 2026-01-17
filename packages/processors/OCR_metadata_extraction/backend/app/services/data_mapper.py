@@ -761,3 +761,102 @@ class DataMapper:
         }
 
         return collection_metadata
+
+    @staticmethod
+    def merge_enriched_with_ocr(
+        ocr_data: Dict[str, Any],
+        enriched_data: Dict[str, Any],
+        collection_id: Optional[str] = None,
+        file_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Merge enriched data with OCR-mapped data to produce final Archipelago format
+
+        This method combines OCR data mapped to Archipelago template format with
+        enriched metadata from the MCP agents, with enriched data taking priority.
+
+        Args:
+            ocr_data: Raw OCR data from providers
+            enriched_data: Enriched data from MCP enrichment pipeline
+                          Contains: metadata, document, content, analysis sections
+            collection_id: Optional collection ID for the document
+            file_id: Optional file ID reference
+
+        Returns:
+            Complete Archipelago-formatted document with:
+            - Base structure from OCR mapping
+            - Enhanced fields from enrichment agents
+            - Metadata priority: enriched_data > ocr_data
+        """
+        try:
+            # Step 1: Map OCR data to Archipelago format
+            base_data = DataMapper.map_ocr_to_archipelago(
+                ocr_data=ocr_data,
+                collection_id=collection_id,
+                file_id=file_id,
+                apply_required_format=True
+            )
+
+            if not enriched_data:
+                logger.warning("No enriched data provided, returning OCR-mapped data only")
+                return base_data
+
+            # Step 2: Merge enriched data sections (with priority over base data)
+
+            # Metadata section - enriched metadata overrides OCR metadata
+            if 'metadata' in enriched_data:
+                if 'metadata' not in base_data:
+                    base_data['metadata'] = {}
+
+                enriched_metadata = enriched_data.get('metadata', {})
+                for key, value in enriched_metadata.items():
+                    if value is not None and value != {} and value != []:
+                        base_data['metadata'][key] = value
+
+            # Document section - enriched document info overrides OCR
+            if 'document' in enriched_data:
+                if 'document' not in base_data:
+                    base_data['document'] = {}
+
+                enriched_document = enriched_data.get('document', {})
+                for key, value in enriched_document.items():
+                    if value is not None and value != {} and value != []:
+                        base_data['document'][key] = value
+
+            # Content section - enriched content overrides OCR content
+            if 'content' in enriched_data:
+                if 'content' not in base_data:
+                    base_data['content'] = {}
+
+                enriched_content = enriched_data.get('content', {})
+                for key, value in enriched_content.items():
+                    if value is not None and value != {} and value != []:
+                        base_data['content'][key] = value
+
+            # Analysis section - enriched analysis completely replaces OCR analysis
+            if 'analysis' in enriched_data:
+                enriched_analysis = enriched_data.get('analysis', {})
+                if enriched_analysis:
+                    base_data['analysis'] = enriched_analysis
+
+            # Step 3: Add enrichment metadata
+            base_data['_enrichment_metadata'] = {
+                'enriched_at': datetime.utcnow().isoformat(),
+                'enrichment_version': '1.0',
+                'sections_enriched': list(enriched_data.keys())
+            }
+
+            logger.info(f"Successfully merged enriched data with OCR-mapped data")
+            logger.debug(f"Enriched sections: {list(enriched_data.keys())}")
+
+            return base_data
+
+        except Exception as e:
+            logger.error(f"Error merging enriched data with OCR data: {e}", exc_info=True)
+            # Fall back to returning OCR-mapped data only
+            return DataMapper.map_ocr_to_archipelago(
+                ocr_data=ocr_data,
+                collection_id=collection_id,
+                file_id=file_id,
+                apply_required_format=True
+            )

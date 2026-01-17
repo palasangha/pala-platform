@@ -16,6 +16,7 @@ import logging
 from app.services.ocr_service import OCRService
 from app.services.bulk_processor import BulkProcessor
 from app.services.nsq_job_coordinator import NSQJobCoordinator
+from app.config import Config
 from app.utils.decorators import token_required
 from app.models import mongo
 from app.models.bulk_job import BulkJob
@@ -574,25 +575,33 @@ def pause_job(current_user_id, job_id):
             return jsonify({'error': 'Job not found or unauthorized'}), 404
 
         # Check if processor is active
-        if job_id not in active_processors:
+        if job_id in active_processors:
+            processor = active_processors[job_id]
+            # Pause the processor
+            processor.pause()
+            msg = 'Job paused successfully'
+            state = processor.get_state()
+        elif Config.USE_NSQ:
+            # Use NSQ-based pausing
+            coordinator = NSQJobCoordinator()
+            coordinator.pause_job(job_id)
+            msg = 'Job pause request sent to NSQ'
+            state = 'pausing'
+        else:
             return jsonify({'error': 'Job is not currently running or already completed'}), 400
 
-        processor = active_processors[job_id]
-
-        # Pause the processor
-        processor.pause()
-
         # Update job status
-        processing_jobs[job_id]['status'] = 'paused'
+        if job_id in processing_jobs:
+            processing_jobs[job_id]['status'] = 'paused'
         BulkJob.update_status(mongo, job_id, 'paused')
 
         logger.info(f"Job {job_id} paused by user {current_user_id}")
 
         return jsonify({
             'success': True,
-            'message': 'Job paused successfully',
+            'message': msg,
             'job_id': job_id,
-            'state': processor.get_state()
+            'state': state
         }), 200
 
     except Exception as e:
@@ -611,25 +620,33 @@ def resume_job(current_user_id, job_id):
             return jsonify({'error': 'Job not found or unauthorized'}), 404
 
         # Check if processor is active
-        if job_id not in active_processors:
+        if job_id in active_processors:
+            processor = active_processors[job_id]
+            # Resume the processor
+            processor.resume()
+            msg = 'Job resumed successfully'
+            state = processor.get_state()
+        elif Config.USE_NSQ:
+            # Use NSQ-based resumption
+            coordinator = NSQJobCoordinator()
+            coordinator.resume_job(job_id)
+            msg = 'Job resume request sent to NSQ'
+            state = 'resuming'
+        else:
             return jsonify({'error': 'Job is not currently running'}), 400
 
-        processor = active_processors[job_id]
-
-        # Resume the processor
-        processor.resume()
-
         # Update job status
-        processing_jobs[job_id]['status'] = 'processing'
+        if job_id in processing_jobs:
+            processing_jobs[job_id]['status'] = 'processing'
         BulkJob.update_status(mongo, job_id, 'processing')
 
         logger.info(f"Job {job_id} resumed by user {current_user_id}")
 
         return jsonify({
             'success': True,
-            'message': 'Job resumed successfully',
+            'message': msg,
             'job_id': job_id,
-            'state': processor.get_state()
+            'state': state
         }), 200
 
     except Exception as e:
@@ -648,25 +665,33 @@ def stop_job(current_user_id, job_id):
             return jsonify({'error': 'Job not found or unauthorized'}), 404
 
         # Check if processor is active
-        if job_id not in active_processors:
+        if job_id in active_processors:
+            processor = active_processors[job_id]
+            # Stop the processor
+            processor.stop()
+            msg = 'Job cancelled successfully'
+            state = processor.get_state()
+        elif Config.USE_NSQ:
+            # Use NSQ-based cancellation
+            coordinator = NSQJobCoordinator()
+            coordinator.cancel_job(job_id)
+            msg = 'Job cancellation request sent to NSQ'
+            state = 'cancelled'
+        else:
             return jsonify({'error': 'Job is not currently running'}), 400
 
-        processor = active_processors[job_id]
-
-        # Stop the processor
-        processor.stop()
-
         # Update job status
-        processing_jobs[job_id]['status'] = 'cancelled'
+        if job_id in processing_jobs:
+            processing_jobs[job_id]['status'] = 'cancelled'
         BulkJob.update_status(mongo, job_id, 'cancelled')
 
         logger.info(f"Job {job_id} stopped by user {current_user_id}")
 
         return jsonify({
             'success': True,
-            'message': 'Job cancelled successfully',
+            'message': msg,
             'job_id': job_id,
-            'state': processor.get_state()
+            'state': state
         }), 200
 
     except Exception as e:

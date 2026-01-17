@@ -570,6 +570,30 @@ const BulkOCRProcessor: React.FC = () => {
     }
   };
 
+  const handleCancelProcessing = async () => {
+    if (!currentJobId) return;
+
+    if (!confirm('Are you sure you want to cancel the ongoing processing? Progress will be lost.')) {
+      return;
+    }
+
+    try {
+      const response = await authenticatedFetch(`/api/bulk/stop/${currentJobId}`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to cancel job');
+      }
+
+      alert('Job cancellation request sent successfully');
+      // The polling will pick up the 'cancelled' status eventually,
+      // but we can also stop it manually here if we want.
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to cancel job');
+    }
+  };
+
   const handleUploadToArchipelago = async (jobId: string) => {
     console.log(`[UPLOAD] Starting Archipelago upload for job: ${jobId}`);
     
@@ -1074,21 +1098,27 @@ const BulkOCRProcessor: React.FC = () => {
             ({state.progress.percentage}%)
           </p>
 
-          {/* Sample Results Button - Show after some files are processed */}
-          {state.progress.current > 0 && currentJobId && (
-            <div className="mt-4 pt-4 border-t border-gray-300">
-              <button
-                onClick={handleDownloadSampleResults}
-                className="w-full px-4 py-2 bg-orange-500 text-white font-semibold rounded-lg hover:bg-orange-600 transition-colors flex items-center justify-center gap-2"
-              >
-                <Download className="w-5 h-5" />
-                Download Sample Results ({state.progress.current} files)
-              </button>
-              <p className="text-xs text-gray-500 mt-2 text-center">
-                💡 Download processed results so far to verify OCR quality before completion
-              </p>
-            </div>
-          )}
+          {/* Cancel Button */}
+          <div className="mt-4 flex gap-2">
+            <button
+              onClick={handleDownloadSampleResults}
+              className="flex-1 px-4 py-2 bg-orange-500 text-white font-semibold rounded-lg hover:bg-orange-600 transition-colors flex items-center justify-center gap-2"
+            >
+              <Download className="w-5 h-5" />
+              Download Samples ({state.progress.current})
+            </button>
+            <button
+              onClick={handleCancelProcessing}
+              className="flex-1 px-4 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition-colors flex items-center justify-center gap-2"
+            >
+              <LogOut className="w-5 h-5 rotate-180" />
+              Cancel Job
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 mt-2 text-center">
+            💡 Download steps so far to verify quality, or cancel if something is wrong
+          </p>
+        </div>
         </div>
       )}
 
@@ -1490,8 +1520,6 @@ const BulkOCRProcessor: React.FC = () => {
             </div>
           </div>
         </div>
-      )}
-      </div>
       )}
       </main>
     </div>

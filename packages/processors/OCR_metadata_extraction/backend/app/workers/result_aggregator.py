@@ -13,6 +13,16 @@ from app.models.bulk_job import BulkJob
 
 logger = logging.getLogger(__name__)
 
+# Import enrichment coordinator if available
+try:
+    import sys
+    sys.path.insert(0, '/app/enrichment_service')
+    from coordinator.enrichment_coordinator import trigger_enrichment_after_ocr
+    ENRICHMENT_AVAILABLE = True
+except ImportError:
+    ENRICHMENT_AVAILABLE = False
+    logger.warning("Enrichment service not available")
+
 
 class ResultAggregator:
     """Monitors NSQ jobs for completion and generates final reports"""
@@ -229,6 +239,31 @@ class ResultAggregator:
             BulkJob.mark_as_completed(self.mongo, job_id, final_results)
 
             logger.info(f"Job {job_id} aggregation completed successfully")
+
+            # Trigger enrichment pipeline if available and enabled
+            if ENRICHMENT_AVAILABLE and os.getenv('ENRICHMENT_ENABLED', 'true').lower() == 'true':
+                try:
+                    collection_id = job.get('collection_id', 'auto')
+                    collection_metadata = {
+                        'collection_id': collection_id,
+                        'collection_name': job.get('collection_name', 'Unknown'),
+                        'archive_name': job.get('archive_name', 'Unknown'),
+                        'total_documents': len(results)
+                    }
+
+                    enrichment_job_id = trigger_enrichment_after_ocr(
+                        ocr_job_id=job_id,
+                        collection_id=collection_id,
+                        collection_metadata=collection_metadata
+                    )
+
+                    if enrichment_job_id:
+                        logger.info(f"Triggered enrichment job {enrichment_job_id} for OCR job {job_id}")
+                    else:
+                        logger.warning(f"Failed to trigger enrichment for OCR job {job_id}")
+
+                except Exception as enrich_error:
+                    logger.error(f"Error triggering enrichment: {enrich_error}", exc_info=True)
 
         except Exception as e:
             logger.error(f"Failed to aggregate results for job {job_id}: {e}", exc_info=True)
