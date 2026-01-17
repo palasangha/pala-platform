@@ -12,12 +12,14 @@ import logging
 import os
 from datetime import datetime
 from typing import Dict, Any, Optional
+from concurrent.futures import ThreadPoolExecutor
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 import nsq
 
 # Import our enrichment components
 from enrichment_service.workers.agent_orchestrator import AgentOrchestrator
+from enrichment_service.mcp_client.client import MCPClient
 from enrichment_service.schema.validator import SchemaValidator
 from enrichment_service.models.enrichment_job import EnrichmentJob
 from enrichment_service.models.enriched_document import EnrichedDocument
@@ -55,8 +57,17 @@ class EnrichmentWorker:
             logger.error(f"✗ MongoDB connection failed: {e}")
             self.db = None
 
-        # Initialize components
-        self.orchestrator = AgentOrchestrator(self.config)
+        # Initialize MCP client for agents
+        self.mcp_client = MCPClient(
+            server_url=self.config.get('MCP_SERVER_URL', 'ws://localhost:3000')
+        )
+
+        # Initialize components with proper parameters
+        self.orchestrator = AgentOrchestrator(
+            mcp_client=self.mcp_client,
+            schema_path=self.config.get('SCHEMA_PATH'),
+            db=self.db
+        )
         self.schema_validator = SchemaValidator(self.config['SCHEMA_PATH'])
         self.review_queue = ReviewQueue(self.db) if self.db else None
         self.coordinator = EnrichmentCoordinator(self.config)
@@ -66,7 +77,10 @@ class EnrichmentWorker:
         self.nsq_port = self.config['NSQD_PORT']
         self.lookupd_http_addresses = self.config['LOOKUPD_HTTP_ADDRESSES']
         self.enrichment_topic = self.config['ENRICHMENT_TOPIC']
-        self.channel = self.config['ENRICHMENT_CHANNEL']
+        self.enrichment_channel = self.config['ENRICHMENT_CHANNEL']
+
+        # Thread pool for async processing in sync NSQ handler
+        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="enrichment_worker")
 
         logger.info(f"EnrichmentWorker initialized - NSQ: {self.nsq_host}:{self.nsq_port}")
 
@@ -153,15 +167,17 @@ class EnrichmentWorker:
                     f"below threshold, routing to review"
                 )
 
-                self.review_queue.create_task(
-                    document_id=document_id,
-                    enrichment_job_id=enrichment_job_id,
-                    reason='completeness_below_threshold',
-                    missing_fields=completeness_report['missing_fields'],
-                    low_confidence_fields=completeness_report['low_confidence_fields']
-                )
-
-                self._record_review(enrichment_job_id)
+                if self.review_queue:
+                    self.review_queue.create_task(
+                        document_id=document_id,
+                        enrichment_job_id=enrichment_job_id,
+                        reason='completeness_below_threshold',
+                        missing_fields=completeness_report['missing_fields'],
+                        low_confidence_fields=completeness_report['low_confidence_fields']
+                    )
+                    self._record_review(enrichment_job_id)
+                else:
+                    logger.warning(f"Review queue not available, document {document_id} not routed for review")
             else:
                 logger.info(f"Document {document_id} passed quality threshold, approved")
 
@@ -296,7 +312,7 @@ class EnrichmentWorker:
 
     def _handle_message(self, message) -> bool:
         """
-        NSQ message handler
+        NSQ message handler - runs async task in thread to avoid blocking NSQ loop
 
         Args:
             message: NSQ message object
@@ -308,16 +324,16 @@ class EnrichmentWorker:
             # Decode message
             task_data = json.loads(message.body.decode('utf-8'))
 
-            # Process asynchronously
-            loop = asyncio.get_event_loop()
-            result = loop.run_until_complete(self.process_task(task_data))
+            # Process in thread pool to avoid blocking NSQ event loop
+            # Create new event loop for this thread
+            result = self._process_task_sync(task_data)
 
             if result:
                 message.finish()  # Acknowledge message
-                logger.debug("Message acknowledged")
+                logger.debug(f"Message acknowledged: task_id={task_data.get('task_id', 'unknown')}")
             else:
                 message.requeue()  # Requeue for retry
-                logger.warning("Message requeued")
+                logger.warning(f"Message requeued: task_id={task_data.get('task_id', 'unknown')}")
 
             return result
 
@@ -329,6 +345,29 @@ class EnrichmentWorker:
         except Exception as e:
             logger.error(f"Error handling NSQ message: {e}", exc_info=True)
             message.requeue()  # Requeue on unexpected errors
+            return False
+
+    def _process_task_sync(self, task_data: Dict[str, Any]) -> bool:
+        """
+        Process task synchronously (wrapper for async process_task)
+
+        Args:
+            task_data: Task data dict
+
+        Returns:
+            True if processed successfully
+        """
+        try:
+            # Create new event loop for this thread (NSQ is sync, we're in sync handler)
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(self.process_task(task_data))
+                return result
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.error(f"Error in sync task processing: {e}", exc_info=True)
             return False
 
     async def process_batch(self, tasks: list) -> Dict[str, int]:

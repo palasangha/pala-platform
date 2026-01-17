@@ -184,8 +184,21 @@ class AgentOrchestrator:
             )
         ]
 
-        # Run in parallel with asyncio.gather
-        metadata_result, entity_result, structure_result = await asyncio.gather(*tasks, return_exceptions=False)
+        # Run in parallel with asyncio.gather (return_exceptions=True to prevent pipeline halt)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Extract results and check for exceptions
+        metadata_result = results[0] if not isinstance(results[0], Exception) else None
+        entity_result = results[1] if not isinstance(results[1], Exception) else None
+        structure_result = results[2] if not isinstance(results[2], Exception) else None
+
+        # Log any agent failures
+        for idx, result in enumerate(results):
+            if isinstance(result, Exception):
+                agent_names = [self.METADATA_AGENT, self.ENTITY_AGENT, self.STRUCTURE_AGENT]
+                logger.warning(f"Phase 1 agent {agent_names[idx]} failed: {result}")
+
+        # Pipeline continues even if individual agents fail (they have fallbacks)
 
         # Merge Phase 1 results
         return {
@@ -209,8 +222,10 @@ class AgentOrchestrator:
 
         # Content agent needs entities to classify subjects properly
         entities = phase1_results.get("entities", {})
+        phase2_results = {"phase": 2, "summary": {}, "keywords": {}, "subjects": {}}
 
         try:
+            # Generate summary with fallback
             summary = await self._invoke_agent_with_fallback(
                 self.CONTENT_AGENT,
                 "generate_summary",
@@ -219,13 +234,27 @@ class AgentOrchestrator:
                     "entities": entities
                 }
             )
+            phase2_results["summary"] = summary or {}
+        except Exception as e:
+            logger.error(f"Phase 2 summary generation failed: {e}", exc_info=True)
+            phase2_results["summary"] = self._get_fallback_result(self.CONTENT_AGENT, "generate_summary")
+            phase2_results["summary_error"] = str(e)
 
+        try:
+            # Extract keywords with fallback
             keywords = await self._invoke_agent_with_fallback(
                 self.CONTENT_AGENT,
                 "extract_keywords",
                 {"text": ocr_data.get("full_text", ocr_data.get("text", ""))}
             )
+            phase2_results["keywords"] = keywords or {}
+        except Exception as e:
+            logger.error(f"Phase 2 keyword extraction failed: {e}", exc_info=True)
+            phase2_results["keywords"] = self._get_fallback_result(self.CONTENT_AGENT, "extract_keywords")
+            phase2_results["keywords_error"] = str(e)
 
+        try:
+            # Classify subjects with fallback
             subjects = await self._invoke_agent_with_fallback(
                 self.CONTENT_AGENT,
                 "classify_subjects",
@@ -234,17 +263,13 @@ class AgentOrchestrator:
                     "entities": entities
                 }
             )
-
-            return {
-                "summary": summary or {},
-                "keywords": keywords or {},
-                "subjects": subjects or {},
-                "phase": 2
-            }
-
+            phase2_results["subjects"] = subjects or {}
         except Exception as e:
-            logger.error(f"Phase 2 error: {e}")
-            return {"phase": 2, "error": str(e)}
+            logger.error(f"Phase 2 subject classification failed: {e}", exc_info=True)
+            phase2_results["subjects"] = self._get_fallback_result(self.CONTENT_AGENT, "classify_subjects")
+            phase2_results["subjects_error"] = str(e)
+
+        return phase2_results
 
     async def _run_phase3(
         self,
@@ -262,7 +287,7 @@ class AgentOrchestrator:
         # Check if Claude Opus is enabled
         if not config.ENABLE_CLAUDE_OPUS:
             logger.info("Phase 3 skipped: Claude Opus disabled")
-            return {"phase": 3, "skipped": True}
+            return {"phase": 3, "skipped": True, "historical_context": "", "significance": ""}
 
         # Prepare context for historical analysis
         entities = phase1_results.get("entities", {})
@@ -270,7 +295,14 @@ class AgentOrchestrator:
         locations = entities.get("locations", [])
         events = entities.get("events", [])
 
+        phase3_results = {
+            "phase": 3,
+            "historical_context": "",
+            "significance": ""
+        }
+
         try:
+            # Research historical context with fallback
             context = await self._invoke_agent_with_fallback(
                 self.CONTEXT_AGENT,
                 "research_historical_context",
@@ -282,25 +314,29 @@ class AgentOrchestrator:
                     "date": ocr_data.get("metadata", {}).get("date", "")
                 }
             )
+            phase3_results["historical_context"] = context or {}
+        except Exception as e:
+            logger.error(f"Phase 3 historical context failed: {e}", exc_info=True)
+            phase3_results["historical_context"] = self._get_fallback_result(self.CONTEXT_AGENT, "research_historical_context")
+            phase3_results["context_error"] = str(e)
 
+        try:
+            # Assess significance with fallback
             significance = await self._invoke_agent_with_fallback(
                 self.CONTEXT_AGENT,
                 "assess_significance",
                 {
                     "text": ocr_data.get("text", ""),
-                    "context": context or {}
+                    "context": phase3_results["historical_context"] or {}
                 }
             )
-
-            return {
-                "historical_context": context or {},
-                "significance": significance or {},
-                "phase": 3
-            }
-
+            phase3_results["significance"] = significance or {}
         except Exception as e:
-            logger.error(f"Phase 3 error: {e}")
-            return {"phase": 3, "error": str(e)}
+            logger.error(f"Phase 3 significance assessment failed: {e}", exc_info=True)
+            phase3_results["significance"] = self._get_fallback_result(self.CONTEXT_AGENT, "assess_significance")
+            phase3_results["significance_error"] = str(e)
+
+        return phase3_results
 
     async def _invoke_agent_with_fallback(
         self,

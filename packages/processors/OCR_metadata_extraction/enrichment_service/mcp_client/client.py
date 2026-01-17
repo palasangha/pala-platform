@@ -9,6 +9,7 @@ import logging
 import uuid
 from typing import Dict, Any, Optional, Callable, List
 from datetime import datetime, timedelta
+from threading import Lock
 import websockets
 from websockets.asyncio.client import ClientConnection
 
@@ -56,6 +57,11 @@ class MCPClient:
         self.connection: Optional[ClientConnection] = None
         self.is_connected = False
         self.pending_requests: Dict[str, asyncio.Future] = {}
+        self.pending_requests_lock = Lock()  # Thread-safe access to pending_requests
+
+        # Request ID tracking to prevent collisions
+        self.request_id_counter = 0
+        self.request_id_lock = Lock()
 
         # Reconnection settings
         self.max_retries = 5
@@ -70,7 +76,21 @@ class MCPClient:
             "reconnections": 0,
             "bytes_sent": 0,
             "bytes_received": 0,
+            "collision_detected": 0
         }
+
+    def _generate_request_id(self) -> str:
+        """
+        Generate unique request ID with collision detection
+
+        Returns:
+            Unique request ID
+        """
+        with self.request_id_lock:
+            # Use monotonic counter with UUID to ensure uniqueness
+            self.request_id_counter += 1
+            unique_id = f"{self.request_id_counter}-{uuid.uuid4().hex[:8]}"
+            return unique_id
 
     async def connect(self) -> None:
         """Connect to MCP server with automatic retry"""
@@ -144,7 +164,7 @@ class MCPClient:
             await self.connect()
 
         self.stats["invocations_total"] += 1
-        request_id = str(uuid.uuid4())
+        request_id = self._generate_request_id()
         timeout = timeout or self.timeout
 
         # Build JSON-RPC 2.0 request
@@ -158,9 +178,16 @@ class MCPClient:
             "id": request_id
         }
 
-        # Create future for response
+        # Create future for response (exception-safe)
         response_future: asyncio.Future = asyncio.Future()
-        self.pending_requests[request_id] = response_future
+
+        # Add to pending requests with collision detection
+        with self.pending_requests_lock:
+            if request_id in self.pending_requests:
+                logger.error(f"Request ID collision detected: {request_id}")
+                self.stats["collision_detected"] += 1
+                raise MCPInvocationError(f"Request ID collision - this should not happen")
+            self.pending_requests[request_id] = response_future
 
         try:
             # Send request
@@ -178,15 +205,22 @@ class MCPClient:
 
         except asyncio.TimeoutError:
             self.stats["invocations_failed"] += 1
+            # Mark future as cancelled to prevent dangling references
+            if not response_future.done():
+                response_future.cancel()
             raise MCPInvocationError(f"Tool invocation timeout after {timeout}s: {tool_name}")
 
         except Exception as e:
             self.stats["invocations_failed"] += 1
+            # Mark future as cancelled on error
+            if not response_future.done():
+                response_future.cancel()
             raise MCPInvocationError(f"Tool invocation failed: {tool_name}: {str(e)}")
 
         finally:
-            # Clean up pending request
-            self.pending_requests.pop(request_id, None)
+            # Clean up pending request (thread-safe)
+            with self.pending_requests_lock:
+                self.pending_requests.pop(request_id, None)
 
     async def _listen(self) -> None:
         """Listen for messages from MCP server"""
@@ -201,32 +235,44 @@ class MCPClient:
                     if "id" in data and ("result" in data or "error" in data):
                         request_id = data["id"]
 
-                        if request_id in self.pending_requests:
-                            future = self.pending_requests[request_id]
+                        with self.pending_requests_lock:
+                            if request_id in self.pending_requests:
+                                future = self.pending_requests[request_id]
 
-                            if "error" in data:
-                                error = data["error"]
-                                future.set_exception(
-                                    MCPInvocationError(f"MCP error {error.get('code')}: {error.get('message')}")
-                                )
+                                # Prevent setting result on already-done future (timeout case)
+                                if not future.done():
+                                    if "error" in data:
+                                        error = data["error"]
+                                        future.set_exception(
+                                            MCPInvocationError(f"MCP error {error.get('code')}: {error.get('message')}")
+                                        )
+                                    else:
+                                        future.set_result(data.get("result"))
+                                else:
+                                    logger.debug(f"Response for already-completed request: {request_id}")
                             else:
-                                future.set_result(data.get("result"))
-                        else:
-                            logger.warning(f"Received response for unknown request: {request_id}")
+                                logger.warning(f"Received response for unknown request: {request_id}")
 
                     # Handle notification
                     elif "method" in data and "id" not in data:
                         logger.debug(f"Received notification: {data.get('method')}")
 
                 except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse message: {e}")
+                    logger.error(f"Failed to parse message (malformed JSON): {e}")
+                    # Log the message for debugging but continue listening
+                    logger.debug(f"Malformed message (first 100 chars): {message[:100]}")
+                    # Continue processing - don't kill connection on bad JSON
+                    continue
+
                 except Exception as e:
-                    logger.error(f"Error processing message: {e}")
+                    logger.error(f"Error processing message: {e}", exc_info=True)
+                    # Continue processing on individual message errors
+                    continue
 
         except asyncio.CancelledError:
             logger.info("Message listening stopped")
         except Exception as e:
-            logger.error(f"Connection lost: {e}")
+            logger.error(f"Connection lost: {e}", exc_info=True)
             self.is_connected = False
 
             # Attempt to reconnect

@@ -7,8 +7,9 @@ Logs Ollama usage (free) for comparison
 
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
+from decimal import Decimal, ROUND_HALF_UP
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 
@@ -93,9 +94,9 @@ class CostTracker:
             'COST_ALERT_THRESHOLD': float(os.getenv('COST_ALERT_THRESHOLD', '80.00'))
         }
 
-    def estimate_task_cost(self, task_name: str) -> Dict[str, float]:
+    def estimate_task_cost(self, task_name: str) -> Dict[str, Any]:
         """
-        Estimate cost for a single task
+        Estimate cost for a single task using Decimal for precision
 
         Args:
             task_name: Name of the task (e.g., 'generate_summary')
@@ -116,10 +117,14 @@ class CostTracker:
             return {'estimated_usd': 0.0, 'model': model}
 
         pricing = self.PRICING[model]
-        cost_usd = (
-            (input_tokens / 1_000_000) * pricing['input'] +
-            (output_tokens / 1_000_000) * pricing['output']
-        )
+
+        # Use Decimal for precise financial calculation to avoid floating point errors
+        input_cost = (Decimal(input_tokens) / Decimal('1000000')) * Decimal(str(pricing['input']))
+        output_cost = (Decimal(output_tokens) / Decimal('1000000')) * Decimal(str(pricing['output']))
+        total_cost = input_cost + output_cost
+
+        # Convert back to float with rounding to 6 decimal places (precision to 0.000001 USD)
+        cost_usd = float(total_cost.quantize(Decimal('0.000001'), rounding=ROUND_HALF_UP))
 
         return {
             'estimated_usd': cost_usd,
@@ -232,7 +237,14 @@ class CostTracker:
             True if recorded successfully
         """
         if self.db is None:
-            logger.debug(f"Database unavailable, cost record skipped")
+            logger.warning(f"Database connection not available, cost record cannot be saved")
+            return False
+
+        # Validate database connection before use
+        try:
+            self.db.client.admin.command('ping')
+        except Exception as e:
+            logger.error(f"Database connection check failed: {e}")
             return False
 
         try:
@@ -253,8 +265,11 @@ class CostTracker:
 
             return True
 
+        except ConnectionFailure as e:
+            logger.error(f"Database connection lost while recording cost: {e}")
+            return False
         except Exception as e:
-            logger.error(f"Error recording API call: {e}")
+            logger.error(f"Error recording API call: {e}", exc_info=True)
             return False
 
     def get_document_costs(self, document_id: str) -> Dict[str, Any]:
@@ -268,9 +283,13 @@ class CostTracker:
             Dict with cost breakdown by model and task
         """
         if self.db is None:
+            logger.warning("Database not available, cannot retrieve document costs")
             return {}
 
         try:
+            # Validate database connection
+            self.db.client.admin.command('ping')
+
             records = list(self.db.cost_records.find({'document_id': document_id}))
 
             breakdown_by_model = {}
@@ -308,8 +327,11 @@ class CostTracker:
                 'api_calls': len(records)
             }
 
+        except ConnectionFailure as e:
+            logger.error(f"Database connection failed retrieving document costs: {e}")
+            return {}
         except Exception as e:
-            logger.error(f"Error getting document costs: {e}")
+            logger.error(f"Error getting document costs: {e}", exc_info=True)
             return {}
 
     def get_job_costs(self, enrichment_job_id: str) -> Dict[str, Any]:
@@ -323,9 +345,13 @@ class CostTracker:
             Job-level cost summary
         """
         if self.db is None:
+            logger.warning("Database not available, cannot retrieve job costs")
             return {}
 
         try:
+            # Validate database connection
+            self.db.client.admin.command('ping')
+
             records = list(self.db.cost_records.find({'enrichment_job_id': enrichment_job_id}))
 
             if not records:
@@ -366,8 +392,11 @@ class CostTracker:
                 'api_calls': len(records)
             }
 
+        except ConnectionFailure as e:
+            logger.error(f"Database connection failed retrieving job costs: {e}")
+            return {}
         except Exception as e:
-            logger.error(f"Error getting job costs: {e}")
+            logger.error(f"Error getting job costs: {e}", exc_info=True)
             return {}
 
     def get_daily_costs(self, date: Optional[datetime] = None) -> Dict[str, Any]:
@@ -375,20 +404,27 @@ class CostTracker:
         Get costs for a specific day
 
         Args:
-            date: Date to query (default: today)
+            date: Date to query (default: today UTC). Should be timezone-aware or UTC.
 
         Returns:
             Daily cost summary
         """
         if self.db is None:
+            logger.warning("Database not available, cannot retrieve daily costs")
             return {}
 
         if date is None:
-            date = datetime.utcnow()
+            date = datetime.now(timezone.utc)
+        elif date.tzinfo is None:
+            # If timezone-naive, assume UTC
+            date = date.replace(tzinfo=timezone.utc)
 
         try:
-            # Get start and end of day
-            start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0)
+            # Validate database connection
+            self.db.client.admin.command('ping')
+
+            # Get start and end of day (in UTC)
+            start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
             end_of_day = start_of_day + timedelta(days=1)
 
             records = list(self.db.cost_records.find({
@@ -427,8 +463,11 @@ class CostTracker:
                 'api_calls': len(records)
             }
 
+        except ConnectionFailure as e:
+            logger.error(f"Database connection failed retrieving daily costs: {e}")
+            return {}
         except Exception as e:
-            logger.error(f"Error getting daily costs: {e}")
+            logger.error(f"Error getting daily costs: {e}", exc_info=True)
             return {}
 
     def check_budget(self, time_period: str = 'daily') -> Dict[str, Any]:
@@ -450,6 +489,9 @@ class CostTracker:
             start_of_month = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             try:
                 if self.db:
+                    # Validate database connection
+                    self.db.client.admin.command('ping')
+
                     records = list(self.db.cost_records.find({
                         'timestamp': {'$gte': start_of_month}
                     }))
@@ -470,7 +512,11 @@ class CostTracker:
                     }
                 else:
                     costs = {'total_cost_usd': 0.0}
-            except:
+            except ConnectionFailure as e:
+                logger.error(f"Database connection failed checking monthly budget: {e}")
+                costs = {'total_cost_usd': 0.0}
+            except Exception as e:
+                logger.error(f"Error checking monthly budget: {e}", exc_info=True)
                 costs = {'total_cost_usd': 0.0}
 
             budget = self.config['MONTHLY_BUDGET_USD']
