@@ -1,0 +1,18 @@
+# Testing requirements for enrichment service
+
+# Core testing
+pytest>=7.0.0
+pytest-asyncio>=0.20.0
+pytest-cov>=4.0.0
+pytest-timeout>=2.1.0
+pytest-mock>=3.10.0
+
+# Mocking and fixtures
+mongomock>=4.1.2
+unittest-mock>=1.5.0
+
+# Async support
+asynctest>=0.13.0
+
+# Code quality
+pytest-xdist>=3.0.0  # Parallel test execution
