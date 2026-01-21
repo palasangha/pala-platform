@@ -16,6 +16,8 @@ import { SwarmDashboard } from '@/pages/SwarmDashboard';
 import SystemSettings from '@/pages/SystemSettings';
 import OCRChainBuilder from '@/pages/OCRChainBuilder';
 import OCRChainResults from '@/pages/OCRChainResults';
+import VerificationDashboard from '@/pages/VerificationDashboard';
+import VerificationDetail from '@/pages/VerificationDetail';
 import AppLayout from '@/components/Layout/AppLayout';
 
 const queryClient = new QueryClient({
@@ -159,6 +161,22 @@ function App() {
             element={
               <ProtectedRoute>
                 <SystemSettings />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/verification"
+            element={
+              <ProtectedRoute>
+                <VerificationDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/verification/:imageId"
+            element={
+              <ProtectedRoute>
+                <VerificationDetail />
               </ProtectedRoute>
             }
           />

@@ -16,6 +16,7 @@ def register_blueprints(app):
     from app.routes.langchain_routes import langchain_bp
     from app.routes.ocr_chains import ocr_chains_bp
     from app.routes.images import images_bp
+    from app.routes.verification import verification_bp
 
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(projects_bp, url_prefix='/api/projects')
@@ -31,3 +32,4 @@ def register_blueprints(app):
     app.register_blueprint(langchain_bp)
     app.register_blueprint(ocr_chains_bp)
     app.register_blueprint(images_bp)
+    app.register_blueprint(verification_bp)
