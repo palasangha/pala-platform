@@ -28,3 +28,4 @@ from app.models.project import Project
 from app.models.image import Image
 from app.models.bulk_job import BulkJob
 from app.models.export import Export
+from app.models.verification_audit import VerificationAudit
