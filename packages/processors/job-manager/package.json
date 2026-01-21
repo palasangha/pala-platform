@@ -1,0 +1,28 @@
+{
+  "name": "@pala/job-manager",
+  "version": "0.1.0",
+  "description": "Job management service for Pala Platform processors",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "jest",
+    "lint": "eslint src --ext .ts"
+  },
+  "keywords": [
+    "pala",
+    "job",
+    "queue",
+    "processor"
+  ],
+  "author": "Pala Platform",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "eventemitter3": "^5.0.1"
+  }
+}
