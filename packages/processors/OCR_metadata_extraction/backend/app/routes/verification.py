@@ -29,10 +29,22 @@ def get_verification_queue():
     try:
         current_user = get_current_user()
         
-        # Get query parameters
+        # Get query parameters with validation
         status = request.args.get('status', 'pending_verification')
-        skip = int(request.args.get('skip', 0))
-        limit = int(request.args.get('limit', 50))
+        if status not in ['pending_verification', 'verified', 'rejected']:
+            return jsonify({'success': False, 'error': 'Invalid status value'}), 400
+        
+        try:
+            skip = int(request.args.get('skip', 0))
+            limit = int(request.args.get('limit', 50))
+        except ValueError:
+            return jsonify({'success': False, 'error': 'Invalid pagination parameters'}), 400
+        
+        # Validate pagination ranges
+        if skip < 0:
+            return jsonify({'success': False, 'error': 'skip must be non-negative'}), 400
+        if limit < 1 or limit > 100:
+            return jsonify({'success': False, 'error': 'limit must be between 1 and 100'}), 400
         
         # Get images by verification status
         images = Image.find_by_verification_status(mongo.mongo, status, skip, limit)

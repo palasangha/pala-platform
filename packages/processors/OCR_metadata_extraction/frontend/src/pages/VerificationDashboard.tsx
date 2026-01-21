@@ -90,10 +90,10 @@ export default function VerificationDashboard() {
   };
 
   const handleSelectAll = () => {
-    if (selectedItems.size === items.length) {
+    if (selectedItems.size === filteredItems.length) {
       setSelectedItems(new Set());
     } else {
-      setSelectedItems(new Set(items.map(item => item.id)));
+      setSelectedItems(new Set(filteredItems.map(item => item.id)));
     }
   };
 
@@ -286,7 +286,7 @@ export default function VerificationDashboard() {
                     <th className="px-6 py-3 text-left">
                       <input
                         type="checkbox"
-                        checked={selectedItems.size === items.length}
+                        checked={filteredItems.length > 0 && selectedItems.size === filteredItems.length}
                         onChange={handleSelectAll}
                         className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                       />

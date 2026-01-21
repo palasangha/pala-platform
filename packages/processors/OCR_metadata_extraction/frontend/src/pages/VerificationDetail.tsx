@@ -236,8 +236,15 @@ export default function VerificationDetail() {
                 alt={image.original_filename}
                 className="max-w-full max-h-[500px] object-contain"
                 onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = 'none';
-                  (e.target as HTMLImageElement).parentElement!.innerHTML = '<div class="text-gray-500">Preview not available</div>';
+                  const target = e.target as HTMLImageElement;
+                  const parent = target.parentElement;
+                  if (parent) {
+                    target.style.display = 'none';
+                    const errorDiv = document.createElement('div');
+                    errorDiv.className = 'text-gray-500';
+                    errorDiv.textContent = 'Preview not available';
+                    parent.appendChild(errorDiv);
+                  }
                 }}
               />
             </div>
@@ -346,6 +353,7 @@ export default function VerificationDetail() {
                 onClick={handleVerify}
                 disabled={saving || hasUnsavedChanges}
                 className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
+                title={hasUnsavedChanges ? 'Please save your changes before verifying' : ''}
               >
                 <CheckCircle className="w-5 h-5" />
                 <span>Verify</span>
