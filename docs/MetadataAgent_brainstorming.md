@@ -122,6 +122,22 @@ Refer to **Reference: Output Schema (Full)** at the end of this document.
 
 **Handling Out-of-Schema Metadata**: The `extraction_insights` array captures emergent signals (tone, sentiment, style, formality, audience, certainty, rhetorical_patterns, writing_quality, genre, etc.) that enrich the document but don't fit rigidly into Historical Letters catalog fields. Each insight includes category, value, confidence score, source (ai or user), and explanation. This approach preserves maximum data without forcing unnatural mappings into schema constraints.
 
+### Schema Versioning (Simple)
+- **schema_version**: Add a single SemVer string in the output payload, e.g., `"1.0.0"`.
+- **Policy**: MINOR/PATCH are additive; MAJOR indicates breaking changes.
+- **Default**: If the client doesn’t request a version, the agent returns the latest.
+- **Optional Request Param**: `outputSchemaVersion` in `tools/invoke` arguments to pin a specific version. If unsupported, the server returns an error listing supported versions.
+
+Example invocation args snippet:
+```json
+{
+  "toolName": "extract_metadata",
+  "arguments": {
+    "outputSchemaVersion": "1.0.0"
+  }
+}
+```
+
 ### Core Responsibilities
 - ✅ Extract entities (people, places, organizations, events)
 - ✅ Identify document type and structure
@@ -294,6 +310,7 @@ Actually, reconsider: Option C might be useful for Archipelago integration. If w
 {
   "file_id": "string",
   "metadata": {
+    "schema_version": "1.0.0",
     "historical_document_schema": {
       "metadata": {
         "id": "string - unique identifier",
