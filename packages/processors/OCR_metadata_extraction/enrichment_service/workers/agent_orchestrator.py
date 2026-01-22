@@ -30,6 +30,9 @@ from enrichment_service.schema.validator import HistoricalLettersValidator
 from enrichment_service.config import config
 from enrichment_service.utils.budget_manager import BudgetManager
 from enrichment_service.utils.cost_tracker import CostTracker
+from enrichment_service.errors.error_types import get_error_type, ErrorType
+from enrichment_service.errors.retry_strategy import get_retry_strategy
+from enrichment_service.config.timeouts import get_tool_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -113,8 +116,24 @@ class AgentOrchestrator:
                 phase3_results = {'historical_context': '', 'significance': '', 'biographies': {}}
             phase3_duration = (datetime.utcnow() - phase3_start).total_seconds() * 1000
 
-            # Merge results into target schema
-            enriched_data = self._merge_results(phase1_results, phase2_results, phase3_results)
+            # Detect if OCR data contains structured extraction
+            has_structured_ocr = 'structured_data' in ocr_data
+            extraction_mode = ocr_data.get('extraction_mode', 'text_only')
+
+            if has_structured_ocr:
+                logger.info(f"OCR includes structured extraction (mode: {extraction_mode})")
+                lmstudio_structured = ocr_data.get('structured_data', {})
+                # Merge results with priority handling
+                enriched_data = self._merge_results_with_ocr(
+                    lmstudio_structured,
+                    phase1_results,
+                    phase2_results,
+                    phase3_results
+                )
+            else:
+                logger.info("OCR is text-only, using agent results only")
+                # Merge results into target schema
+                enriched_data = self._merge_results(phase1_results, phase2_results, phase3_results)
 
             # Validate and calculate completeness
             completeness = self.validator.calculate_completeness(enriched_data)
@@ -343,52 +362,69 @@ class AgentOrchestrator:
         agent_id: str,
         tool_name: str,
         params: Dict[str, Any],
-        max_retries: int = 3
+        max_retries: Optional[int] = None
     ) -> Dict[str, Any]:
         """
-        Invoke agent tool with retry logic and fallback
+        Invoke agent tool with adaptive timeout and error-based retry logic
 
         Args:
             agent_id: Agent to invoke
             tool_name: Tool to invoke
             params: Tool parameters
-            max_retries: Max retry attempts
+            max_retries: Max retry attempts (if None, determined by error type)
 
         Returns:
-            Tool result or fallback empty dict
+            Tool result or fallback empty dict with _source indicator
         """
-        for attempt in range(max_retries):
+        # Get adaptive timeout for this tool
+        timeout_seconds = get_tool_timeout(tool_name)
+
+        # Classify error and get retry strategy
+        last_error = None
+        attempt = 0
+
+        while True:
             try:
+                logger.debug(f"Invoking {agent_id}/{tool_name} (attempt {attempt + 1}, timeout: {timeout_seconds}s)")
                 result = await self.mcp_client.invoke_tool(
                     agent_id=agent_id,
                     tool_name=tool_name,
                     arguments=params,
-                    timeout=config.AGENT_TIMEOUT_SECONDS
+                    timeout=timeout_seconds
                 )
                 logger.debug(f"Agent {agent_id} tool {tool_name} succeeded on attempt {attempt + 1}")
+                result["_source"] = "actual"
                 return result
 
-            except MCPInvocationError as e:
-                logger.warning(f"Agent {agent_id} tool {tool_name} failed (attempt {attempt + 1}/{max_retries}): {e}")
+            except Exception as e:
+                last_error = e
+                error_type = get_error_type(e)
+                retry_strategy = get_retry_strategy(error_type)
 
-                if attempt < max_retries - 1:
-                    wait_time = config.AGENT_RETRY_BACKOFF_BASE ** attempt
-                    await asyncio.sleep(wait_time)
-                else:
-                    logger.error(f"Agent {agent_id} tool {tool_name} failed after {max_retries} attempts")
+                logger.warning(
+                    f"Agent {agent_id} tool {tool_name} failed with {error_type.value}: {e} "
+                    f"(attempt {attempt + 1}/{retry_strategy.max_retries + 1})"
+                )
+
+                # Check if we should retry
+                if not retry_strategy.is_retryable or attempt >= retry_strategy.max_retries:
+                    logger.error(
+                        f"Agent {agent_id} tool {tool_name} failed after {attempt + 1} attempts "
+                        f"({error_type.value}): {e}"
+                    )
                     return self._get_fallback_result(agent_id, tool_name)
 
-            except Exception as e:
-                logger.error(f"Unexpected error invoking {agent_id}/{tool_name}: {e}")
-                return self._get_fallback_result(agent_id, tool_name)
-
-        return self._get_fallback_result(agent_id, tool_name)
+                # Calculate backoff and retry
+                attempt += 1
+                wait_time = retry_strategy.get_wait_time(attempt - 1)
+                logger.info(f"Retrying in {wait_time}s (strategy: {retry_strategy.description})")
+                await asyncio.sleep(wait_time)
 
     def _get_fallback_result(self, agent_id: str, tool_name: str) -> Dict[str, Any]:
         """
         Provide fallback result when agent fails
 
-        Uses rule-based or empty extraction
+        Uses rule-based or empty extraction, marked with _source: fallback
         """
         logger.info(f"Using fallback for {agent_id}/{tool_name}")
 
@@ -396,33 +432,33 @@ class AgentOrchestrator:
             ("metadata-agent", "extract_document_type"): {
                 "document_type": "letter",
                 "confidence": 0.5,
-                "_fallback": True
+                "_source": "fallback"
             },
             ("entity-agent", "extract_people"): {
                 "people": [],
-                "_fallback": True
+                "_source": "fallback"
             },
             ("entity-agent", "extract_locations"): {
                 "locations": [],
-                "_fallback": True
+                "_source": "fallback"
             },
             ("structure-agent", "parse_letter_body"): {
                 "body": [],
                 "salutation": "",
                 "closing": "",
-                "_fallback": True
+                "_source": "fallback"
             },
             ("content-agent", "generate_summary"): {
                 "summary": "Summary not available",
-                "_fallback": True
+                "_source": "fallback"
             },
             ("context-agent", "research_historical_context"): {
                 "historical_context": "Context not available",
-                "_fallback": True
+                "_source": "fallback"
             }
         }
 
-        return fallbacks.get((agent_id, tool_name), {"_fallback": True})
+        return fallbacks.get((agent_id, tool_name), {"_source": "fallback"})
 
     def _merge_results(
         self,
@@ -474,6 +510,94 @@ class AgentOrchestrator:
                 "relationships": phase1.get("entities", {}).get("relationships", [])
             }
         }
+
+    def _merge_results_with_ocr(
+        self,
+        lmstudio_data: Dict[str, Any],
+        phase1: Dict[str, Any],
+        phase2: Dict[str, Any],
+        phase3: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Merge LM Studio structured data with enrichment agent results
+
+        Priority:
+        - LM Studio: visible fields (dates, sender/recipient names, structure)
+        - Agents: knowledge-based fields (biographies, context, analysis)
+        """
+        logger.debug("Merging LM Studio structured data with enrichment results")
+
+        # Start with agent results
+        merged = self._merge_results(phase1, phase2, phase3)
+
+        if not lmstudio_data:
+            logger.debug("No structured OCR data, returning agent results only")
+            return merged
+
+        # Merge document section - LM Studio priority for visible fields
+        if 'document' in lmstudio_data:
+            lm_doc = lmstudio_data['document']
+
+            # Date - LM Studio priority (visible in image)
+            if lm_doc.get('date'):
+                merged['document']['date'] = lm_doc['date']
+                logger.debug("Applied LM Studio date extraction")
+
+            # Languages - LM Studio priority (detectable from text)
+            if lm_doc.get('languages'):
+                merged['document']['languages'] = lm_doc['languages']
+                logger.debug("Applied LM Studio language detection")
+
+            # Physical attributes - LM Studio priority (visible)
+            if lm_doc.get('physical_attributes'):
+                if 'physical_attributes' not in merged['document']:
+                    merged['document']['physical_attributes'] = {}
+                for key, value in lm_doc['physical_attributes'].items():
+                    if value:  # Only use non-empty values
+                        merged['document']['physical_attributes'][key] = value
+                logger.debug("Applied LM Studio physical attributes")
+
+            # Correspondence - MERGE both sources
+            if lm_doc.get('correspondence'):
+                if 'correspondence' not in merged['document']:
+                    merged['document']['correspondence'] = {}
+
+                lm_corr = lm_doc['correspondence']
+                merged_corr = merged['document']['correspondence']
+
+                # Sender: LM Studio (name, location, contact), agents (biography)
+                if lm_corr.get('sender'):
+                    if 'sender' not in merged_corr:
+                        merged_corr['sender'] = {}
+                    for field in ['name', 'location', 'contact_info', 'affiliation']:
+                        if lm_corr['sender'].get(field):
+                            merged_corr['sender'][field] = lm_corr['sender'][field]
+                    logger.debug("Applied LM Studio sender information")
+
+                # Recipient: similar logic
+                if lm_corr.get('recipient'):
+                    if 'recipient' not in merged_corr:
+                        merged_corr['recipient'] = {}
+                    for field in ['name', 'location', 'contact_info', 'affiliation']:
+                        if lm_corr['recipient'].get(field):
+                            merged_corr['recipient'][field] = lm_corr['recipient'][field]
+                    logger.debug("Applied LM Studio recipient information")
+
+        # Merge content section - LM Studio priority for visible structure
+        if 'content' in lmstudio_data:
+            lm_content = lmstudio_data['content']
+
+            # LM Studio has priority for structure fields (visible in image)
+            for field in ['full_text', 'salutation', 'body', 'closing', 'signature']:
+                if lm_content.get(field):
+                    merged['content'][field] = lm_content[field]
+            logger.debug("Applied LM Studio content structure")
+
+        # Metadata section - system fields, not from LM Studio
+        # Analysis section - agents only (knowledge-based, not visible in image)
+
+        logger.info("Successfully merged LM Studio structured data with enrichment results")
+        return merged
 
     async def close(self) -> None:
         """Close MCP client connection"""
