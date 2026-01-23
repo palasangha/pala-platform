@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
-import { Play, Download, FileText, BarChart3, FolderOpen, Zap, LogOut, ChevronRight, History, Activity, Server } from 'lucide-react';
+import { Download, BarChart3, FolderOpen, Zap, LogOut, History, Activity, Server } from 'lucide-react';
 import BulkJobHistory from './BulkJobHistory';
 
 interface ProcessingResult {
@@ -78,8 +78,8 @@ interface FolderBrowserState {
 const BulkOCRProcessor: React.FC = () => {
   const navigate = useNavigate();
   const updateAccessToken = useAuthStore((state) => state.updateAccessToken);
-  const [isUploadingToArchipelago, setIsUploadingToArchipelago] = useState(false);
-  const [archipelagoResult, setArchipelagoResult] = useState<{
+  const [isUploadingToArchipelago, setIsUploadingToArchipelago] = useState<boolean>(false);
+  const [, setArchipelagoResult] = useState<{
     success: boolean;
     ami_set_id?: number;
     ami_set_name?: string;
@@ -300,49 +300,43 @@ const BulkOCRProcessor: React.FC = () => {
     }
   };
 
-  const handleNavigateFolder = async (path: string) => {
-    setBrowserState({ ...browserState, isLoading: true });
+  // Folder browser functions - to be used in modal implementation
+  // const handleNavigateFolder = async (path: string) => {
+  //   setBrowserState({ ...browserState, isLoading: true });
+  //   try {
+  //     const response = await authenticatedFetch('/api/bulk/browse-folders', {
+  //       method: 'POST',
+  //       headers: { 'Content-Type': 'application/json' },
+  //       body: JSON.stringify({ path }),
+  //     });
+  //     if (!response.ok) throw new Error('Failed to load folder');
+  //     const data = await response.json();
+  //     setBrowserState({
+  //       ...browserState,
+  //       isLoading: false,
+  //       currentPath: data.current_path,
+  //       folders: data.folders || [],
+  //       files: data.files || [],
+  //       parentPath: data.parent_path,
+  //       error: null,
+  //     });
+  //   } catch (err) {
+  //     setBrowserState({
+  //       ...browserState,
+  //       isLoading: false,
+  //       error: err instanceof Error ? err.message : 'Failed to load folder',
+  //     });
+  //   }
+  // };
 
-    try {
-      const response = await authenticatedFetch('/api/bulk/browse-folders', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ path }),
-      });
+  // const handleSelectFolder = (path: string) => {
+  //   setState({ ...state, folderPath: path, error: null });
+  //   setBrowserState({ ...browserState, isOpen: false });
+  // };
 
-      if (!response.ok) {
-        throw new Error('Failed to load folder');
-      }
-
-      const data = await response.json();
-      setBrowserState({
-        ...browserState,
-        isLoading: false,
-        currentPath: data.current_path,
-        folders: data.folders || [],
-        files: data.files || [],
-        parentPath: data.parent_path,
-        error: null,
-      });
-    } catch (err) {
-      setBrowserState({
-        ...browserState,
-        isLoading: false,
-        error: err instanceof Error ? err.message : 'Failed to load folder',
-      });
-    }
-  };
-
-  const handleSelectFolder = (path: string) => {
-    setState({ ...state, folderPath: path, error: null });
-    setBrowserState({ ...browserState, isOpen: false });
-  };
-
-  const handleCloseBrowser = () => {
-    setBrowserState({ ...browserState, isOpen: false });
-  };
+  // const handleCloseBrowser = () => {
+  //   setBrowserState({ ...browserState, isOpen: false });
+  // };
 
   const pollProgress = async (jobId: string) => {
     const pollInterval = setInterval(async () => {
@@ -567,6 +561,30 @@ const BulkOCRProcessor: React.FC = () => {
         ...state,
         error: err instanceof Error ? err.message : 'Sample results download failed',
       });
+    }
+  };
+
+  const handleCancelProcessing = async () => {
+    if (!currentJobId) return;
+
+    if (!confirm('Are you sure you want to cancel the ongoing processing? Progress will be lost.')) {
+      return;
+    }
+
+    try {
+      const response = await authenticatedFetch(`/api/bulk/stop/${currentJobId}`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to cancel job');
+      }
+
+      alert('Job cancellation request sent successfully');
+      // The polling will pick up the 'cancelled' status eventually,
+      // but we can also stop it manually here if we want.
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to cancel job');
     }
   };
 
@@ -897,602 +915,275 @@ const BulkOCRProcessor: React.FC = () => {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto p-6">
-      {showHistory ? (
-        <BulkJobHistory />
-      ) : (
-      <div className="bg-white rounded-lg shadow-lg p-6">
-        <h2 className="text-3xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-          <BarChart3 className="w-8 h-8 text-blue-600" />
-          Bulk OCR Processing
-        </h2>
+        {showHistory ? (
+          <BulkJobHistory />
+        ) : (
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <h2 className="text-3xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+              <BarChart3 className="w-8 h-8 text-blue-600" />
+              Bulk OCR Processing
+            </h2>
 
-      {/* Configuration Panel */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-        {/* Input Configuration */}
-        <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-800 mb-4">Processing Configuration</h2>
+            {/* Configuration Panel */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+              {/* Input Configuration */}
+              <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                <h2 className="text-lg font-semibold text-gray-800 mb-4">Processing Configuration</h2>
 
-          {/* Folder Path */}
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">Folder Path</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="/path/to/folder"
-                value={state.folderPath}
-                onChange={handleFolderPathChange}
-                disabled={state.isProcessing}
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <button
-                onClick={handleOpenBrowser}
-                disabled={state.isProcessing}
-                className="px-3 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-400 transition-colors flex items-center gap-1"
-                title="Browse server folders"
-              >
-                <FolderOpen className="w-4 h-4" />
-                Browse
-              </button>
-            </div>
-            <p className="text-xs text-gray-500 mt-2">
-              💡 <strong>Note:</strong> Paths are from the server machine/Docker container. Use the "Browse" button to select folders, or enter paths like <code className="bg-gray-100 px-1 rounded">/data/Bhushanji/eng-typed</code>
-            </p>
-          </div>
-
-          {/* Provider Selection */}
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">OCR Provider</label>
-            <select
-              value={state.provider}
-              onChange={handleProviderChange}
-              disabled={state.isProcessing}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              {availableProviders ? (
-                availableProviders.map((provider) => (
-                  <option key={provider.name} value={provider.name} disabled={!provider.available}>
-                    {provider.display_name}{!provider.available ? ' (Disabled)' : ''}
-                  </option>
-                ))
-              ) : (
-                <>
-                  <option value="tesseract">Tesseract</option>
-                  <option value="chrome_lens">Chrome Lens</option>
-                  <option value="google_vision">Google Vision</option>
-                  <option value="easyocr">EasyOCR</option>
-                  <option value="ollama">Ollama</option>
-                  <option value="vllm">vLLM</option>
-                  <option value="llamacpp">llama.cpp (Local LLM)</option>
-                  <option value="claude">Claude AI (Anthropic)</option>
-                </>
-              )}
-            </select>
-          </div>
-
-          {/* Recursive Processing */}
-          <div className="mb-4">
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={state.recursive}
-                onChange={(e) => setState({ ...state, recursive: e.target.checked })}
-                disabled={state.isProcessing}
-                className="rounded border-gray-300"
-              />
-              <span className="text-sm font-medium text-gray-700">Process subfolders</span>
-            </label>
-          </div>
-
-          {/* Handwriting Detection */}
-          <div className="mb-4">
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={state.handwriting}
-                onChange={(e) => setState({ ...state, handwriting: e.target.checked })}
-                disabled={state.isProcessing}
-                className="rounded border-gray-300"
-              />
-              <span className="text-sm font-medium text-gray-700">Detect handwriting</span>
-            </label>
-          </div>
-        </div>
-
-        {/* Advanced Options */}
-        <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-800 mb-4">Advanced Options</h2>
-
-          {/* Languages */}
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">Languages</label>
-            <div className="flex flex-wrap gap-2">
-              {['en', 'hi', 'es', 'fr', 'de', 'zh', 'ja'].map((lang) => (
-                <button
-                  key={lang}
-                  onClick={() => handleLanguageToggle(lang)}
-                  disabled={state.isProcessing}
-                  className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${
-                    state.languages.includes(lang)
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-white text-gray-700 border border-gray-300'
-                  }`}
-                >
-                  {lang.toUpperCase()}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Export Formats */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Export Formats</label>
-            <div className="space-y-2">
-              {['json', 'csv', 'text'].map((format) => (
-                <label key={format} className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={state.exportFormats.includes(format)}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        handleFormatToggle(format);
-                      } else {
-                        handleFormatToggle(format);
-                      }
-                    }}
-                    disabled={state.isProcessing}
-                    className="rounded border-gray-300"
-                  />
-                  <span className="text-sm font-medium text-gray-700 capitalize">{format}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Error Display */}
-      {state.error && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-          <p className="text-sm font-medium text-red-800">{state.error}</p>
-        </div>
-      )}
-
-      {/* Progress Bar */}
-      {state.isProcessing && (
-        <div className="mb-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
-          <h3 className="text-sm font-semibold text-gray-800 mb-2">Processing Progress</h3>
-          <div className="mb-2">
-            <div className="w-full bg-gray-200 rounded-full h-2.5">
-              <div
-                className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
-                style={{ width: `${state.progress.percentage}%` }}
-              ></div>
-            </div>
-          </div>
-          <p className="text-sm text-gray-600">
-            {state.progress.current} / {state.progress.total} - {state.progress.filename}
-            ({state.progress.percentage}%)
-          </p>
-
-          {/* Sample Results Button - Show after some files are processed */}
-          {state.progress.current > 0 && currentJobId && (
-            <div className="mt-4 pt-4 border-t border-gray-300">
-              <button
-                onClick={handleDownloadSampleResults}
-                className="w-full px-4 py-2 bg-orange-500 text-white font-semibold rounded-lg hover:bg-orange-600 transition-colors flex items-center justify-center gap-2"
-              >
-                <Download className="w-5 h-5" />
-                Download Sample Results ({state.progress.current} files)
-              </button>
-              <p className="text-xs text-gray-500 mt-2 text-center">
-                💡 Download processed results so far to verify OCR quality before completion
-              </p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Process Button */}
-      <div className="mb-6">
-        <button
-          onClick={handleProcessing}
-          disabled={state.isProcessing}
-          className="w-full px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:bg-gray-400 transition-colors flex items-center justify-center gap-2"
-        >
-          <Play className="w-5 h-5" />
-          {state.isProcessing ? 'Processing...' : 'Start Processing'}
-        </button>
-      </div>
-
-      {/* Results Panel */}
-      {state.results && (
-        <div className="bg-blue-50 p-6 rounded-lg border border-blue-200">
-          <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
-            <BarChart3 className="w-6 h-6 text-blue-600" />
-            Processing Report
-          </h2>
-
-          {/* Summary Statistics */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div className="bg-white p-4 rounded-lg border border-gray-200">
-              <p className="text-sm text-gray-600">Total Files</p>
-              <p className="text-2xl font-bold text-gray-800">
-                {state.results.summary.total_files}
-              </p>
-            </div>
-            <div className="bg-white p-4 rounded-lg border border-gray-200">
-              <p className="text-sm text-gray-600">Successful</p>
-              <p className="text-2xl font-bold text-green-600">
-                {state.results.summary.successful}
-              </p>
-            </div>
-            <div className="bg-white p-4 rounded-lg border border-gray-200">
-              <p className="text-sm text-gray-600">Failed</p>
-              <p className="text-2xl font-bold text-red-600">
-                {state.results.summary.failed}
-              </p>
-            </div>
-            <div className="bg-white p-4 rounded-lg border border-gray-200">
-              <p className="text-sm text-gray-600">Success Rate</p>
-              <p className="text-2xl font-bold text-blue-600">
-                {state.results.summary.total_files > 0
-                  ? ((state.results.summary.successful / state.results.summary.total_files) * 100).toFixed(
-                      1,
-                    )
-                  : '0'}
-                %
-              </p>
-            </div>
-          </div>
-
-          {/* Detailed Statistics */}
-          <div className="bg-white p-4 rounded-lg border border-gray-200 mb-6">
-            <h3 className="text-sm font-semibold text-gray-800 mb-3">Detailed Statistics</h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <p className="text-xs text-gray-600">Total Characters</p>
-                <p className="text-lg font-semibold text-gray-800">
-                  {state.results.summary.statistics.total_characters.toLocaleString()}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-gray-600">Average Confidence</p>
-                <p className="text-lg font-semibold text-gray-800">
-                  {(state.results.summary.statistics.average_confidence * 100).toFixed(1)}%
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-gray-600">Avg Words per File</p>
-                <p className="text-lg font-semibold text-gray-800">
-                  {state.results.summary.statistics.average_words.toFixed(0)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-gray-600">Languages Detected</p>
-                <p className="text-lg font-semibold text-gray-800">
-                  {state.results.summary.statistics.languages.join(', ') || 'None'}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Successful Samples */}
-          {state.results.results_preview.successful_samples.length > 0 && (
-            <div className="bg-white p-4 rounded-lg border border-gray-200 mb-6">
-              <h3 className="text-sm font-semibold text-gray-800 mb-3">
-                ✅ Successfully Processed Files ({state.results.results_preview.successful_samples.length})
-              </h3>
-              <div className="space-y-2 max-h-96 overflow-y-auto">
-                {state.results.results_preview.successful_samples.map((result, idx) => (
-                  <div key={idx} className="p-2 bg-green-50 rounded border border-green-200">
-                    <p className="text-sm font-medium text-gray-800">
-                      {idx + 1}. {result.file}
-                    </p>
-                    <div className="text-xs text-gray-600 grid grid-cols-3 gap-2 mt-1">
-                      <span>Confidence: {(result.confidence * 100).toFixed(1)}%</span>
-                      <span>Language: {result.language}</span>
-                      <span>Chars: {result.text_length.toLocaleString()}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Error Samples */}
-          {state.results.results_preview.error_samples.length > 0 && (
-            <div className="bg-white p-4 rounded-lg border border-gray-200 mb-6">
-              <h3 className="text-sm font-semibold text-gray-800 mb-3">
-                ❌ Failed Files ({state.results.results_preview.error_samples.length})
-              </h3>
-              <div className="space-y-2 max-h-96 overflow-y-auto">
-                {state.results.results_preview.error_samples.map((error, idx) => (
-                  <div key={idx} className="p-2 bg-red-50 rounded border border-red-200">
-                    <p className="text-sm font-medium text-red-800">
-                      {idx + 1}. {error.file}
-                    </p>
-                    <p className="text-xs text-red-600 mt-1">{error.error}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Download Section */}
-          <div className="bg-white p-4 rounded-lg border border-gray-200">
-            <h3 className="text-sm font-semibold text-gray-800 mb-3">Available Reports</h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
-              {Object.entries(state.results.report_files).map(([format, filename]) => (
-                <div key={format} className="p-2 bg-gray-50 rounded text-center text-xs">
-                  <FileText className="w-4 h-4 inline mb-1" />
-                  <p className="font-semibold">{format.toUpperCase()}</p>
-                  <p className="text-gray-600">{filename}</p>
-                </div>
-              ))}
-            </div>
-            <div className="space-y-2">
-              <button
-                onClick={handleDownload}
-                className="w-full px-4 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center gap-2"
-              >
-                <Download className="w-5 h-5" />
-                Download All Reports (ZIP)
-              </button>
-
-              <button
-                onClick={handleCreateProject}
-                disabled={state.isCreatingProject || state.results.results_preview.successful_samples.length === 0}
-                className="w-full px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <FolderOpen className="w-5 h-5" />
-                {state.isCreatingProject ? 'Creating Project...' : 'Create Project for Review'}
-              </button>
-
-              <button
-                onClick={() => currentJobId && handleUploadToArchipelago(currentJobId)}
-                disabled={isUploadingToArchipelago || !currentJobId || state.results.results_preview.successful_samples.length === 0}
-                className="w-full px-4 py-2 bg-purple-600 text-white font-semibold rounded-lg hover:bg-purple-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                </svg>
-                {isUploadingToArchipelago ? 'Uploading to Archipelago...' : 'Upload to Archipelago (AMI Sets)'}
-              </button>
-
-              {state.results.results_preview.successful_samples.length === 0 && (
-                <p className="text-xs text-gray-500 text-center">
-                  No successful files to create project from
-                </p>
-              )}
-
-              {/* AMI Sets Upload Progress - Show BEFORE button when processing */}
-              {archipelagoResult && archipelagoResult.status === 'processing' && (
-                <div className="p-4 rounded-lg border bg-blue-50 border-blue-200 mb-4">
-                  <h4 className="font-semibold text-blue-800 mb-3">⏳ Uploading to Archipelago...</h4>
-                  <div className="space-y-3">
-                    <div className="w-full">
-                      <div className="w-full bg-gray-300 rounded-full h-4 overflow-hidden">
-                        <div 
-                          className="bg-gradient-to-r from-blue-500 to-blue-600 h-4 rounded-full animate-pulse" 
-                          style={{ width: '50%' }}
-                        ></div>
-                      </div>
-                    </div>
-                    <p className="text-sm text-blue-700">
-                      Processing your bulk OCR results and uploading to Archipelago Commons.
-                      This may take 5-30 minutes depending on the file size.
-                    </p>
-                    <div className="text-xs text-blue-600 space-y-1 bg-blue-100 p-2 rounded">
-                      <p className="flex items-center gap-2"><span>✓</span> Files prepared</p>
-                      <p className="flex items-center gap-2"><span>✓</span> Uploading to server</p>
-                      <p className="flex items-center gap-2"><span>⏳</span> Creating AMI Set...</p>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <button
-                onClick={() => currentJobId && handleUploadToArchipelago(currentJobId)}
-                disabled={isUploadingToArchipelago || !currentJobId || state.results.results_preview.successful_samples.length === 0}
-                className="w-full px-4 py-2 bg-purple-600 text-white font-semibold rounded-lg hover:bg-purple-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                </svg>
-                {isUploadingToArchipelago ? 'Uploading to Archipelago...' : 'Upload to Archipelago (AMI Sets)'}
-              </button>
-
-              {/* AMI Sets Upload Result - Success or Error messages */}
-              {archipelagoResult && archipelagoResult.status !== 'processing' && (
-                <div className={`p-4 rounded-lg border ${
-                  archipelagoResult.success && archipelagoResult.status === 'complete'
-                    ? 'bg-green-50 border-green-200'
-                    : 'bg-red-50 border-red-200'
-                }`}>
-                  {archipelagoResult.success && archipelagoResult.status === 'complete' ? (
-                    <>
-                      <h4 className="font-semibold text-green-800 mb-2">✅ AMI Set Created Successfully!</h4>
-                      <dl className="text-sm space-y-1">
-                        <div>
-                          <dt className="inline font-medium text-green-700">AMI Set ID:</dt>
-                          <dd className="inline ml-2 text-green-900">{archipelagoResult.ami_set_id}</dd>
-                        </div>
-                        <div>
-                          <dt className="inline font-medium text-green-700">Name:</dt>
-                          <dd className="inline ml-2 text-green-900">{archipelagoResult.ami_set_name}</dd>
-                        </div>
-                        <div>
-                          <dt className="inline font-medium text-green-700">Documents:</dt>
-                          <dd className="inline ml-2 text-green-900">{archipelagoResult.total_documents}</dd>
-                        </div>
-                      </dl>
-                      <div className="mt-3 p-3 bg-white rounded border border-green-200">
-                        <h5 className="text-xs font-semibold text-green-800 mb-2">Next Steps:</h5>
-                        <ol className="text-xs text-green-700 space-y-1 list-decimal list-inside">
-                          <li>
-                            <a
-                              href={archipelagoResult.message?.split('Process it at: ')[1]}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-purple-600 hover:underline font-medium"
-                            >
-                              Open AMI Set Processing Page →
-                            </a>
-                          </li>
-                          <li>Review the configuration</li>
-                          <li>Click "Process" tab</li>
-                          <li>Choose "Process via Queue" or "Process via Batch"</li>
-                          <li>Monitor the processing progress</li>
-                        </ol>
-                      </div>
-                      <div className="mt-3 p-2 bg-purple-50 rounded border border-purple-200">
-                        <p className="text-xs text-purple-800">
-                          <strong>💡 About AMI Sets:</strong> This method creates proper Drupal file entities with thumbnails,
-                          full PDF metadata, and complete Archipelago integration. No duplicate documents!
-                        </p>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <h4 className="font-semibold text-red-800 mb-2">❌ Upload Failed</h4>
-                      <p className="text-sm text-red-700 mb-2">{archipelagoResult.error}</p>
-                      <p className="text-xs text-red-600">
-                        💡 <strong>Troubleshooting:</strong> Check that your Archipelago instance is reachable and has sufficient disk space. 
-                        Check server logs for more details.
-                      </p>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Folder Browser Modal */}
-      {browserState.isOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col">
-            {/* Modal Header */}
-            <div className="bg-blue-600 text-white p-4 flex justify-between items-center">
-              <h3 className="text-lg font-semibold">Browse Server Folders</h3>
-              <button
-                onClick={handleCloseBrowser}
-                className="text-white hover:bg-blue-700 p-1 rounded"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Info Note */}
-            <div className="bg-blue-50 border-b border-blue-200 p-3">
-              <p className="text-xs text-blue-700">
-                💡 <strong>Note:</strong> These are folders from the server machine/Docker container. Select a folder or navigate to find your data.
-              </p>
-            </div>
-
-            {/* Modal Content */}
-            <div className="flex-1 overflow-y-auto p-4">
-              {browserState.isLoading ? (
-                <div className="flex justify-center items-center h-full">
-                  <div className="text-center">
-                    <div className="w-8 h-8 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-2"></div>
-                    <p className="text-gray-600">Loading folders...</p>
-                  </div>
-                </div>
-              ) : browserState.error ? (
-                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-                  <p className="text-red-800 text-sm">{browserState.error}</p>
-                </div>
-              ) : (
-                <div>
-                  {/* Breadcrumb */}
-                  <div className="mb-4 p-3 bg-gray-50 rounded border border-gray-200 text-sm text-gray-700 font-mono break-all">
-                    {browserState.currentPath || 'Server Root'}
-                  </div>
-
-                  {/* Parent Folder Button */}
-                  {browserState.parentPath && (
+                {/* Folder Path */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Folder Path</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="/path/to/folder"
+                      value={state.folderPath}
+                      onChange={handleFolderPathChange}
+                      disabled={state.isProcessing}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
                     <button
-                      onClick={() => handleNavigateFolder(browserState.parentPath!)}
-                      className="w-full flex items-center gap-2 p-3 hover:bg-gray-50 border border-gray-200 rounded-lg mb-2 text-gray-700 font-medium"
+                      onClick={handleOpenBrowser}
+                      disabled={state.isProcessing}
+                      className="px-3 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-400 transition-colors flex items-center gap-1"
+                      title="Browse server folders"
                     >
-                      <ChevronRight className="w-4 h-4 rotate-180" />
-                      Go to parent folder
+                      <FolderOpen className="w-4 h-4" />
+                      Browse
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    💡 <strong>Note:</strong> Paths are from the server machine/Docker container. Use the "Browse" button to select folders, or enter paths like <code className="bg-gray-100 px-1 rounded">/data/Bhushanji/eng-typed</code>
+                  </p>
+                </div>
+
+                {/* Provider Selection */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">OCR Provider</label>
+                  <select
+                    value={state.provider}
+                    onChange={handleProviderChange}
+                    disabled={state.isProcessing}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {availableProviders ? (
+                      availableProviders.map((provider) => (
+                        <option key={provider.name} value={provider.name} disabled={!provider.available}>
+                          {provider.display_name}{!provider.available ? ' (Disabled)' : ''}
+                        </option>
+                      ))
+                    ) : (
+                      <>
+                        <option value="tesseract">Tesseract</option>
+                        <option value="chrome_lens">Chrome Lens</option>
+                        <option value="google_vision">Google Vision</option>
+                        <option value="easyocr">EasyOCR</option>
+                        <option value="ollama">Ollama</option>
+                        <option value="vllm">vLLM</option>
+                        <option value="llamacpp">llama.cpp (Local LLM)</option>
+                        <option value="claude">Claude AI (Anthropic)</option>
+                      </>
+                    )}
+                  </select>
+                </div>
+
+                {/* Recursive Processing */}
+                <div className="mb-4">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={state.recursive}
+                      onChange={(e) => setState({ ...state, recursive: e.target.checked })}
+                      disabled={state.isProcessing}
+                      className="rounded border-gray-300"
+                    />
+                    <span className="text-sm font-medium text-gray-700">Process subfolders</span>
+                  </label>
+                </div>
+
+                {/* Handwriting Detection */}
+                <div className="mb-4">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={state.handwriting}
+                      onChange={(e) => setState({ ...state, handwriting: e.target.checked })}
+                      disabled={state.isProcessing}
+                      className="rounded border-gray-300"
+                    />
+                    <span className="text-sm font-medium text-gray-700">Detect handwriting</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Advanced Options */}
+              <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                <h2 className="text-lg font-semibold text-gray-800 mb-4">Advanced Options</h2>
+
+                {/* Languages */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Languages</label>
+                  <div className="flex flex-wrap gap-2">
+                    {['en', 'hi', 'es', 'fr', 'de', 'zh', 'ja'].map((lang) => (
+                      <button
+                        key={lang}
+                        onClick={() => handleLanguageToggle(lang)}
+                        disabled={state.isProcessing}
+                        className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${
+                          state.languages.includes(lang)
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-white text-gray-700 border border-gray-300'
+                        }`}
+                      >
+                        {lang.toUpperCase()}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Export Formats */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Export Formats</label>
+                  <div className="space-y-2">
+                    {['json', 'csv', 'text'].map((format) => (
+                      <label key={format} className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={state.exportFormats.includes(format)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              handleFormatToggle(format);
+                            } else {
+                              handleFormatToggle(format);
+                            }
+                          }}
+                          disabled={state.isProcessing}
+                          className="rounded border-gray-300"
+                        />
+                        <span className="text-sm font-medium text-gray-700 capitalize">{format}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Start Button */}
+            <div className="mb-6 flex gap-3">
+              <button
+                onClick={handleProcessing}
+                disabled={state.isProcessing}
+                className="flex-1 px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:bg-gray-400 transition-colors flex items-center justify-center gap-2"
+              >
+                <Zap className="w-5 h-5" />
+                Start Processing
+              </button>
+            </div>
+
+            {/* Error Display */}
+            {state.error && (
+              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-sm font-medium text-red-800">{state.error}</p>
+              </div>
+            )}
+
+            {/* Progress Bar */}
+            {state.isProcessing && (
+              <div className="mb-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
+                <h3 className="text-sm font-semibold text-gray-800 mb-2">Processing Progress</h3>
+                <div className="mb-2">
+                  <div className="w-full bg-gray-200 rounded-full h-2.5">
+                    <div
+                      className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                      style={{ width: `${state.progress.percentage}%` }}
+                    ></div>
+                  </div>
+                </div>
+                <p className="text-sm text-gray-600">
+                  {state.progress.current} / {state.progress.total} - {state.progress.filename}
+                  ({state.progress.percentage}%)
+                </p>
+
+                {/* Cancel Button */}
+                <div className="mt-4 flex gap-2">
+                  <button
+                    onClick={handleDownloadSampleResults}
+                    className="flex-1 px-4 py-2 bg-orange-500 text-white font-semibold rounded-lg hover:bg-orange-600 transition-colors flex items-center justify-center gap-2"
+                  >
+                    <Download className="w-5 h-5" />
+                    Download Samples ({state.progress.current})
+                  </button>
+                  <button
+                    onClick={handleCancelProcessing}
+                    className="flex-1 px-4 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition-colors flex items-center justify-center gap-2"
+                  >
+                    <LogOut className="w-5 h-5 rotate-180" />
+                    Cancel Job
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-2 text-center">
+                  💡 Download steps so far to verify quality, or cancel if something is wrong
+                </p>
+              </div>
+            )}
+
+            {/* Results Display */}
+            {state.results && !state.isProcessing && (
+              <div className="mb-6 bg-green-50 p-6 rounded-lg border border-green-200">
+                <h3 className="text-lg font-semibold text-green-900 mb-4 flex items-center gap-2">
+                  <BarChart3 className="w-5 h-5" />
+                  Processing Complete
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                  <div className="bg-white p-4 rounded-lg border border-green-100">
+                    <p className="text-sm text-gray-600">Total Files</p>
+                    <p className="text-2xl font-bold text-green-600">{state.results.summary.total_files}</p>
+                  </div>
+                  <div className="bg-white p-4 rounded-lg border border-green-100">
+                    <p className="text-sm text-gray-600">Successful</p>
+                    <p className="text-2xl font-bold text-green-600">{state.results.summary.successful}</p>
+                  </div>
+                  <div className="bg-white p-4 rounded-lg border border-green-100">
+                    <p className="text-sm text-gray-600">Failed</p>
+                    <p className="text-2xl font-bold text-red-600">{state.results.summary.failed}</p>
+                  </div>
+                  <div className="bg-white p-4 rounded-lg border border-green-100">
+                    <p className="text-sm text-gray-600">Avg Confidence</p>
+                    <p className="text-2xl font-bold text-blue-600">{state.results.summary.statistics.average_confidence.toFixed(2)}%</p>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 flex-wrap">
+                  <button
+                    onClick={handleDownload}
+                    className="px-4 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
+                  >
+                    <Download className="w-5 h-5" />
+                    Download Results
+                  </button>
+                  <button
+                    onClick={handleCreateProject}
+                    disabled={state.isCreatingProject}
+                    className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:bg-gray-400 transition-colors flex items-center gap-2"
+                  >
+                    <FolderOpen className="w-5 h-5" />
+                    Create Project
+                  </button>
+                  {currentJobId && (
+                    <button
+                      onClick={() => handleUploadToArchipelago(currentJobId!)}
+                      disabled={isUploadingToArchipelago}
+                      className="px-4 py-2 bg-purple-600 text-white font-semibold rounded-lg hover:bg-purple-700 disabled:bg-gray-400 transition-colors flex items-center gap-2"
+                    >
+                      <Server className="w-5 h-5" />
+                      Upload to Archipelago
                     </button>
                   )}
-
-                  {/* Folders List */}
-                  {browserState.folders.length > 0 && (
-                    <div className="mb-4">
-                      <h4 className="text-sm font-semibold text-gray-700 mb-2">📁 Folders ({browserState.folders.length})</h4>
-                      <div className="space-y-2">
-                        {browserState.folders.map((folder) => (
-                          <div key={folder.path} className="flex gap-2">
-                            <button
-                              onClick={() => handleNavigateFolder(folder.path)}
-                              className="flex-1 text-left p-2 hover:bg-blue-50 border border-gray-300 rounded-lg text-blue-600 font-medium flex items-center gap-2 group"
-                            >
-                              <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                              {folder.name}
-                              <span className="text-xs text-gray-500 ml-auto">({folder.file_count} files)</span>
-                            </button>
-                            <button
-                              onClick={() => handleSelectFolder(folder.path)}
-                              className="px-3 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-sm font-medium"
-                              title="Select this folder"
-                            >
-                              Select
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Files List */}
-                  {browserState.files.length > 0 && (
-                    <div className="mb-4">
-                      <h4 className="text-sm font-semibold text-gray-700 mb-2">📄 Image Files ({browserState.files.length})</h4>
-                      <div className="space-y-1 max-h-40 overflow-y-auto">
-                        {browserState.files.map((file) => (
-                          <div
-                            key={file.path}
-                            className="p-2 bg-gray-50 rounded text-sm text-gray-600 flex justify-between items-center"
-                          >
-                            <span className="truncate">{file.name}</span>
-                            <span className="text-xs text-gray-400 ml-2">
-                              {(file.size / 1024).toFixed(1)}KB
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {browserState.folders.length === 0 && browserState.files.length === 0 && (
-                    <div className="p-4 text-center text-gray-500">
-                      <p>No folders or files found</p>
-                    </div>
-                  )}
                 </div>
-              )}
-            </div>
-
-            {/* Modal Footer */}
-            <div className="bg-gray-50 p-4 border-t border-gray-200 flex justify-end gap-2">
-              <button
-                onClick={handleCloseBrowser}
-                className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-100"
-              >
-                Close
-              </button>
-            </div>
+              </div>
+            )}
           </div>
-        </div>
-      )}
-      </div>
-      )}
+        )}
       </main>
     </div>
   );

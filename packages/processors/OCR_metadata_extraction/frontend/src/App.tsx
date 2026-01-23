@@ -18,6 +18,14 @@ import OCRChainBuilder from '@/pages/OCRChainBuilder';
 import OCRChainResults from '@/pages/OCRChainResults';
 import AppLayout from '@/components/Layout/AppLayout';
 
+// RBAC Components
+import { AdminDashboard } from '@/components/RBAC/AdminDashboard';
+import { ReviewQueue } from '@/components/RBAC/ReviewQueue';
+import { AuditLogViewer } from '@/components/RBAC/AuditLogViewer';
+
+// Archipelago Metadata Updater
+import { ArchipelagoMetadataUpdater } from '@/pages/ArchipelagoMetadataUpdater';
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -159,6 +167,42 @@ function App() {
             element={
               <ProtectedRoute>
                 <SystemSettings />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* RBAC Routes */}
+          <Route
+            path="/rbac/admin-dashboard"
+            element={
+              <ProtectedRoute>
+                <AdminDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/rbac/review-queue"
+            element={
+              <ProtectedRoute>
+                <ReviewQueue />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/rbac/audit-logs"
+            element={
+              <ProtectedRoute>
+                <AuditLogViewer />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Archipelago Metadata Updater Route */}
+          <Route
+            path="/archipelago-metadata-updater"
+            element={
+              <ProtectedRoute>
+                <ArchipelagoMetadataUpdater />
               </ProtectedRoute>
             }
           />

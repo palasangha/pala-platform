@@ -16,10 +16,14 @@ def register_blueprints(app):
     from app.routes.langchain_routes import langchain_bp
     from app.routes.ocr_chains import ocr_chains_bp
     from app.routes.images import images_bp
+    from app.routes.rbac import rbac_bp
+    from app.routes.dashboard import dashboard_bp
 
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(projects_bp, url_prefix='/api/projects')
     app.register_blueprint(ocr_bp, url_prefix='/api/ocr')
+    app.register_blueprint(rbac_bp, url_prefix='/api')
+    app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
     app.register_blueprint(bulk_bp)
     app.register_blueprint(archipelago_bp)
     app.register_blueprint(workers_bp)

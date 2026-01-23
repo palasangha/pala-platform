@@ -41,12 +41,18 @@ class LMStudioProvider(BaseOCRProvider):
         self.model = model or os.getenv('LMSTUDIO_MODEL', 'gemma-3-12b')
         self.api_key = api_key or os.getenv('LMSTUDIO_API_KEY', 'lm-studio')
         self.timeout = int(os.getenv('LMSTUDIO_TIMEOUT', '600'))
-        self.max_tokens = int(os.getenv('LMSTUDIO_MAX_TOKENS', '4096'))
+        self.max_tokens = int(os.getenv('LMSTUDIO_MAX_TOKENS', '8192'))  # Increased for JSON responses
         self.skip_availability_check = os.getenv('LMSTUDIO_SKIP_AVAILABILITY_CHECK', 'false').lower() in ('true', '1', 'yes')
+
+        # Structured output configuration
+        self.enable_structured_output = os.getenv(
+            'LMSTUDIO_ENABLE_STRUCTURED_OUTPUT', 'true'
+        ).lower() in ('true', '1', 'yes')
 
         logger.info(
             f"LM Studio provider configured: "
-            f"host={self.host}, model={self.model}, timeout={self.timeout}s, max_tokens={self.max_tokens}, skip_check={self.skip_availability_check}"
+            f"host={self.host}, model={self.model}, timeout={self.timeout}s, max_tokens={self.max_tokens}, "
+            f"structured_output={self.enable_structured_output}, skip_check={self.skip_availability_check}"
         )
 
         # Lazy availability check - don't block initialization
@@ -115,7 +121,7 @@ class LMStudioProvider(BaseOCRProvider):
             logger.error(f"Unexpected error checking LM Studio availability: {e}", exc_info=True)
             return False
 
-    def process_image(self, image_path, languages=None, handwriting=False, custom_prompt=None):
+    def process_image(self, image_path, languages=None, handwriting=False, custom_prompt=None, enable_structured_output=None):
         """Process image using LM Studio vision model"""
         start_time = datetime.now()
         logger.info(f"Starting image processing: {image_path}")
@@ -131,7 +137,7 @@ class LMStudioProvider(BaseOCRProvider):
             # Check if input is a PDF file
             if image_path.lower().endswith('.pdf'):
                 logger.info("PDF detected, using PDF processing pipeline")
-                return self._process_pdf(image_path, languages, handwriting, custom_prompt)
+                return self._process_pdf(image_path, languages, handwriting, custom_prompt, enable_structured_output)
 
             # Load and optimize image
             from PIL import Image, ImageEnhance
@@ -147,11 +153,11 @@ class LMStudioProvider(BaseOCRProvider):
                 # Increase contrast for better text clarity
                 enhancer = ImageEnhance.Contrast(img)
                 img = enhancer.enhance(1.3)  # Increase contrast by 30%
-                
+
                 # Slightly increase sharpness
                 enhancer = ImageEnhance.Sharpness(img)
                 img = enhancer.enhance(1.2)  # Increase sharpness by 20%
-                
+
                 logger.debug("Image enhancement applied")
 
             # Optimize and encode image - use PNG (lossless) for better OCR accuracy
@@ -166,13 +172,22 @@ class LMStudioProvider(BaseOCRProvider):
             image_data = base64.b64encode(image_bytes).decode('utf-8')
             logger.debug(f"Image encoded to PNG, size: {len(image_data)} bytes")
 
+            # Determine if structured output should be used
+            if enable_structured_output is None:
+                enable_structured_output = self.enable_structured_output
+
             # Use custom prompt if provided, otherwise build default
             if custom_prompt:
                 logger.debug("Using custom prompt for OCR")
                 prompt = custom_prompt
+                enable_structured_output = False  # Custom prompts bypass structured extraction
             else:
-                logger.debug("Building default OCR prompt")
-                prompt = self._build_prompt(languages, handwriting)
+                if enable_structured_output:
+                    logger.debug("Building structured JSON extraction prompt")
+                    prompt = self._build_structured_prompt(languages, handwriting)
+                else:
+                    logger.debug("Building text-only OCR prompt")
+                    prompt = self._build_prompt(languages, handwriting)
 
             logger.debug(f"Prompt: {prompt[:100]}..." if len(prompt) > 100 else f"Prompt: {prompt}")
 
@@ -232,25 +247,53 @@ class LMStudioProvider(BaseOCRProvider):
 
             # Extract text from response
             if 'choices' in result and len(result['choices']) > 0:
-                extracted_text = result['choices'][0]['message']['content'].strip()
-                logger.debug(f"Text extracted successfully, length: {len(extracted_text)} chars")
+                llm_response = result['choices'][0]['message']['content'].strip()
+                logger.debug(f"LLM response received, length: {len(llm_response)} chars")
             else:
                 logger.warning("No choices in API response")
-                extracted_text = ''
+                llm_response = ''
 
-            # Format response to match expected structure
+            # Try to parse structured JSON if enabled
+            structured_data = None
+            ocr_text = llm_response
+
+            if enable_structured_output and llm_response:
+                success, parsed_json, error = self._parse_json_response(llm_response)
+
+                if success and parsed_json:
+                    # Validate JSON structure
+                    if 'ocr_text' in parsed_json:
+                        ocr_text = parsed_json['ocr_text']
+                        structured_data = parsed_json.get('structured_data', {})
+                        logger.info(f"Successfully extracted structured data with {len(structured_data)} sections")
+                    else:
+                        logger.warning("JSON parsed but missing 'ocr_text' field, falling back to text-only")
+                        structured_data = None
+                else:
+                    logger.warning(f"JSON parsing failed: {error}. Falling back to text-only mode")
+                    structured_data = None
+
+            # Format response with backward compatibility
             response_data = {
-                'text': extracted_text,
-                'full_text': extracted_text,
+                'text': ocr_text,
+                'full_text': ocr_text,
                 'words': [],
-                'blocks': [{'text': extracted_text}] if extracted_text else [],
+                'blocks': [{'text': ocr_text}] if ocr_text else [],
                 'confidence': 0.95  # LM Studio doesn't provide confidence scores
             }
+
+            # Add structured data if available
+            if structured_data:
+                response_data['structured_data'] = structured_data
+                response_data['extraction_mode'] = 'structured'
+            else:
+                response_data['extraction_mode'] = 'text_only'
 
             total_duration = (datetime.now() - start_time).total_seconds()
             logger.info(
                 f"Image processing completed successfully in {total_duration:.2f}s. "
-                f"Extracted {len(extracted_text)} characters"
+                f"Mode: {response_data.get('extraction_mode', 'unknown')}, "
+                f"Extracted {len(ocr_text)} characters"
             )
 
             return response_data
@@ -267,7 +310,7 @@ class LMStudioProvider(BaseOCRProvider):
             logger.error(f"LM Studio OCR processing failed: {str(e)}", exc_info=True)
             raise Exception(f"LM Studio OCR processing failed: {str(e)}")
 
-    def _process_pdf(self, pdf_path, languages=None, handwriting=False, custom_prompt=None):
+    def _process_pdf(self, pdf_path, languages=None, handwriting=False, custom_prompt=None, enable_structured_output=None):
         """Process PDF by converting pages to images and processing each page"""
         from app.services.pdf_service import PDFService
         from app.services.image_optimizer import ImageOptimizer
@@ -288,9 +331,14 @@ class LMStudioProvider(BaseOCRProvider):
             if not page_images:
                 raise Exception("No pages found in PDF")
 
+            # Determine if structured output should be used
+            if enable_structured_output is None:
+                enable_structured_output = self.enable_structured_output
+
             # Process each page
             all_text = []
             all_blocks = []
+            all_structured_pages = []
             page_count = len(page_images)
 
             for page_num, page_img in enumerate(page_images, 1):
@@ -310,8 +358,14 @@ class LMStudioProvider(BaseOCRProvider):
                 # Use custom prompt if provided, otherwise build default
                 if custom_prompt:
                     prompt = custom_prompt
+                    page_enable_structured = False
                 else:
-                    prompt = self._build_prompt(languages, handwriting)
+                    if enable_structured_output:
+                        prompt = self._build_structured_prompt(languages, handwriting)
+                        page_enable_structured = True
+                    else:
+                        prompt = self._build_prompt(languages, handwriting)
+                        page_enable_structured = False
 
                 # Add page number context for multi-page PDFs
                 if page_count > 1:
@@ -371,11 +425,27 @@ class LMStudioProvider(BaseOCRProvider):
 
                 # Extract text from response
                 if 'choices' in result and len(result['choices']) > 0:
-                    page_text = result['choices'][0]['message']['content'].strip()
-                    logger.debug(f"Page {page_num} text extracted: {len(page_text)} chars")
+                    llm_response = result['choices'][0]['message']['content'].strip()
+                    logger.debug(f"Page {page_num} response received: {len(llm_response)} chars")
                 else:
-                    page_text = ''
+                    llm_response = ''
                     logger.warning(f"No content extracted from page {page_num}")
+
+                # Try to parse structured JSON if enabled
+                page_structured = None
+                page_text = llm_response
+
+                if page_enable_structured and llm_response:
+                    success, parsed_json, error = self._parse_json_response(llm_response)
+
+                    if success and parsed_json and 'ocr_text' in parsed_json:
+                        page_text = parsed_json['ocr_text']
+                        page_structured = parsed_json.get('structured_data', {})
+                        logger.debug(f"Page {page_num} structured data extracted")
+                        all_structured_pages.append(page_structured)
+                    else:
+                        logger.debug(f"Page {page_num} JSON parsing failed or missing ocr_text, using text-only")
+                        page_structured = None
 
                 if page_text:
                     # Add page separator for multi-page PDFs
@@ -398,7 +468,8 @@ class LMStudioProvider(BaseOCRProvider):
                 f"Processed {page_count} page(s), extracted {len(combined_text)} total characters"
             )
 
-            return {
+            # Build response with optional structured data
+            response = {
                 'text': combined_text,
                 'full_text': combined_text,
                 'words': [],
@@ -407,6 +478,31 @@ class LMStudioProvider(BaseOCRProvider):
                 'pages_processed': page_count
             }
 
+            # Add structured data if any pages provided it
+            if all_structured_pages:
+                # Merge structured data from all pages (use first page for sender/recipient)
+                merged_structured = {}
+                if all_structured_pages:
+                    merged_structured = all_structured_pages[0].copy()
+                    # Combine body paragraphs from all pages
+                    if 'content' in merged_structured and 'body' in merged_structured['content']:
+                        all_bodies = merged_structured['content']['body'] if isinstance(merged_structured['content']['body'], list) else [merged_structured['content']['body']]
+                        for page_struct in all_structured_pages[1:]:
+                            if 'content' in page_struct and 'body' in page_struct['content']:
+                                page_body = page_struct['content']['body']
+                                if isinstance(page_body, list):
+                                    all_bodies.extend(page_body)
+                                else:
+                                    all_bodies.append(page_body)
+                        merged_structured['content']['body'] = all_bodies
+
+                response['structured_data'] = merged_structured
+                response['extraction_mode'] = 'structured'
+            else:
+                response['extraction_mode'] = 'text_only'
+
+            return response
+
         except Exception as e:
             logger.error(f"LM Studio PDF processing failed: {str(e)}", exc_info=True)
             # Re-raise with more context
@@ -414,12 +510,65 @@ class LMStudioProvider(BaseOCRProvider):
                 raise Exception(f"Cannot process PDF: {str(e)}")
             raise
 
+    def _parse_json_response(self, llm_response: str):
+        """
+        Parse JSON from LLM response, handling markdown code blocks
+
+        Returns:
+            Tuple of (success: bool, parsed_json: Dict or None, error_message: str)
+        """
+        import re
+        import json
+
+        # Strategy 1: Try parsing entire response as JSON
+        try:
+            data = json.loads(llm_response.strip())
+            logger.debug("Parsed response as direct JSON")
+            return True, data, ""
+        except json.JSONDecodeError:
+            pass
+
+        # Strategy 2: Extract JSON from markdown code blocks (```json ... ```)
+        code_block_pattern = r'```(?:json)?\s*\n(.*?)\n```'
+        matches = re.findall(code_block_pattern, llm_response, re.DOTALL)
+
+        for match in matches:
+            try:
+                data = json.loads(match.strip())
+                logger.debug("Extracted JSON from markdown code block")
+                return True, data, ""
+            except json.JSONDecodeError:
+                continue
+
+        # Strategy 3: Find JSON object using brace matching ({ ... })
+        start_idx = llm_response.find('{')
+        if start_idx != -1:
+            brace_count = 0
+            for i in range(start_idx, len(llm_response)):
+                if llm_response[i] == '{':
+                    brace_count += 1
+                elif llm_response[i] == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        try:
+                            json_str = llm_response[start_idx:i+1]
+                            data = json.loads(json_str)
+                            logger.debug("Extracted JSON using brace matching")
+                            return True, data, ""
+                        except json.JSONDecodeError:
+                            break
+
+        # All strategies failed
+        error_msg = "Failed to extract valid JSON from LLM response"
+        logger.warning(f"{error_msg}. Response preview: {llm_response[:200]}...")
+        return False, None, error_msg
+
     def _build_prompt(self, languages, handwriting):
         """Build appropriate prompt for OCR task"""
-        
+
         # Check if this is a document-focused OCR (not handwriting)
         is_document = not handwriting
-        
+
         if is_document:
             # For typed documents, emphasize accuracy and structure
             prompt = (
@@ -465,5 +614,93 @@ class LMStudioProvider(BaseOCRProvider):
                 prompt = prompt.replace("\nBegin extraction:", f"\n{lang_note}Begin extraction:")
             else:
                 prompt = prompt.replace("\nBegin extraction:", f"\n{lang_note}Begin extraction:")
+
+        return prompt
+
+    def _build_structured_prompt(self, languages, handwriting):
+        """Build prompt for structured JSON extraction with document metadata"""
+
+        # Skip structured output for handwriting - fall back to text-only
+        if handwriting:
+            return self._build_prompt(languages, handwriting)
+
+        prompt = """You are an expert OCR system with document analysis capabilities.
+
+TASK: Extract ALL text from this document AND identify structured metadata visible in the image.
+
+STEP 1 - COMPLETE OCR TRANSCRIPTION:
+- Extract EVERY word, number, and character exactly as shown
+- Preserve line breaks, indentation, and spacing
+- Mark unclear text as [unclear]
+- Do NOT skip any text
+
+STEP 2 - EXTRACT VISIBLE METADATA:
+Identify the following information ONLY if clearly visible in the image:
+- Document date (creation/sent date in YYYY-MM-DD format)
+- Languages used
+- Letterhead description
+- Sender information (name, location, address from letterhead)
+- Recipient information (name from salutation like "Dear...")
+- Letter structure (salutation, body paragraphs, closing, signature)
+
+CRITICAL RULES:
+1. Only extract information DIRECTLY VISIBLE in the image
+2. Do NOT infer or assume information not shown
+3. Leave fields empty ("" or []) if information is not visible
+4. Ensure all JSON is valid and properly formatted
+5. Return ONLY JSON, no explanations or markdown
+
+OUTPUT FORMAT:
+{
+  "ocr_text": "Complete transcription here...",
+  "structured_data": {
+    "document": {
+      "date": {
+        "creation_date": "YYYY-MM-DD or empty string",
+        "sent_date": "YYYY-MM-DD or empty string"
+      },
+      "languages": ["en"],
+      "physical_attributes": {
+        "letterhead": "Description of letterhead if visible",
+        "pages": 1
+      },
+      "correspondence": {
+        "sender": {
+          "name": "",
+          "location": "",
+          "contact_info": {"address": ""}
+        },
+        "recipient": {
+          "name": "",
+          "location": ""
+        }
+      }
+    },
+    "content": {
+      "full_text": "Same as ocr_text",
+      "salutation": "Opening greeting",
+      "body": ["Paragraph 1", "Paragraph 2"],
+      "closing": "Closing statement",
+      "signature": "Signature description"
+    }
+  }
+}
+
+Begin extraction:"""
+
+        if languages:
+            lang_names = {
+                'en': 'English',
+                'hi': 'Hindi',
+                'es': 'Spanish',
+                'fr': 'French',
+                'de': 'German',
+                'zh': 'Chinese',
+                'ja': 'Japanese',
+                'ar': 'Arabic'
+            }
+            lang_list = [lang_names.get(lang, lang) for lang in languages]
+            lang_note = f"\nExpected language(s): {', '.join(lang_list)}\n"
+            prompt = prompt.replace("Begin extraction:", f"{lang_note}Begin extraction:")
 
         return prompt

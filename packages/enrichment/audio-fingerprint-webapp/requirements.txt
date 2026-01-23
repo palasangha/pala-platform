@@ -1,0 +1,14 @@
+Flask
+Flask-CORS
+numpy
+scipy
+librosa
+soundfile
+pymongo
+pyacoustid
+blake3
+torch
+torchvision
+transformers
+laion-clap
+pymilvus

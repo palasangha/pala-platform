@@ -7,6 +7,8 @@ import requests
 import logging
 import base64
 import mimetypes
+import json
+import os
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 from app.config import Config
@@ -24,6 +26,43 @@ class ArchipelagoService:
         self.password = Config.ARCHIPELAGO_PASSWORD
         self.enabled = Config.ARCHIPELAGO_ENABLED
         self.session = None
+        self.required_format_schema = self._load_required_format_schema()
+
+    def _load_required_format_schema(self) -> Optional[Dict]:
+        """
+        Load the required format schema from required-format.json
+
+        Returns:
+            Dictionary with schema properties or None if file not found
+        """
+        try:
+            # Try multiple possible locations for the schema file
+            possible_paths = [
+                '/mnt/sda1/mango1_home/gvpocr/backend/required-format.json',
+                os.path.join(os.path.dirname(__file__), '../../required-format.json'),
+                'required-format.json',
+                '/required-format.json'
+            ]
+
+            schema_path = None
+            for path in possible_paths:
+                if os.path.exists(path):
+                    schema_path = path
+                    break
+
+            if not schema_path:
+                logger.warning("required-format.json not found in any expected location")
+                return None
+
+            with open(schema_path, 'r', encoding='utf-8') as f:
+                schema = json.load(f)
+
+            logger.info(f"Successfully loaded required format schema from {schema_path}")
+            return schema
+
+        except Exception as e:
+            logger.warning(f"Error loading required-format.json: {str(e)}")
+            return None
 
     def _should_verify_ssl(self) -> bool:
         """Determine if SSL verification should be enabled based on URL"""

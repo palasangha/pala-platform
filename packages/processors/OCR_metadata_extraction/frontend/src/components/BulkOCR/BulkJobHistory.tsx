@@ -118,6 +118,31 @@ const BulkJobHistory: React.FC = () => {
     }
   };
 
+  const handleCancelJob = async (jobId: string) => {
+    if (!confirm('Are you sure you want to cancel this job?')) {
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch(`/api/bulk/stop/${jobId}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to cancel job');
+      }
+
+      // Refresh the list
+      fetchJobHistory(page);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to cancel job');
+    }
+  };
+
   const handleDownloadReport = async (job: BulkJob) => {
     try {
       const token = localStorage.getItem('access_token');
@@ -406,6 +431,8 @@ const BulkJobHistory: React.FC = () => {
         return <XCircle className="w-5 h-5 text-red-500" />;
       case 'processing':
         return <RefreshCw className="w-5 h-5 text-blue-500 animate-spin" />;
+      case 'cancelled':
+        return <XCircle className="w-5 h-5 text-gray-500" />;
       default:
         return <Clock className="w-5 h-5 text-gray-500" />;
     }
@@ -420,6 +447,8 @@ const BulkJobHistory: React.FC = () => {
         return <span className={`${baseClasses} bg-red-100 text-red-800`}>Failed</span>;
       case 'processing':
         return <span className={`${baseClasses} bg-blue-100 text-blue-800`}>Processing</span>;
+      case 'cancelled':
+        return <span className={`${baseClasses} bg-gray-100 text-gray-800`}>Cancelled</span>;
       default:
         return <span className={`${baseClasses} bg-gray-100 text-gray-800`}>Unknown</span>;
     }
@@ -613,6 +642,15 @@ const BulkJobHistory: React.FC = () => {
                           <FolderPlus className="w-5 h-5" />
                         </button>
                       </>
+                    )}
+                    {job.status === 'processing' && (
+                      <button
+                        onClick={() => handleCancelJob(job.job_id)}
+                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        title="Cancel Job"
+                      >
+                        <XCircle className="w-5 h-5" />
+                      </button>
                     )}
                     <button
                       onClick={() => handleDeleteJob(job.job_id)}

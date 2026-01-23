@@ -1,7 +1,4 @@
-#version: '3.8'
-
 services:
-  # MongoDB Database
   mongodb:
     image: mongo:7.0
     container_name: gvpocr-mongodb
@@ -11,177 +8,171 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
       MONGO_INITDB_DATABASE: gvpocr
     ports:
-      - "27017:27017"
+    - 27017:27017
     volumes:
-      - mongodb_data:/data/db
-      - mongodb_config:/data/configdb
+    - mongodb_data:/data/db
+    - mongodb_config:/data/configdb
     networks:
-      - gvpocr-network
-
-  # Backend API
+    - gvpocr-network
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: ocr_metadata_extraction-backend
     container_name: gvpocr-backend
     restart: unless-stopped
     networks:
       gvpocr-network:
         aliases:
-          - backend
+        - backend
     ports:
-      - "5000:5000"
-      - "5678:5678"
+    - 5000:5000
+    - 5678:5678
     env_file:
-      - .env
+    - .env
     dns:
-      - 172.12.0.5
-      - 8.8.8.8
+    - 172.12.0.5
+    - 8.8.8.8
     extra_hosts:
-      - "host.docker.internal:172.12.0.1"
-      - "host:172.12.0.1"
+    - host.docker.internal:172.12.0.1
+    - host:172.12.0.1
     environment:
-      - FLASK_ENV=development
-      - PORT=5000
-      - MONGO_URI=mongodb://mongodb:27017/gvpocr
-      - MONGO_USERNAME=${MONGO_ROOT_USERNAME:-gvpocr_admin}
-      - MONGO_PASSWORD=${MONGO_ROOT_PASSWORD}
-      - SECRET_KEY=${SECRET_KEY}
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
-      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}
-      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}
-      - DEFAULT_OCR_PROVIDER=${DEFAULT_OCR_PROVIDER:-google_vision}
-      - GOOGLE_VISION_ENABLED=${GOOGLE_VISION_ENABLED:-true}
-      - AZURE_ENABLED=${AZURE_ENABLED:-false}
-      - OLLAMA_ENABLED=${OLLAMA_ENABLED:-true}
-      - VLLM_ENABLED=${VLLM_ENABLED:-false}
-      - TESSERACT_ENABLED=${TESSERACT_ENABLED:-true}
-      - EASYOCR_ENABLED=${EASYOCR_ENABLED:-false}
-      - LLAMACPP_ENABLED=${LLAMACPP_ENABLED:-true}
-      - LLAMACPP_HOST=http://llamacpp:8000
-      - LLAMACPP_MODEL=${LLAMACPP_MODEL:-gemma-3-12b}
-      - AZURE_VISION_ENDPOINT=${AZURE_VISION_ENDPOINT}
-      - AZURE_VISION_KEY=${AZURE_VISION_KEY}
-      - OLLAMA_HOST=${OLLAMA_HOST:-http://localhost:11434}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2-vision}
-      - OLLAMA_ENABLED=${OLLAMA_ENABLED:-true}
-      - LANGCHAIN_ENABLED=${LANGCHAIN_ENABLED:-true}
-      - VLLM_HOST=http://vllm:8000
-      - VLLM_MODEL=${VLLM_MODEL_NAME:-llama-vision}
-      - VLLM_API_KEY=${VLLM_API_KEY:-vllm-secret-token}
-      - TESSERACT_CMD=${TESSERACT_CMD:-/usr/bin/tesseract}
-      - EASYOCR_GPU=${EASYOCR_GPU:-False}
-      - LMSTUDIO_ENABLED=${LMSTUDIO_ENABLED:-true}
-      - LMSTUDIO_HOST=${LMSTUDIO_HOST:-http://lmstudio:1234}
-      - LMSTUDIO_MODEL=${LMSTUDIO_MODEL:-google/gemma-3-12b}
-      - LMSTUDIO_API_KEY=${LMSTUDIO_API_KEY:-lm-studio}
-      - LMSTUDIO_TIMEOUT=${LMSTUDIO_TIMEOUT:-600}
-      - LMSTUDIO_MAX_TOKENS=${LMSTUDIO_MAX_TOKENS:-4096}
-      - LMSTUDIO_SKIP_AVAILABILITY_CHECK=${LMSTUDIO_SKIP_AVAILABILITY_CHECK:-true}
-      - SERPAPI_API_KEY=${SERPAPI_API_KEY}
-      - SERPAPI_GOOGLE_LENS_ENABLED=${SERPAPI_GOOGLE_LENS_ENABLED:-false}
-      - GOOGLE_GENERATIVE_AI_API_KEY=${GOOGLE_GENERATIVE_AI_API_KEY}
-      - USE_LOCAL_LENS_PROCESSING=${USE_LOCAL_LENS_PROCESSING:-false}
-      - ARCHIPELAGO_ENABLED=${ARCHIPELAGO_ENABLED:-true}
-      - ARCHIPELAGO_BASE_URL=${ARCHIPELAGO_BASE_URL:-https://172.12.0.120}
-      - ARCHIPELAGO_USERNAME=${ARCHIPELAGO_USERNAME}
-      - ARCHIPELAGO_PASSWORD=${ARCHIPELAGO_PASSWORD}
-      - GVPOCR_PATH=/app/Bhushanji
-      - GVPOCR_ROOT=/app
-      - CORS_ORIGINS=https://docgenai.com,http://localhost:3000,http://localhost:80,http://ocr.vridhamma.org:3000,https://ocr.vridhamma.org:3000,http://ocr.vridhamma.org:5000,https://ocr.vridhamma.org:5000,https://172.12.0.132:5000,https://172.12.0.132:3000,https://docgenai.com:3000
-      - PYTHON_HOST= 0.0.0.0
-      - PYTHON_PORT= 5678
-      # Prevents Python from caching compiled code, useful for debugging
-      - PYTHONDONTWRITEBYTECODE= 1
-      - BULK_PARALLEL_WORKERS=5
-      # NSQ Configuration
-      - USE_NSQ=${USE_NSQ:-true}
-      - NSQD_ADDRESS=${NSQD_ADDRESS:-nsqd:4150}
-      - NSQLOOKUPD_ADDRESSES=${NSQLOOKUPD_ADDRESSES:-nsqlookupd:4161}
+    - FLASK_ENV=development
+    - PORT=5000
+    - MONGO_URI=mongodb://gvpocr_admin:gvp%40123@mongodb:27017/gvpocr?authSource=admin
+    - MONGO_USERNAME=${MONGO_ROOT_USERNAME:-gvpocr_admin}
+    - MONGO_PASSWORD=${MONGO_ROOT_PASSWORD}
+    - SECRET_KEY=${SECRET_KEY}
+    - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+    - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+    - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+    - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}
+    - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}
+    - DEFAULT_OCR_PROVIDER=${DEFAULT_OCR_PROVIDER:-google_vision}
+    - GOOGLE_VISION_ENABLED=${GOOGLE_VISION_ENABLED:-true}
+    - AZURE_ENABLED=${AZURE_ENABLED:-false}
+    - OLLAMA_ENABLED=${OLLAMA_ENABLED:-true}
+    - VLLM_ENABLED=${VLLM_ENABLED:-false}
+    - TESSERACT_ENABLED=${TESSERACT_ENABLED:-true}
+    - EASYOCR_ENABLED=${EASYOCR_ENABLED:-false}
+    - LLAMACPP_ENABLED=${LLAMACPP_ENABLED:-true}
+    - LLAMACPP_HOST=http://llamacpp:8000
+    - LLAMACPP_MODEL=${LLAMACPP_MODEL:-gemma-3-12b}
+    - AZURE_VISION_ENDPOINT=${AZURE_VISION_ENDPOINT}
+    - AZURE_VISION_KEY=${AZURE_VISION_KEY}
+    - OLLAMA_HOST=${OLLAMA_HOST:-http://localhost:11434}
+    - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2-vision}
+    - OLLAMA_ENABLED=${OLLAMA_ENABLED:-true}
+    - LANGCHAIN_ENABLED=${LANGCHAIN_ENABLED:-true}
+    - LANGCHAIN_OLLAMA_HOST=${LANGCHAIN_OLLAMA_HOST:-http://ollama:11434}
+    - LANGCHAIN_MODEL=${LANGCHAIN_MODEL:-llama3.2-vision:11b}
+    - LANGCHAIN_EMBEDDING_MODEL=${LANGCHAIN_EMBEDDING_MODEL:-nomic-embed-text}
+    - LANGCHAIN_TEMPERATURE=${LANGCHAIN_TEMPERATURE:-0.7}
+    - VLLM_HOST=http://vllm:8000
+    - VLLM_MODEL=${VLLM_MODEL_NAME:-llama-vision}
+    - VLLM_API_KEY=${VLLM_API_KEY:-vllm-secret-token}
+    - TESSERACT_CMD=${TESSERACT_CMD:-/usr/bin/tesseract}
+    - EASYOCR_GPU=${EASYOCR_GPU:-False}
+    - LMSTUDIO_ENABLED=${LMSTUDIO_ENABLED:-true}
+    - LMSTUDIO_HOST=${LMSTUDIO_HOST:-http://lmstudio:1234}
+    - LMSTUDIO_MODEL=${LMSTUDIO_MODEL:-google/gemma-3-12b}
+    - LMSTUDIO_API_KEY=${LMSTUDIO_API_KEY:-lm-studio}
+    - LMSTUDIO_TIMEOUT=${LMSTUDIO_TIMEOUT:-600}
+    - LMSTUDIO_MAX_TOKENS=${LMSTUDIO_MAX_TOKENS:-4096}
+    - LMSTUDIO_SKIP_AVAILABILITY_CHECK=${LMSTUDIO_SKIP_AVAILABILITY_CHECK:-true}
+    - SERPAPI_API_KEY=${SERPAPI_API_KEY}
+    - SERPAPI_GOOGLE_LENS_ENABLED=${SERPAPI_GOOGLE_LENS_ENABLED:-false}
+    - GOOGLE_GENERATIVE_AI_API_KEY=${GOOGLE_GENERATIVE_AI_API_KEY}
+    - USE_LOCAL_LENS_PROCESSING=${USE_LOCAL_LENS_PROCESSING:-false}
+    - ARCHIPELAGO_ENABLED=${ARCHIPELAGO_ENABLED:-true}
+    - ARCHIPELAGO_BASE_URL=${ARCHIPELAGO_BASE_URL:-https://172.12.0.120}
+    - ARCHIPELAGO_USERNAME=${ARCHIPELAGO_USERNAME}
+    - ARCHIPELAGO_PASSWORD=${ARCHIPELAGO_PASSWORD}
+    - GVPOCR_PATH=/app/Bhushanji
+    - GVPOCR_ROOT=/app
+    - CORS_ORIGINS=https://docgenai.com,http://localhost:3000,http://localhost:80,http://ocr.vridhamma.org:3000,https://ocr.vridhamma.org:3000,http://ocr.vridhamma.org:5000,https://ocr.vridhamma.org:5000,https://172.12.0.132:5000,https://172.12.0.132:3000,https://docgenai.com:3000
+    - PYTHON_HOST= 0.0.0.0
+    - PYTHON_PORT= 5678
+    - PYTHONDONTWRITEBYTECODE= 1
+    - BULK_PARALLEL_WORKERS=5
+    - USE_NSQ=${USE_NSQ:-true}
+    - NSQD_ADDRESS=${NSQD_ADDRESS:-nsqd:4150}
+    - NSQLOOKUPD_ADDRESSES=${NSQLOOKUPD_ADDRESSES:-nsqlookupd:4161}
+    - ENRICHMENT_ENABLED=true
     volumes:
-      - ./backend/uploads:/app/uploads
-      - ./backend/google-credentials.json:/app/google-credentials.json:ro
-      - bhushanji_shared:/app/Bhushanji:ro
-      - /mnt/sda1/mango1_home/newsletters:/app/newsletters:ro
-      - /mnt/sda1/mango1_home/network_shares/dhamma_for_all:/app/dhamma_for_all:ro
-      - ./ssh_keys:/app/ssh_keys:ro
-      - ./docker-compose.worker.yml:/app/docker-compose.worker.yml:ro
-      - ./worker.Dockerfile:/app/worker.Dockerfile:ro
-      - ./.env.worker:/app/.env.worker:ro
-      - ./backend:/app/backend:ro
-      - ./docker-compose.yml:/app/docker-compose.yml:ro
-      - /var/run/docker.sock:/var/run/docker.sock
+    - ./backend/app:/app/app
+    - ./backend/run.py:/app/run.py
+    - ./backend/uploads:/app/uploads
+    - ./backend/google-credentials.json:/app/google-credentials.json:ro
+    - ./enrichment_service:/app/enrichment_service
+    - bhushanji_shared:/app/Bhushanji:ro
+    - /mnt/sda1/mango1_home/newsletters:/app/newsletters:ro
+    - /mnt/sda1/mango1_home/network_shares/dhamma_for_all:/app/dhamma_for_all:ro
+    - ./ssh_keys:/app/ssh_keys:ro
+    - ./docker-compose.worker.yml:/app/docker-compose.worker.yml:ro
+    - ./worker.Dockerfile:/app/worker.Dockerfile:ro
+    - ./.env.worker:/app/.env.worker:ro
+    - ./docker-compose.yml:/app/docker-compose.yml:ro
+    - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
-      - mongodb
-      #- llamacpp
-
-  # Frontend
+    - mongodb
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: gvpocr-frontend
     restart: unless-stopped
-    # Remove external port mapping - Caddy will handle this
-    # ports:
-    #   - "3000:80"
     depends_on:
-      - backend
+    - backend
     networks:
-      - gvpocr-network
-
-  # Caddy Reverse Proxy with Automatic HTTPS
+    - gvpocr-network
   caddy:
     image: caddy:2-alpine
     container_name: gvpocr-caddy
     restart: unless-stopped
     ports:
-      - "80:80"      # HTTP
-      - "443:443"    # HTTPS
-      - "3000:443"   # HTTPS on port 3000 for backward compatibility
-      - "5010:5010"  # HTTPS for Docker Registry
+    - 80:80
+    - 443:443
+    - 3000:443
+    - 5010:5010
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ${CERTS_PATH:-./certs}:/certs:ro  # Local SSL certificates from mkcert
-      - caddy_data:/data
-      - caddy_config:/config
-      - caddy_logs:/var/log/caddy
+    - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    - ${CERTS_PATH:-./certs}:/certs:ro
+    - caddy_data:/data
+    - caddy_config:/config
+    - caddy_logs:/var/log/caddy
     depends_on:
-      - frontend
-      - backend
+    - frontend
+    - backend
     networks:
-      - gvpocr-network
-
-  # Ollama Service for Local LLM/Vision Models
+    - gvpocr-network
   ollama:
     image: ollama/ollama:latest
     container_name: gvpocr-ollama
     restart: unless-stopped
     ports:
-      - "11434:11434"
+    - 11434:11434
     volumes:
-      - ollama_data:/root/.ollama
+    - ollama_data:/root/.ollama
     environment:
-      - OLLAMA_ORIGINS=*
+    - OLLAMA_ORIGINS=*
     deploy:
       resources:
         reservations:
           devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+          - driver: nvidia
+            count: all
+            capabilities:
+            - gpu
     networks:
-      - gvpocr-network
+    - gvpocr-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:11434/api/tags
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
-
-  # llama.cpp Service with Vision Model (LLaVA recommended for OCR)
   llamacpp:
     build:
       context: .
@@ -189,280 +180,273 @@ services:
     container_name: gvpocr-llamacpp
     restart: unless-stopped
     ports:
-      - "8007:8000"
+    - 8007:8000
     environment:
-      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+    - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
     volumes:
-      - ./models:/models
-      - ~/.cache/huggingface/hub:/root/.cache/huggingface/hub:ro
-    # Using Phi-3.5 Vision with projection model for OCR
-    command: [
-      "-m", "/root/.cache/huggingface/hub/models--abetlen--Phi-3.5-vision-instruct-gguf/snapshots/39c8650873918d40fa529518eadc3680268a4e1b/Phi-3.5-3.8B-vision-instruct-Q8_0.gguf",
-      "--mmproj", "/root/.cache/huggingface/hub/models--abetlen--Phi-3.5-vision-instruct-gguf/snapshots/39c8650873918d40fa529518eadc3680268a4e1b/Phi-3.5-3.8B-vision-instruct-mmproj-F16.gguf",
-      "--host", "0.0.0.0",
-      "--port", "8000"
-    ]
+    - ./models:/models
+    - ~/.cache/huggingface/hub:/root/.cache/huggingface/hub:ro
+    command:
+    - -m
+    - /root/.cache/huggingface/hub/models--abetlen--Phi-3.5-vision-instruct-gguf/snapshots/39c8650873918d40fa529518eadc3680268a4e1b/Phi-3.5-3.8B-vision-instruct-Q8_0.gguf
+    - --mmproj
+    - /root/.cache/huggingface/hub/models--abetlen--Phi-3.5-vision-instruct-gguf/snapshots/39c8650873918d40fa529518eadc3680268a4e1b/Phi-3.5-3.8B-vision-instruct-mmproj-F16.gguf
+    - --host
+    - 0.0.0.0
+    - --port
+    - '8000'
     networks:
-      - gvpocr-network
+    - gvpocr-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8000/health
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
-
-  # vLLM Service for Llama Vision Model
   vllm:
-    image: vllm/vllm-openai:v0.6.0  # Use specific version compatible with CUDA 11.8+
+    image: vllm/vllm-openai:v0.6.0
     container_name: gvpocr-vllm
     restart: unless-stopped
     ports:
-      - "8000:8000"
+    - 8000:8000
     environment:
-      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
-    command: >
-      --model ${VLLM_MODEL:-microsoft/Phi-3.5-vision-instruct}
-      --host 0.0.0.0
-      --port 8000
-      --max-model-len 4096
-      --gpu-memory-utilization 0.50
-      --dtype auto
-      --trust-remote-code
-      --api-key ${VLLM_API_KEY:-vllm-secret-token}
-      --served-model-name ${VLLM_MODEL_NAME:-phi-vision}
+    - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+    command: '--model ${VLLM_MODEL:-microsoft/Phi-3.5-vision-instruct} --host 0.0.0.0
+      --port 8000 --max-model-len 4096 --gpu-memory-utilization 0.50 --dtype auto
+      --trust-remote-code --api-key ${VLLM_API_KEY:-vllm-secret-token} --served-model-name
+      ${VLLM_MODEL_NAME:-phi-vision}
+
+      '
     volumes:
-      - vllm_cache:/root/.cache/huggingface
+    - vllm_cache:/root/.cache/huggingface
     deploy:
       resources:
         reservations:
           devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+          - driver: nvidia
+            count: all
+            capabilities:
+            - gpu
     networks:
-      - gvpocr-network
+    - gvpocr-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8000/health
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
     profiles:
-      - vllm  # Optional profile - only start if explicitly enabled
-
-  # NSQ Lookup Service (Discovery)
+    - vllm
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:latest
+    container_name: gvpocr-open-webui
+    restart: unless-stopped
+    ports:
+    - 8080:8080
+    environment:
+    - OLLAMA_API_BASE_URL=http://ollama:11434/api
+    - OLLAMA_BASE_URL=http://ollama:11434
+    - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-your-secret-key-here}
+    - ENABLE_OLLAMA_API=true
+    volumes:
+    - open_webui_data:/app/backend/data
+    networks:
+    - gvpocr-network
+    depends_on:
+    - ollama
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8080
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
   nsqlookupd:
     image: nsqio/nsq:v1.2.1
     container_name: gvpocr-nsqlookupd
     command: /nsqlookupd
     ports:
-      - "4160:4160"  # TCP
-      - "4161:4161"  # HTTP
+    - 4160:4160
+    - 4161:4161
     networks:
-      - gvpocr-network
+    - gvpocr-network
     restart: unless-stopped
-
-  # NSQ Message Daemon
   nsqd:
     image: nsqio/nsq:v1.2.1
     container_name: gvpocr-nsqd
     command: /nsqd --lookupd-tcp-address=nsqlookupd:4160 --broadcast-address=172.12.0.132
     ports:
-      - "4150:4150"  # TCP
-      - "4151:4151"  # HTTP
+    - 4150:4150
+    - 4151:4151
     depends_on:
-      - nsqlookupd
+    - nsqlookupd
     networks:
-      - gvpocr-network
+    - gvpocr-network
     restart: unless-stopped
-
-  # NSQ Admin UI
   nsqadmin:
     image: nsqio/nsq:v1.2.1
     container_name: gvpocr-nsqadmin
     command: /nsqadmin --lookupd-http-address=nsqlookupd:4161
     ports:
-      - "4171:4171"  # HTTP Admin UI
+    - 4171:4171
     depends_on:
-      - nsqlookupd
+    - nsqlookupd
     networks:
-      - gvpocr-network
+    - gvpocr-network
     restart: unless-stopped
-
-  # Samba SMB Server for file sharing with remote workers
   samba:
     image: dperson/samba:latest
     container_name: gvpocr-samba
     restart: unless-stopped
     ports:
-      - "13137:137/udp"
-      - "13138:138/udp"
-      - "13139:139"
-      - "13445:445"
+    - 13137:137/udp
+    - 13138:138/udp
+    - 13139:139
+    - 13445:445
     environment:
-      - USERID=1000
-      - GROUPID=1000
+    - USERID=1000
+    - GROUPID=1000
     volumes:
-      - ./shared/temp-images:/shared/temp-images
-      - ./shared/uploads:/shared/uploads
-      - ./shared/Bhushanji:/shared/Bhushanji:ro
-      - ./shared/newsletters:/shared/newsletters:ro
-    command: >
-      -u "gvpocr;mango1"
-      -s "gvpocr-bhushanji;/shared/Bhushanji;yes;yes;yes;all;guest"
+    - ./shared/temp-images:/shared/temp-images
+    - ./shared/uploads:/shared/uploads
+    - ./shared/Bhushanji:/shared/Bhushanji:ro
+    - ./shared/newsletters:/shared/newsletters:ro
+    command: '-u "gvpocr;mango1" -s "gvpocr-bhushanji;/shared/Bhushanji;yes;yes;yes;all;guest"
       -s "gvpocr-newsletters;/shared/newsletters;yes;yes;yes;all;guest"
+
+      '
     networks:
-      - gvpocr-network
-
-
-
-  # SSH Server for SSHFS access from remote workers
-  # Provides read-only SSHFS access to shared files and models
-  # Usage: sshfs -p 2222 gvpocr@<main-server-ip>:/home/gvpocr /mnt/sshfs/main-server
+    - gvpocr-network
   ssh-server:
     image: alpine:latest
     container_name: gvpocr-ssh-server
     restart: unless-stopped
     ports:
-      - "2222:22"
+    - '2222:22'
     volumes:
-      # Bhushanji data (OCR processing)
-      - ./shared/Bhushanji:/home/gvpocr/Bhushanji:ro
-      
-      # Temporary image storage
-      - ./shared/temp-images:/home/gvpocr/temp-images
-      
-      # Uploads folder
-      - ./shared/uploads:/home/gvpocr/uploads
-      
-      # Newsletters data
-      - ./shared/newsletters:/home/gvpocr/newsletters:ro
-      
-      # Source code (optional)
-      - ${GVPOCR_PATH}:/home/gvpocr/source:ro
-      
-      # HuggingFace model cache for efficient model serving
-      - ~/.cache/huggingface/hub:/home/gvpocr/.cache/huggingface/hub:ro
-      
-      # Local models directory
-      - ./models:/home/gvpocr/models:ro
-      
-
+    - ./shared/Bhushanji:/home/gvpocr/Bhushanji:ro
+    - ./shared/temp-images:/home/gvpocr/temp-images
+    - ./shared/uploads:/home/gvpocr/uploads
+    - ./shared/newsletters:/home/gvpocr/newsletters:ro
+    - ${GVPOCR_PATH}:/home/gvpocr/source:ro
+    - ~/.cache/huggingface/hub:/home/gvpocr/.cache/huggingface/hub:ro
+    - ./models:/home/gvpocr/models:ro
     environment:
-      - INITIAL_PASSWORD=mango1
-    command: >
-      sh -c "
-        apk add --no-cache openssh openssh-server &&
-        mkdir -p /home/gvpocr/.ssh &&
-        mkdir -p /home/gvpocr/.cache/huggingface/hub &&
-        ssh-keygen -A &&
-        adduser -D -h /home/gvpocr gvpocr 2>/dev/null || true &&
-        echo 'gvpocr:mango1' | chpasswd &&
-        echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILL6HUFbr721h+ceF27JnDN8UGbdb4yOHZrR+uM2NUYp gvpocr@sshfs' > /home/gvpocr/.ssh/authorized_keys &&
-        chmod 700 /home/gvpocr/.ssh &&
-        chmod 600 /home/gvpocr/.ssh/authorized_keys &&
-        chown -R gvpocr:gvpocr /home/gvpocr/.ssh &&
-        echo 'PermitRootLogin no' >> /etc/ssh/sshd_config &&
-        echo 'PubkeyAuthentication yes' >> /etc/ssh/sshd_config &&
-        echo 'PasswordAuthentication no' >> /etc/ssh/sshd_config &&
-        echo 'AllowUsers gvpocr' >> /etc/ssh/sshd_config &&
-        echo 'MaxAuthTries 6' >> /etc/ssh/sshd_config &&
-        echo 'LoginGraceTime 30' >> /etc/ssh/sshd_config &&
-        echo 'TCPKeepAlive yes' >> /etc/ssh/sshd_config &&
-        echo 'Compression yes' >> /etc/ssh/sshd_config &&
-        /usr/sbin/sshd -D
-      "
+    - INITIAL_PASSWORD=mango1
+    command: "sh -c \"\n  apk add --no-cache openssh openssh-server &&\n  mkdir -p\
+      \ /home/gvpocr/.ssh &&\n  mkdir -p /home/gvpocr/.cache/huggingface/hub &&\n\
+      \  ssh-keygen -A &&\n  adduser -D -h /home/gvpocr gvpocr 2>/dev/null || true\
+      \ &&\n  echo 'gvpocr:mango1' | chpasswd &&\n  echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILL6HUFbr721h+ceF27JnDN8UGbdb4yOHZrR+uM2NUYp\
+      \ gvpocr@sshfs' > /home/gvpocr/.ssh/authorized_keys &&\n  chmod 700 /home/gvpocr/.ssh\
+      \ &&\n  chmod 600 /home/gvpocr/.ssh/authorized_keys &&\n  chown -R gvpocr:gvpocr\
+      \ /home/gvpocr/.ssh &&\n  echo 'PermitRootLogin no' >> /etc/ssh/sshd_config\
+      \ &&\n  echo 'PubkeyAuthentication yes' >> /etc/ssh/sshd_config &&\n  echo 'PasswordAuthentication\
+      \ no' >> /etc/ssh/sshd_config &&\n  echo 'AllowUsers gvpocr' >> /etc/ssh/sshd_config\
+      \ &&\n  echo 'MaxAuthTries 6' >> /etc/ssh/sshd_config &&\n  echo 'LoginGraceTime\
+      \ 30' >> /etc/ssh/sshd_config &&\n  echo 'TCPKeepAlive yes' >> /etc/ssh/sshd_config\
+      \ &&\n  echo 'Compression yes' >> /etc/ssh/sshd_config &&\n  /usr/sbin/sshd\
+      \ -D\n\"\n"
     networks:
-      - gvpocr-network
+    - gvpocr-network
     healthcheck:
-      test: ["CMD", "nc", "-z", "127.0.0.1", "22"]
+      test:
+      - CMD
+      - nc
+      - -z
+      - 127.0.0.1
+      - '22'
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
-
-  # File Server for remote workers to download/access files
   file-server:
     image: python:3.11-alpine
     container_name: gvpocr-file-server
     restart: unless-stopped
     ports:
-      - "8010:8010"
+    - 8010:8010
     volumes:
-      - ${GVPOCR_PATH}:/files/Bhushanji:ro
-      - /mnt/sda1/mango1_home/newsletters:/files/newsletters:ro
+    - ${GVPOCR_PATH}:/files/Bhushanji:ro
+    - /mnt/sda1/mango1_home/newsletters:/files/newsletters:ro
     working_dir: /files
     command: python -m http.server 8010
     networks:
-      - gvpocr-network
-
-  # Result Aggregator Service
+    - gvpocr-network
   result-aggregator:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: ocr_metadata_extraction-backend
     container_name: gvpocr-result-aggregator
     command: python run_aggregator.py
     env_file:
-      - .env
+    - .env
     environment:
-      - NSQD_ADDRESS=nsqd:4150
-      - NSQLOOKUPD_ADDRESSES=nsqlookupd:4161
-      - MONGO_URI=mongodb://mongodb:27017/gvpocr
-      - MONGO_USERNAME=${MONGO_ROOT_USERNAME:-gvpocr_admin}
-      - MONGO_PASSWORD=${MONGO_ROOT_PASSWORD}
+    - NSQD_ADDRESS=nsqd:4150
+    - NSQLOOKUPD_ADDRESSES=nsqlookupd:4161
+    - MONGO_URI=mongodb://gvpocr_admin:gvp%40123@mongodb:27017/gvpocr?authSource=admin
+    - MONGO_USERNAME=${MONGO_ROOT_USERNAME:-gvpocr_admin}
+    - MONGO_PASSWORD=${MONGO_ROOT_PASSWORD}
+    - ENRICHMENT_ENABLED=true
     volumes:
-      - ./backend/uploads:/app/uploads
-      - ./backend/google-credentials.json:/app/google-credentials.json:ro
-      - ${GVPOCR_PATH}:/app/Bhushanji:ro
-      - /mnt/sda1/mango1_home/newsletters:/app/newsletters:ro
+    - ./backend/app:/app/app
+    - ./backend/run_aggregator.py:/app/run_aggregator.py
+    - ./backend/uploads:/app/uploads
+    - ./backend/google-credentials.json:/app/google-credentials.json:ro
+    - ./enrichment_service:/app/enrichment_service
+    - ${GVPOCR_PATH}:/app/Bhushanji:ro
+    - /mnt/sda1/mango1_home/newsletters:/app/newsletters:ro
     depends_on:
-      - mongodb
-      - nsqd
+    - mongodb
+    - nsqd
     networks:
-      - gvpocr-network
+    - gvpocr-network
     restart: unless-stopped
-
-  # OCR Workers (horizontally scalable)
   ocr-worker:
     build:
       context: .
       dockerfile: worker.Dockerfile
     command: python run_worker.py --worker-id $${HOSTNAME} --nsqlookupd nsqlookupd:4161
     env_file:
-      - .env
+    - .env
     environment:
-      - NSQD_ADDRESS=nsqd:4150
-      - NSQLOOKUPD_ADDRESSES=nsqlookupd:4161
-      - MONGO_URI=mongodb://mongodb:27017/gvpocr
-      - MONGO_USERNAME=${MONGO_ROOT_USERNAME:-gvpocr_admin}
-      - MONGO_PASSWORD=${MONGO_ROOT_PASSWORD}
-      - GVPOCR_PATH=/app/Bhushanji
-      - OLLAMA_HOST=http://ollama:11434
-      - VLLM_HOST=http://vllm:8000
-      - LLAMACPP_ENABLED=${LLAMACPP_ENABLED:-true}
-      - LLAMACPP_HOST=http://llamacpp:8000
-      - LLAMACPP_MODEL=${LLAMACPP_MODEL:-gemma3-vision}
-      - LMSTUDIO_ENABLED=${LMSTUDIO_ENABLED:-true}
-      - LMSTUDIO_HOST=${LMSTUDIO_HOST:-http://lmstudio:1234}
-      - LMSTUDIO_MODEL=${LMSTUDIO_MODEL:-google/gemma-3-12b}
-      - LMSTUDIO_TIMEOUT=${LMSTUDIO_TIMEOUT:-600}
+    - NSQD_ADDRESS=nsqd:4150
+    - NSQLOOKUPD_ADDRESSES=nsqlookupd:4161
+    - MONGO_URI=mongodb://mongodb:27017/gvpocr
+    - MONGO_USERNAME=${MONGO_ROOT_USERNAME:-gvpocr_admin}
+    - MONGO_PASSWORD=${MONGO_ROOT_PASSWORD}
+    - GVPOCR_PATH=/app/Bhushanji
+    - OLLAMA_HOST=http://ollama:11434
+    - VLLM_HOST=http://vllm:8000
+    - LLAMACPP_ENABLED=${LLAMACPP_ENABLED:-true}
+    - LLAMACPP_HOST=http://llamacpp:8000
+    - LLAMACPP_MODEL=${LLAMACPP_MODEL:-gemma3-vision}
+    - LMSTUDIO_ENABLED=${LMSTUDIO_ENABLED:-true}
+    - LMSTUDIO_HOST=${LMSTUDIO_HOST:-http://lmstudio:1234}
+    - LMSTUDIO_MODEL=${LMSTUDIO_MODEL:-google/gemma-3-12b}
+    - LMSTUDIO_TIMEOUT=${LMSTUDIO_TIMEOUT:-600}
     volumes:
-      - ./backend/uploads:/app/uploads
-      - ./backend/google-credentials.json:/app/google-credentials.json:ro
-      - bhushanji_shared:/app/Bhushanji:ro
-      - /mnt/sda1/mango1_home/newsletters:/app/newsletters:ro
+    - ./backend/uploads:/app/uploads
+    - ./backend/google-credentials.json:/app/google-credentials.json:ro
+    - bhushanji_shared:/app/Bhushanji:ro
+    - /mnt/sda1/mango1_home/newsletters:/app/newsletters:ro
     depends_on:
-      - mongodb
-      - nsqd
-      - ollama
+    - mongodb
+    - nsqd
+    - ollama
     deploy:
-      replicas: 3  # Start with 3 workers
+      replicas: 3
     networks:
-      - gvpocr-network
+    - gvpocr-network
     restart: unless-stopped
-
-  # LM Studio Service - runs with Xvfb virtual display for headless operation and GPU acceleration
   lmstudio:
     build:
       context: .
@@ -470,98 +454,479 @@ services:
     container_name: gvpocr-lmstudio
     restart: unless-stopped
     ports:
-      - "1234:1234"
+    - 1234:1234
     environment:
-      # Connect to host's X11 server - use :1 if DISPLAY not set
-      - DISPLAY=:1
-      - QT_X11_NO_MITSHM=1
-      - QT_DEBUG_PLUGINS=1
-      - LIBGL_ALWAYS_INDIRECT=1
-      - LIBGL_ALWAYS_SOFTWARE=0
-      - MESA_GL_VERSION_OVERRIDE=4.5
-      - GALLIUM_DRIVER=llvmpipe
-      # GPU acceleration settings
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
-      # Allow root to access X11
-      - XAUTHORITY=/tmp/.Xauthority
+    - DISPLAY=:2
+    - QT_X11_NO_MITSHM=1
+    - QT_DEBUG_PLUGINS=1
+    - LIBGL_ALWAYS_INDIRECT=1
+    - LIBGL_ALWAYS_SOFTWARE=0
+    - MESA_GL_VERSION_OVERRIDE=4.5
+    - GALLIUM_DRIVER=llvmpipe
+    - NVIDIA_VISIBLE_DEVICES=all
+    - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
+    - XAUTHORITY=/tmp/.Xauthority
+    - LMSTUDIO_API_BASE=http://lmstudio:1234
+    - LMSTUDIO_PORT=1234
+    - QT_X11_NO_MITSHM=1
+    - QT_DEBUG_PLUGINS=0
+    - LIBGL_ALWAYS_INDIRECT=1
+    - LIBGL_ALWAYS_SOFTWARE=0
+    - MESA_GL_VERSION_OVERRIDE=4.5
+    - GALLIUM_DRIVER=llvmpipe
     volumes:
-      - /mnt/sda1/mango1_home/gvpocr/LM-Studio-0.3.31-7-x64.AppImage:/app/lmstudio.AppImage
-      - ~/.lmstudio:/root/.lmstudio
-      - ~/.cache:/root/.cache
-      - bhushanji_shared:/app/Bhushanji:ro
-      # Mount X11 socket and authority from host
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - /tmp/.X11-unix/X1:/tmp/.X11-unix/X1:rw
-      - /run/user:/run/user:rw
-      # Mount Xauthority if it exists
-      - /root/.Xauthority:/root/.Xauthority:rw
+    - /mnt/sda1/mango1_home/Downloads/LM-Studio-0.3.31-7-x64.AppImage:/app/lmstudio.AppImage
+    - ~/.lmstudio:/root/.lmstudio
+    - ~/.cache:/root/.cache
+    - bhushanji_shared:/app/Bhushanji:ro
+    - /run/user:/run/user:rw
+    - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    - /run/user/1000/pulse:/run/user/1000/pulse:rw
     cap_add:
-      - SYS_ADMIN
-      - NET_ADMIN
+    - SYS_ADMIN
+    - NET_ADMIN
     devices:
-      - /dev/fuse
-      # Allow access to GPU
-      - /dev/nvidia0:/dev/nvidia0
-      - /dev/nvidia-uvm:/dev/nvidia-uvm
-      - /dev/nvidiactl:/dev/nvidiactl
-      - /dev/dri:/dev/dri
+    - /dev/fuse
+    - /dev/nvidia0:/dev/nvidia0
+    - /dev/nvidia-uvm:/dev/nvidia-uvm
+    - /dev/nvidiactl:/dev/nvidiactl
+    - /dev/dri:/dev/dri
     security_opt:
-      - apparmor=unconfined
+    - apparmor=unconfined
     ipc: host
     deploy:
       resources:
         reservations:
           devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+          - driver: nvidia
+            count: 1
+            capabilities:
+            - gpu
     networks:
       gvpocr-network:
         aliases:
-          - lmstudio
+        - lmstudio
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:1234/v1/models"]
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:1234/v1/models
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
-
-  # LMStudio Proxy - Bridges Docker network to external LMStudio server at 172.12.0.132
-  # Uses host networking to access external server, then proxies on Docker bridge IP
-  # lmstudio-proxy disabled - LMStudio is running as a direct service in docker-compose
-  # lmstudio-proxy:
-  #   image: alpine/socat:latest
-  #   container_name: gvpocr-lmstudio-proxy
-  #   restart: unless-stopped
-  #   network_mode: "host"
-  #   command: TCP-LISTEN:1234,fork,reuseaddr,bind=0.0.0.0 TCP:172.12.0.132:1234
-  #   healthcheck:
-  #     test: ["CMD", "nc", "-z", "172.23.0.1", "1234"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 3
-
-  # Docker Registry for distributing worker images
+    command:
+    - bash
+    - -c
+    - chmod +x /app/lmstudio.AppImage && /app/lmstudio.AppImage --no-sandbox
   registry:
     image: registry:2
     container_name: gvpocr-registry
     restart: unless-stopped
     ports:
-      - "5009:5000"
+    - 5009:5000
     environment:
-      - REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY=/var/lib/registry
-      - REGISTRY_STORAGE_DELETE_ENABLED=true
+    - REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY=/var/lib/registry
+    - REGISTRY_STORAGE_DELETE_ENABLED=true
     volumes:
-      - registry_data:/var/lib/registry
+    - registry_data:/var/lib/registry
     networks:
-      - gvpocr-network
-
+    - gvpocr-network
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: gvpocr-prometheus
+    restart: unless-stopped
+    command:
+    - '--config.file=/etc/prometheus/prometheus.yml'
+    - '--storage.tsdb.path=/prometheus'
+    - '--storage.tsdb.retention.time=30d'
+    - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+    - '--web.console.templates=/usr/share/prometheus/consoles'
+    - '--web.listen-address=:3200'
+    ports:
+    - 3200:3200
+    volumes:
+    - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+    - prometheus_data:/prometheus
+    networks:
+    - gvpocr-network
+    healthcheck:
+      test:
+      - CMD
+      - wget
+      - --quiet
+      - --tries=1
+      - --spider
+      - http://localhost:9090/-/healthy
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+  grafana:
+    image: grafana/grafana:latest
+    container_name: gvpocr-grafana
+    restart: unless-stopped
+    ports:
+    - 3100:3100
+    environment:
+    - GF_SECURITY_ADMIN_PASSWORD=admin123
+    - GF_SECURITY_ADMIN_USER=admin
+    - GF_USERS_ALLOW_SIGN_UP=false
+    - GF_INSTALL_PLUGINS=redis-datasource
+    - GF_SERVER_HTTP_PORT=3100
+    volumes:
+    - grafana_data:/var/lib/grafana
+    - grafana_provisioning:/etc/grafana/provisioning
+    networks:
+    - gvpocr-network
+    depends_on:
+    - prometheus
+    healthcheck:
+      test:
+      - CMD
+      - wget
+      - --quiet
+      - --tries=1
+      - --spider
+      - http://localhost:9090/-/healthy
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: gvpocr-alertmanager
+    restart: unless-stopped
+    ports:
+    - 9500:9093
+    volumes:
+    - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    - alertmanager_data:/alertmanager
+    command:
+    - '--config.file=/etc/alertmanager/alertmanager.yml'
+    - '--storage.path=/alertmanager'
+    networks:
+    - gvpocr-network
+    healthcheck:
+      test:
+      - CMD
+      - wget
+      - --quiet
+      - --tries=1
+      - --spider
+      - http://localhost:9093/-/healthy
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+  mcp-server:
+    build:
+      context: /mnt/sda1/mango1_home/pala-platform/packages/mcp-server
+      dockerfile: Dockerfile
+    container_name: gvpocr-mcp-server
+    restart: unless-stopped
+    ports:
+    - 3003:3003
+    environment:
+    - PORT=3003
+    - JWT_SECRET=${MCP_JWT_SECRET:-mcp_development_secret}
+    - LOG_LEVEL=info
+    - ENVIRONMENT=production
+    networks:
+    - gvpocr-network
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:3003/health
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+  metadata-agent:
+    build:
+      context: /mnt/sda1/mango1_home/pala-platform/packages/agents/metadata-agent
+      dockerfile: Dockerfile
+    container_name: gvpocr-metadata-agent
+    restart: unless-stopped
+    environment:
+    - MCP_SERVER_URL=ws://mcp-server:3003
+    - OLLAMA_HOST=http://ollama:11434
+    - OLLAMA_MODEL=llama3.2
+    - AGENT_ID=metadata-agent
+    - LOG_LEVEL=info
+    networks:
+    - gvpocr-network
+    depends_on:
+    - mcp-server
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8001/health
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+  entity-agent:
+    build:
+      context: /mnt/sda1/mango1_home/pala-platform/packages/agents/entity-agent
+      dockerfile: Dockerfile
+    container_name: gvpocr-entity-agent
+    restart: unless-stopped
+    environment:
+    - MCP_SERVER_URL=ws://mcp-server:3003
+    - OLLAMA_HOST=http://ollama:11434
+    - OLLAMA_MODEL=llama3.2
+    - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    - AGENT_ID=entity-agent
+    - LOG_LEVEL=info
+    networks:
+    - gvpocr-network
+    depends_on:
+    - mcp-server
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8002/health
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+  structure-agent:
+    build:
+      context: /mnt/sda1/mango1_home/pala-platform/packages/agents/structure-agent
+      dockerfile: Dockerfile
+    container_name: gvpocr-structure-agent
+    restart: unless-stopped
+    environment:
+    - MCP_SERVER_URL=ws://mcp-server:3003
+    - OLLAMA_HOST=http://ollama:11434
+    - OLLAMA_MODEL=mixtral
+    - AGENT_ID=structure-agent
+    - LOG_LEVEL=info
+    networks:
+    - gvpocr-network
+    depends_on:
+    - mcp-server
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8003/health
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+  content-agent:
+    build:
+      context: /mnt/sda1/mango1_home/pala-platform/packages/agents/content-agent
+      dockerfile: Dockerfile
+    container_name: gvpocr-content-agent
+    restart: unless-stopped
+    environment:
+    - MCP_SERVER_URL=ws://mcp-server:3003
+    - OLLAMA_HOST=http://ollama:11434
+    - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    - CLAUDE_MODEL=claude-sonnet-4
+    - AGENT_ID=content-agent
+    - LOG_LEVEL=info
+    networks:
+    - gvpocr-network
+    depends_on:
+    - mcp-server
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8004/health
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+  context-agent:
+    build:
+      context: /mnt/sda1/mango1_home/pala-platform/packages/agents/context-agent
+      dockerfile: Dockerfile
+    container_name: gvpocr-context-agent
+    restart: unless-stopped
+    environment:
+    - MCP_SERVER_URL=ws://mcp-server:3003
+    - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    - CLAUDE_MODEL=claude-opus-4-5
+    - AGENT_ID=context-agent
+    - LOG_LEVEL=info
+    networks:
+    - gvpocr-network
+    depends_on:
+    - mcp-server
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8005/health
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+  enrichment-coordinator:
+    image: ocr_metadata_extraction-enrichment-coordinator
+    container_name: gvpocr-enrichment-coordinator
+    command: python -u -m enrichment_service.coordinator.enrichment_coordinator
+    restart: unless-stopped
+    ports:
+    - 8011:8001
+    volumes:
+    - ./enrichment_service:/app/enrichment_service
+    - enrichment_logs:/app/logs
+    environment:
+    - FLASK_ENV=production
+    - PORT=8001
+    - LOG_LEVEL=INFO
+    - LOG_DIR=/app/logs
+    - MONGO_URI=mongodb://mongodb:27017/gvpocr
+    - MONGO_USERNAME=${MONGO_ROOT_USERNAME:-gvpocr_admin}
+    - MONGO_PASSWORD=${MONGO_ROOT_PASSWORD}
+    - MONGO_HOST=mongodb
+    - MONGO_PORT=27017
+    - DB_NAME=gvpocr
+    - NSQD_ADDRESS=nsqd:4150
+    - NSQLOOKUPD_ADDRESSES=nsqlookupd:4161
+    - ENRICHMENT_ENABLED=true
+    - ENRICHMENT_BATCH_SIZE=50
+    - ENRICHMENT_REVIEW_THRESHOLD=0.95
+    - MCP_SERVER_URL=ws://mcp-server:3003
+    - COORDINATOR_LOG_LEVEL=INFO
+    healthcheck:
+      test:
+      - CMD
+      - pgrep
+      - -f
+      - enrichment_coordinator
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+    - gvpocr-network
+    depends_on:
+    - mcp-server
+    - mongodb
+    - nsqd
+  enrichment-worker:
+    image: ocr_metadata_extraction-enrichment-worker
+    command: python -u -m enrichment_service.workers.enrichment_worker
+    restart: unless-stopped
+    volumes:
+    - ./enrichment_service:/app/enrichment_service
+    - enrichment_logs:/app/logs
+    environment:
+    - FLASK_ENV=production
+    - LOG_LEVEL=INFO
+    - LOG_DIR=/app/logs
+    - WORKER_LOG_LEVEL=INFO
+    - MONGO_USERNAME=${MONGO_ROOT_USERNAME:-gvpocr_admin}
+    - MONGO_PASSWORD=${MONGO_ROOT_PASSWORD}
+    - MONGO_HOST=mongodb
+    - MONGO_PORT=27017
+    - NSQD_ADDRESS=nsqd:4150
+    - NSQLOOKUPD_ADDRESSES=nsqlookupd:4161
+    - MCP_SERVER_URL=ws://mcp-server:3003
+    - ENRICHMENT_ENABLED=true
+    - MAX_CLAUDE_TOKENS_PER_DOC=50000
+    - COST_ALERT_THRESHOLD_USD=100.00
+    networks:
+    - gvpocr-network
+    depends_on:
+    - mcp-server
+    - mongodb
+    - nsqd
+    deploy:
+      replicas: 2
+  # review-api:
+  #   image: ocr_metadata_extraction-enrichment-api
+  #   container_name: gvpocr-review-api
+  #   entrypoint: python -u
+  #   command: -m enrichment_service.review.review_api
+  #   restart: unless-stopped
+  #   ports:
+  #   - 5001:5001
+  #   volumes:
+  #   - ./enrichment_service:/app/enrichment_service
+  #   - enrichment_logs:/app/logs
+  #   environment:
+  #   - FLASK_ENV=production
+  #   - PORT=5001
+  #   - LOG_LEVEL=INFO
+  #   - LOG_DIR=/app/logs
+  #   - REVIEW_API_LOG_LEVEL=INFO
+  #   - PYTHONUNBUFFERED=1
+  #   - PYTHONPATH=/app
+  #   - MONGO_URI=mongodb://mongodb:27017/gvpocr
+  #   - MONGO_USERNAME=${MONGO_ROOT_USERNAME:-gvpocr_admin}
+  #   - MONGO_PASSWORD=${MONGO_ROOT_PASSWORD}
+  #   networks:
+  #   - gvpocr-network
+  #   depends_on:
+  #   - mongodb
+  #   healthcheck:
+  #     test:
+  #     - CMD
+  #     - curl
+  #     - -f
+  #     - http://localhost:5001/health
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 30s
+  # cost-api:
+  #   image: ocr_metadata_extraction-enrichment-api
+  #   container_name: gvpocr-cost-api
+  #   entrypoint: python -u
+  #   command: -m enrichment_service.utils.cost_api
+  #   restart: unless-stopped
+  #   ports:
+  #   - 5002:5002
+  #   volumes:
+  #   - ./enrichment_service:/app/enrichment_service
+  #   - enrichment_logs:/app/logs
+  #   environment:
+  #   - FLASK_ENV=production
+  #   - PORT=5002
+  #   - LOG_LEVEL=INFO
+  #   - LOG_DIR=/app/logs
+  #   - COST_API_LOG_LEVEL=INFO
+  #   - PYTHONUNBUFFERED=1
+  #   - PYTHONPATH=/app
+  #   - MONGO_URI=mongodb://mongodb:27017/gvpocr
+  #   - MONGO_USERNAME=${MONGO_ROOT_USERNAME:-gvpocr_admin}
+  #   - MONGO_PASSWORD=${MONGO_ROOT_PASSWORD}
+  #   networks:
+  #   - gvpocr-network
+  #   depends_on:
+  #   - mongodb
+  #   healthcheck:
+  #     test:
+  #     - CMD
+  #     - curl
+  #     - -f
+  #     - http://localhost:5002/health
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 30s
 volumes:
-  mongodb_data:
-    #driver: local
-  mongodb_config:
-    #driver: local
+  mongodb_data: null
+  mongodb_config: null
   registry_data:
     driver: local
   ollama_data:
@@ -582,12 +947,21 @@ volumes:
       type: none
       o: bind
       device: ${GVPOCR_PATH}
-
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  grafana_provisioning:
+    driver: local
+  alertmanager_data:
+    driver: local
+  open_webui_data:
+    driver: local
+  enrichment_logs:
+    driver: local
 networks:
   gvpocr-network:
     driver: bridge
   archipelago-network:
     external: true
     name: archipelago-deployment_esmero-net
-
-
