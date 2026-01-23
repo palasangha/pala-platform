@@ -1,0 +1,2433 @@
+================================================================================
+  OCR METADATA EXTRACTION PLATFORM — RBAC & WORKFLOW DESIGN
+  COMPREHENSIVE SYSTEM DESIGN PLAN (FINAL)
+================================================================================
+
+Date: 2026-01-22
+Status: PLANNING PHASE - READY FOR IMPLEMENTATION
+Audience: Architecture & Engineering Teams
+Security Level: Internal - Contains authorization logic
+
+================================================================================
+EXECUTIVE SUMMARY
+================================================================================
+
+This document defines a production-grade Role-Based Access Control (RBAC)
+system for the OCR Metadata Extraction Platform. The design ensures:
+
+✓ Strict role separation of duties
+✓ Complete auditability of all actions
+✓ Multi-stage workflow with explicit state management
+✓ Admin-enforced document classification
+✓ Zero cross-role data leakage
+✓ Compliance-ready audit trails
+
+The design builds on the existing OCR platform's architecture (MongoDB,
+Flask, NSQ workers, enrichment pipeline) while adding security and workflow
+governance.
+
+================================================================================
+PART 1: ROLES & RESPONSIBILITIES (DEFINITIVE)
+================================================================================
+
+1.1 ROLE HIERARCHY & PERMISSIONS MATRIX
+
+┌───────────────────────────────────────────────────────────────────┐
+│ ROLE PERMISSION MATRIX                                            │
+├──────────────────┬─────────┬──────────┬────────┐
+│ PERMISSION       │ ADMIN   │ REVIEWER │TEACHER │
+├──────────────────┼─────────┼──────────┼────────┤
+│ Create Project   │ ✓       │          │        │
+│ Upload Docs      │ ✓       │          │        │
+│ Classify Docs    │ ✓ ONLY  │          │        │
+│ Assign Docs      │ ✓       │          │        │
+│ Run OCR          │ ✓ ONLY  │          │        │
+│ Edit OCR Output  │ ✓       │ ✓(Pub)   │ ✓(Both)│
+│ Review Docs      │ ✓       │ ✓(Pub)   │ ✓(Both)│
+│ Final Approval   │ ✓       │          │        │
+│ Export/Release   │ ✓       │          │        │
+│ View Dashboards  │ ✓       │          │        │
+│ Audit Logs       │ ✓       │          │        │
+│ Reassign Docs    │ ✓       │          │        │
+│ Override States  │ ✓       │          │        │
+└──────────────────┴─────────┴──────────┴────────┘
+
+1.2 ROLE DEFINITIONS
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ROLE 1: ADMIN (System Authority & Complete Control)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Purpose:
+  • System ownership and complete governance
+  • Document classification authority
+  • OCR processing execution (full automation control)
+  • Batch assignment and scheduling
+  • Document review and approval authority
+  • Final release and export control
+  • Audit and compliance oversight
+
+Permissions:
+  ✓ Create and manage projects
+  ✓ Upload documents in bulk
+  ✓ Classify documents (Public / Private) — EXCLUSIVE
+  ✓ Assign document batches for review
+  ✓ Run OCR processing on assigned documents — EXCLUSIVE
+  ✓ Configure OCR providers and settings
+  ✓ View all documents regardless of classification or state
+  ✓ Edit OCR output and metadata
+  ✓ Perform document reviews alongside Reviewers/Teachers
+  ✓ Access admin dashboards and KPIs
+  ✓ View complete audit logs
+  ✓ Perform final review and approval on any document
+  ✓ Approve documents for export (final approval)
+  ✓ Trigger exports to downstream systems (MongoDB, Archipelago)
+  ✓ Reassign or override document states with justification
+  ✓ Create and manage user accounts
+  ✓ Assign roles and permissions to users
+
+Restrictions:
+  (None - Admin has full system access)
+
+Best Practices:
+  • Maintain separation of duties (classify → OCR → assign → review → approve)
+  • Document all override decisions for audit trail
+  • Monitor OCR performance and quality metrics
+  • Delegate review tasks to Reviewers/Teachers to avoid bottleneck
+
+Responsibilities:
+  1. Classify all documents before OCR assignment
+  2. Run OCR processing in batches or individually
+  3. Monitor OCR processing quality and performance
+  4. Create assignments for Reviewers and Teachers
+  5. Review final batch of approved documents (admin review stage)
+  6. Authorize export to downstream systems
+  7. Investigate anomalies in audit logs
+  8. Override stuck workflows with documented justification
+  9. Manage system users and their roles
+  10. Monitor overall project progress and SLAs
+
+Audit Events:
+  - ADMIN_CLASSIFY_DOC
+  - ADMIN_RUN_OCR
+  - ADMIN_CONFIGURE_OCR_PROVIDER
+  - ADMIN_ASSIGN_BATCH
+  - ADMIN_EDIT_METADATA
+  - ADMIN_FINAL_APPROVE
+  - ADMIN_EXPORT_TO_DOWNSTREAM
+  - ADMIN_OVERRIDE_STATE
+  - ADMIN_REASSIGN_DOC
+  - ADMIN_CREATE_USER
+  - ADMIN_MODIFY_USER_ROLE
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ROLE 2: OCR REVIEWER (Public Document Review)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Purpose:
+  • Human review of OCR output for Public documents
+  • Validate machine-extracted metadata against original
+  • Make approval decisions on Public documents
+  • Optionally correct OCR errors
+
+Permissions:
+  ✓ View pool of PUBLIC documents in review state
+  ✓ Claim unclaimed documents from review pool
+  ✓ View side-by-side: original document + OCR output
+  ✓ Review extracted fields and metadata
+  ✓ Approve document as-is
+  ✓ Manually edit extracted fields
+  ✓ Approve after manual edits
+  ✓ Transition document state: In_Review → Reviewed_Approved
+  ✓ View their own work queue and statistics
+
+Restrictions:
+  ✗ Cannot see PRIVATE documents (strict enforcement)
+  ✗ Cannot run OCR processing
+  ✗ Cannot see document classification status
+  ✗ Cannot classify documents
+  ✗ Cannot assign documents
+  ✗ Cannot perform final approval (Admin only)
+  ✗ Cannot see other reviewers' work (isolated queues)
+  ✗ Cannot see dashboards or system metrics
+  ✗ Cannot access audit logs
+  ✗ Cannot export or release data
+
+Responsibilities:
+  1. Review claimed documents from review pool
+  2. Validate OCR accuracy against original document
+  3. Make approval decision on Public documents
+  4. Document reason for edits (if any)
+  5. Maintain review quality standards
+  6. Report blocking issues to Admin
+
+Audit Events:
+  - REVIEWER_CLAIM_DOC
+  - REVIEWER_APPROVE_DOC_ASIC
+  - REVIEWER_EDIT_AND_APPROVE
+  - REVIEWER_REJECT_DOC
+  - REVIEWER_ESCALATE_DOC
+
+Notes:
+  • "Public" designation enforced at query level (database filtering)
+  • Cannot view or access Private documents
+  • Cannot escalate to Teacher (Admin handles escalation)
+  • If reviewer encounters Private doc in queue (bug), must not view
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ROLE 3: TEACHER (Senior / Sensitive Review)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Purpose:
+  • Senior review authority for sensitive (Private) documents
+  • Authority over both Public and Private document review
+  • Trusted reviewer with access to classified content
+  • Step before Admin final approval
+
+Permissions:
+  ✓ View and review both PUBLIC and PRIVATE documents
+  ✓ View side-by-side: original document + OCR output
+  ✓ Review extracted fields and metadata
+  ✓ Manually edit extracted fields
+  ✓ Approve document after review
+  ✓ Transition document state: In_Review → Reviewed_Approved
+  ✓ View their own work queue and statistics
+  ✓ Can claim from shared pool or be assigned specific batches
+  ✓ View classification status (for context only)
+
+Restrictions:
+  ✗ Cannot run OCR processing
+  ✗ Cannot classify documents
+  ✗ Cannot assign documents to others
+  ✗ Cannot perform final approval (Admin only)
+  ✗ Cannot see other reviewers' personal work
+  ✗ Cannot see system dashboards or KPIs
+  ✗ Cannot access full audit logs (only their actions)
+  ✗ Cannot export or release data
+  ✗ Cannot override Admin decisions
+
+Responsibilities:
+  1. Review claimed documents for both Public and Private content
+  2. Validate OCR accuracy for sensitive content
+  3. Make approval decision on sensitive documents
+  4. Handle complex or ambiguous documents
+  5. Escalate blocking issues to Admin
+  6. Maintain strict confidentiality of Private documents
+
+Audit Events:
+  - TEACHER_VIEW_DOC
+  - TEACHER_CLAIM_DOC
+  - TEACHER_APPROVE_DOC_ASIC
+  - TEACHER_EDIT_AND_APPROVE
+  - TEACHER_REJECT_DOC
+  - TEACHER_ESCALATE_DOC
+
+Notes:
+  • Requires elevated security clearance (manual verification)
+  • Can view Private docs but cannot extend access to others
+  • Acts as trusted gatekeeper for sensitive content
+  • Cannot see other teachers' work (maintain confidentiality)
+  • Cannot delegate Private documents to other reviewers
+
+================================================================================
+PART 2: DOCUMENT CLASSIFICATION SYSTEM
+================================================================================
+
+2.1 CLASSIFICATION RULES (IMMUTABLE)
+
+Every document must be classified exactly ONCE by an Admin before:
+  • OCR processing begins
+  • Any other role sees the document
+  • Any assignment happens
+
+Classification cannot be changed once OCR processing starts.
+  (Admin can override with explicit justification + audit log entry)
+
+2.2 CLASSIFICATION VALUES
+
+┌────────────────┬───────────────────────────────────┬──────────────────────┐
+│ CLASSIFICATION │ DEFINITION                        │ REVIEWER ACCESS      │
+├────────────────┼───────────────────────────────────┼──────────────────────┤
+│ PUBLIC         │ Non-sensitive content, open for   │ OCR Reviewer + Teacher
+│                │ community review and enrichment   │                      │
+├────────────────┼───────────────────────────────────┼──────────────────────┤
+│ PRIVATE        │ Sensitive content (personal data, │ Teacher only         │
+│                │ restricted access, compliance     │ (no OCR Reviewer)    │
+│                │ sensitive, or restricted archives)│                      │
+└────────────────┴───────────────────────────────────┴──────────────────────┘
+
+2.3 CLASSIFICATION ENFORCEMENT
+
+At Database Level:
+  • Classification field: document.classification ∈ {PUBLIC, PRIVATE}
+  • Default: NULL (unclassified)
+  • Required before: status transition to Assigned_To_OCR
+
+At Query Level (API Filters):
+  • OCR Reviewer queries: WHERE classification = 'PUBLIC'
+  • Teacher queries: WHERE classification IN ('PUBLIC', 'PRIVATE')
+  • Admin queries: no filter (sees all)
+
+At API Level:
+  • Authorization decorator checks user role + classification
+  • Return 403 Forbidden if role cannot access classification
+
+Example Authorization Check (Pseudocode):
+  ┌─────────────────────────────────────────────────────────┐
+  │ def can_view_document(user_role, doc_classification):  │
+  │   if user_role == 'admin':                              │
+  │     return True                                          │
+  │   elif user_role == 'teacher':                           │
+  │     return doc_classification in ['PUBLIC', 'PRIVATE']  │
+  │   elif user_role == 'reviewer':                          │
+  │     return doc_classification == 'PUBLIC'               │
+  │   elif user_role == 'processor':                         │
+  │     return assigned_to_user (separate check)            │
+  │   else:                                                  │
+  │     return False                                         │
+  └─────────────────────────────────────────────────────────┘
+
+================================================================================
+PART 3: END-TO-END WORKFLOW (AUTHORITATIVE STATE MACHINE)
+================================================================================
+
+3.1 DOCUMENT LIFECYCLE STATE DIAGRAM
+
+Every document follows this EXACT sequence. Deviations trigger audit alerts.
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│                        DOCUMENT STATE MACHINE                             │
+└──────────────────────────────────────────────────────────────────────────┘
+
+                              ┌─────────────────┐
+                              │   1. UPLOADED   │  Admin uploads file
+                              │  [No role yet]  │  to project
+                              └────────┬────────┘
+                                       │
+                                       ↓
+                  ┌────────────────────────────────────────────┐
+                  │  2. CLASSIFICATION_PENDING (Admin)         │
+                  │  Status: Awaiting classification by Admin  │
+                  │  Visible to: Admin only                    │
+                  └────────────┬─────────────────────────────┘
+                               │ Admin classifies as Public/Private
+                               ↓
+        ┌──────────────────────────────────────────────────┐
+        │                                                  │
+        │  3a. CLASSIFIED_PUBLIC              3b. CLASSIFIED_PRIVATE
+        │  (Public document)                  (Private/Sensitive)
+        │                                                  │
+        └──────┬──────────────────────────────┬───────────┘
+               │ Admin runs OCR on batch     │
+               ↓                              ↓
+        ┌─────────────────────────────────────────────────┐
+        │    4. OCR_PROCESSING                            │
+        │    Status: Admin running OCR processing        │
+        │    Visible to: Admin only                       │
+        └────────────────┬─────────────────────────────┘
+                         │ Admin completes OCR
+                         ↓
+        ┌──────────────────────────────────┐
+        │    5. OCR_PROCESSED              │
+        │    Status: OCR complete          │
+        │    Visible to: Admin only        │
+        └────────────────┬─────────────────┘
+                         │ Admin routes to review
+                         ↓
+        ┌──────────────────────────────────┐
+        │    6. IN_REVIEW                  │
+        │    Status: Awaiting human review │
+        │    Visible to: Admin, Reviewers  │
+        │    (OCR Reviewer: Public only)   │
+        │    (Teacher: Both Public+Private)│
+        └────────────────┬─────────────────┘
+                         │
+        ┌────────────────┴──────────────────┐
+        │                                   │
+        │ Reviewer/Teacher reviews:         │
+        │ - Approve as-is                   │
+        │ - Edit & approve                  │
+        │ - Reject back to in-review queue  │
+        │                                   │
+        ↓                                   ↓
+    ┌────────────────────────────────────────────────────┐
+    │ 7. REVIEWED_APPROVED                               │
+    │ Status: Reviewer/Teacher approved                  │
+    │ Visible to: Admin only                             │
+    └────────────────┬──────────────────────────────────┘
+                     │ Admin final review
+                     ↓
+    ┌────────────────────────────────────────────────────┐
+    │ 8. FINAL_ADMIN_REVIEW                              │
+    │ Status: In final approval stage                    │
+    │ Visible to: Admin only                             │
+    └────────────────┬──────────────────────────────────┘
+                     │ Admin approves for export
+                     ↓
+    ┌────────────────────────────────────────────────────┐
+    │ 9. FINAL_APPROVED                                  │
+    │ Status: Ready for export                           │
+    │ Visible to: Admin only                             │
+    └────────────────┬──────────────────────────────────┘
+                     │ Admin triggers export
+                     ↓
+    ┌────────────────────────────────────────────────────┐
+    │ 10. EXPORTED                                       │
+    │ Status: Released to MongoDB/Archipelago            │
+    │ Visible to: Admin, (optionally Supervisor)         │
+    └────────────────────────────────────────────────────┘
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+3.2 STATE TRANSITION RULES
+
+Valid Transitions (Only These Allowed):
+
+  1. UPLOADED → CLASSIFICATION_PENDING
+     Action: Admin initiates classification
+     Timeout: 24 hours (SLA)
+
+  2. CLASSIFICATION_PENDING → CLASSIFIED_PUBLIC | CLASSIFIED_PRIVATE
+     Action: Admin classifies document
+     Authorizer: Admin only
+     Timeout: None (explicit action)
+
+  3. CLASSIFIED_PUBLIC → OCR_PROCESSING
+     Action: Admin starts OCR processing
+     Timeout: 2 hours (SLA for admin to start)
+
+  4. CLASSIFIED_PRIVATE → OCR_PROCESSING
+     Action: Admin starts OCR processing
+     Timeout: 2 hours (SLA for admin to start)
+
+  5. OCR_PROCESSING → OCR_PROCESSED
+     Action: Admin completes OCR
+     Timeout: Based on doc complexity (1-60 min actual processing)
+
+  6. OCR_PROCESSED → IN_REVIEW
+     Action: Admin routes to review queue (Reviewer/Teacher)
+     Timeout: 1 hour (SLA for admin to route)
+
+  7. IN_REVIEW → REVIEWED_APPROVED
+     Action: Reviewer/Teacher approves (with/without edits)
+     Timeout: 8 hours (SLA for public), 24 hours (SLA for private)
+
+  8. IN_REVIEW → REVIEWED_APPROVED (back to queue)
+     Action: Reviewer rejects, document stays in queue for re-assignment
+     Timeout: None (escalation)
+
+  9. REVIEWED_APPROVED → FINAL_ADMIN_REVIEW
+     Action: Admin initiates final review stage
+     Timeout: 4 hours (SLA)
+
+  10. FINAL_ADMIN_REVIEW → FINAL_APPROVED
+      Action: Admin approves batch for export
+      Timeout: 24 hours (SLA)
+
+  11. FINAL_APPROVED → EXPORTED
+      Action: Admin triggers export to downstream systems
+      Timeout: 15 minutes (service call)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+3.3 INVALID TRANSITIONS & ERROR HANDLING
+
+Invalid Transitions (Reject with 400 Bad Request):
+  • CLASSIFICATION_PENDING → OCR_PROCESSING (skip classification)
+  • CLASSIFIED_PUBLIC → FINAL_APPROVED (skip reviews and OCR)
+  • REVIEWED_APPROVED → CLASSIFIED_PUBLIC (reopen classification)
+  • ANY → UPLOADED (no reverse to uploaded)
+
+Admin Override Transitions:
+  • Admin CAN reopen any state with explicit justification
+  • Example: REVIEWED_APPROVED → OCR_PROCESSING + Reason (re-process)
+  • Must be logged as ADMIN_OVERRIDE event with reason
+  • Override reason must explain why previous decision was incorrect
+
+Error Scenarios:
+  • OCR Failed: Stay in OCR_PROCESSING, admin retries with increment
+  • Max Retries Reached: Escalate to Admin (state: PROCESSING_FAILED)
+  • Reviewer Timeout: Re-queue in IN_REVIEW for another reviewer
+  • No Reviewers Available: Escalate to Teacher or Admin manual review
+
+Rejection & Re-routing Workflow:
+  • Reviewer rejects in IN_REVIEW → stays IN_REVIEW (queue for re-assignment)
+  • Admin can reassign to different reviewer or back to OCR_PROCESSING
+  • Each rejection tracked in audit log with reason
+  • Admin documents why re-processing is needed
+
+================================================================================
+PART 4: DATA MODEL SCHEMA (CONCEPTUAL)
+================================================================================
+
+4.1 CORE ENTITIES
+
+4.1.1 USER (Enhancement to existing)
+────────────────────────────────────
+
+Collection: users
+
+{
+  _id: ObjectId,
+
+  # Existing fields
+  email: string (unique),
+  name: string,
+  password_hash: string,
+  google_id: string (optional),
+
+  # RBAC Fields
+  roles: [Role],                      # Array of role objects
+  active: boolean,
+  security_clearance: string,         # 'standard', 'elevated', 'sensitive'
+
+  # Assignment tracking
+  assigned_project_ids: [ObjectId],   # Projects they can access
+
+  # Audit fields
+  created_at: datetime,
+  updated_at: datetime,
+  last_login: datetime,
+  created_by: ObjectId (userId)
+}
+
+Indexes:
+  • email (unique)
+  • roles
+  • assigned_project_ids
+
+4.1.2 ROLE (New Collection)
+────────────────────────────
+
+Collection: roles
+
+{
+  _id: ObjectId,
+
+  name: string (enum: 'admin', 'processor', 'reviewer', 'teacher', 'supervisor'),
+  description: string,
+
+  permissions: [string],              # List of permission strings
+  # Example: ['classify_doc', 'assign_batch', 'view_dashboards', ...]
+
+  data_access_level: string,          # 'all', 'public_only', 'assigned_only'
+
+  created_at: datetime,
+  created_by: ObjectId (userId)
+}
+
+Predefined Roles (Immutable):
+  • admin: Full access
+  • processor: OCR execution only
+  • reviewer: Public review only
+  • teacher: Public + Private review
+  • supervisor: View only (future)
+
+4.1.3 PROJECT (Enhancement to existing)
+────────────────────────────────────────
+
+Collection: projects
+
+{
+  _id: ObjectId,
+
+  # Existing fields
+  user_id: ObjectId (Admin who created),
+  name: string,
+  description: string,
+
+  # RBAC Fields
+  collaborators: [
+    {
+      user_id: ObjectId,
+      role: string,               # 'admin', 'processor', 'reviewer', 'teacher'
+      assigned_at: datetime
+    }
+  ],
+
+  # Workflow state
+  state: string,                  # 'active', 'paused', 'archived'
+
+  # Statistics
+  total_documents: integer,
+  processed_documents: integer,
+  reviewed_documents: integer,
+  approved_documents: integer,
+
+  created_at: datetime,
+  updated_at: datetime
+}
+
+Indexes:
+  • user_id
+  • collaborators.user_id
+  • state
+
+4.1.4 DOCUMENT (Major Enhancement)
+────────────────────────────────────
+
+Collection: documents
+
+{
+  _id: ObjectId,
+
+  # Basic metadata
+  project_id: ObjectId,
+  filename: string,
+  filepath: string,
+  file_type: string,              # 'image', 'pdf'
+  file_size: integer,
+  checksum: string,               # For integrity verification
+
+  # RBAC Fields
+  classification: string,          # 'PUBLIC', 'PRIVATE', NULL
+  classified_by: ObjectId,        # Admin user who classified
+  classified_at: datetime,
+
+  # Workflow State Machine
+  status: string,                 # Current state from 3.1
+  status_history: [
+    {
+      status: string,
+      changed_by: ObjectId,
+      changed_at: datetime,
+      reason: string (optional)
+    }
+  ],
+
+  # Processing tracking (Admin only)
+  processed_by: ObjectId (optional), # Admin who ran OCR
+  processed_at: datetime,
+
+  # OCR Data
+  ocr_status: string,             # 'pending', 'processing', 'completed', 'failed'
+  ocr_provider: string,           # 'tesseract', 'google_vision', 'ollama', etc.
+  ocr_text: string (large),
+  ocr_confidence: float,          # Average confidence score
+  ocr_processed_at: datetime,
+  ocr_error: string (optional),
+  ocr_retry_count: integer (default: 0),
+
+  # Review Data
+  reviewed_by: ObjectId (optional), # Reviewer/Teacher who reviewed
+  reviewed_at: datetime,
+  review_notes: string,           # Why they approved/rejected
+  manual_edits: [
+    {
+      field_name: string,
+      original_value: string,
+      edited_value: string,
+      edited_by: ObjectId,
+      edited_at: datetime
+    }
+  ],
+
+  # Enrichment Data (from enrichment service)
+  enrichment_status: string,      # 'pending', 'processing', 'completed', 'failed'
+  enriched_metadata: object,      # Structured data from enrichment pipeline
+  enrichment_confidence: float,
+
+  # Final Approval
+  final_approved_by: ObjectId (optional), # Admin final approval
+  final_approved_at: datetime,
+  final_approval_notes: string,
+
+  # Export tracking
+  exported_at: datetime (optional),
+  exported_to: [string],          # ['mongodb', 'archipelago', ...]
+  export_error: string (optional),
+
+  # Audit trail
+  audit_log_ids: [ObjectId],      # References to audit log entries
+
+  # Timestamps
+  created_at: datetime,
+  updated_at: datetime
+}
+
+Indexes:
+  • project_id
+  • status
+  • classification
+  • processed_by
+  • reviewed_by
+  • created_at
+  • (project_id, status) - compound
+  • (classification, status) - compound
+  • (status, processed_at) - compound for SLA tracking
+
+4.1.5 ASSIGNMENT (New Collection)
+──────────────────────────────────
+
+Collection: assignments
+
+{
+  _id: ObjectId,
+
+  project_id: ObjectId,
+  admin_id: ObjectId,             # Admin who created assignment
+
+  assignee_id: ObjectId,          # Processor/Reviewer assigned to
+  assignee_role: string,          # 'processor', 'reviewer', 'teacher'
+
+  document_ids: [ObjectId],       # Batch of documents
+  document_count: integer,
+
+  assignment_type: string,        # 'batch', 'individual'
+  due_at: datetime,               # SLA deadline
+  priority: string,               # 'low', 'normal', 'high'
+
+  # Tracking
+  status: string,                 # 'assigned', 'in_progress', 'completed', 'overdue'
+  completed_count: integer (default: 0),
+
+  # Notes
+  notes: string,
+
+  created_at: datetime,
+  completed_at: datetime (optional)
+}
+
+Indexes:
+  • project_id
+  • assignee_id
+  • status
+  • due_at
+
+4.1.6 AUDIT_LOG (Critical for compliance)
+──────────────────────────────────────────
+
+Collection: audit_logs
+
+{
+  _id: ObjectId,
+
+  # Action metadata
+  action_type: string,            # 'ADMIN_CLASSIFY_DOC', 'REVIEWER_APPROVE', etc.
+  actor_id: ObjectId,             # User who performed action
+  actor_role: string,             # Role at time of action (snapshot)
+  actor_ip: string,               # IP address for security
+
+  # Target metadata
+  document_id: ObjectId,
+  project_id: ObjectId,
+  resource_type: string,          # 'document', 'user', 'project', 'assignment'
+  resource_id: ObjectId,
+
+  # State transition
+  previous_state: object,         # Before snapshot
+  new_state: object,              # After snapshot
+  state_changed: boolean,
+
+  # Detailed change log
+  changes: [
+    {
+      field_name: string,
+      old_value: any,
+      new_value: any
+    }
+  ],
+
+  # Context
+  reason: string (optional),      # Why the action was taken
+  additional_context: object,     # Arbitrary metadata
+
+  # Timestamps
+  created_at: datetime,
+
+  # Compliance fields
+  is_sensitive: boolean,          # Mark sensitive operations
+  requires_approval: boolean      # Flag for sensitive operations
+}
+
+Indexes:
+  • action_type
+  • actor_id
+  • document_id
+  • created_at
+  • (document_id, created_at) - compound for document history
+
+Retention Policy:
+  • Keep all audit logs for 7 years (compliance requirement)
+  • Archive to cold storage after 1 year
+
+4.1.7 REVIEW_QUEUE (New Collection)
+────────────────────────────────────
+
+Collection: review_queues
+
+{
+  _id: ObjectId,
+
+  project_id: ObjectId,
+  document_id: ObjectId,
+
+  classification: string,         # 'PUBLIC', 'PRIVATE'
+  assigned_role: string,          # 'reviewer', 'teacher'
+
+  # Queue state
+  status: string,                 # 'pending', 'claimed', 'completed', 'reassigned'
+  claimed_by: ObjectId (optional),
+  claimed_at: datetime (optional),
+
+  # SLA tracking
+  queued_at: datetime,
+  due_at: datetime,
+  completed_at: datetime (optional),
+  sla_violated: boolean,
+
+  # Escalation
+  escalation_count: integer (default: 0),
+  escalated_to_admin: boolean,
+
+  created_at: datetime
+}
+
+Indexes:
+  • project_id
+  • status
+  • assigned_role
+  • classification
+  • due_at
+
+4.2 RELATIONSHIP DIAGRAM (Entity Relationships)
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                          DATA RELATIONSHIPS                          │
+└─────────────────────────────────────────────────────────────────────┘
+
+                          ┌──────────────────┐
+                          │      PROJECT     │
+                          │                  │
+                          │ _id: ObjectId    │
+                          │ name             │
+                          │ collaborators[]  │
+                          └────┬────────┬────┘
+                               │        │
+                    1:M         │        │ 1:M
+                               ▼        ▼
+                          ┌──────────────────┐
+                          │    DOCUMENT      │
+                          │                  │
+                          │ _id: ObjectId    │
+                          │ project_id (FK)  │
+                          │ status           │
+                          │ classification   │
+                          │ assigned_to (FK) │
+                          │ reviewed_by (FK) │
+                          └────┬────────┬────┘
+                               │        │
+                               │        │ 1:M
+                               │        ▼
+                               │   ┌──────────────────┐
+                               │   │    AUDIT_LOG     │
+                               │   │                  │
+                               │   │ document_id (FK) │
+                               │   │ actor_id (FK)    │
+                               │   │ action_type      │
+                               │   └──────────────────┘
+                               │
+                        1:M    │
+                               ▼
+                          ┌──────────────────┐
+                          │      USER        │
+                          │                  │
+                          │ _id: ObjectId    │
+                          │ email            │
+                          │ roles[]          │
+                          └────┬─────────────┘
+                               │
+                               │ 1:M (assigned to)
+                               ▼
+                          ┌──────────────────┐
+                          │   ASSIGNMENT     │
+                          │                  │
+                          │ assignee_id (FK) │
+                          │ document_ids[] (FK)
+                          └──────────────────┘
+
+                    ┌──────────────────────┐
+                    │        ROLE          │
+                    │                      │
+                    │ _id: ObjectId        │
+                    │ name (enum)          │
+                    │ permissions[]        │
+                    └──────────────────────┘
+
+Multi-Cardinality Summary:
+  • User : Role = M:M (user can have multiple roles in different projects)
+  • User : Project = M:M (collaborators array)
+  • User : Document = 1:M (assigned to, reviewed by)
+  • Project : Document = 1:M
+  • Project : Assignment = 1:M
+  • Document : AuditLog = 1:M
+  • User : AuditLog = 1:M
+
+================================================================================
+PART 5: AUTHORIZATION MODEL (RBAC ENGINE)
+================================================================================
+
+5.1 RBAC ARCHITECTURE
+
+┌──────────────────────────────────────────────────────────────────────┐
+│                     AUTHORIZATION PIPELINE                           │
+└──────────────────────────────────────────────────────────────────────┘
+
+Request Flow:
+  1. Extract JWT token from Authorization header
+  2. Verify token signature and expiration
+  3. Extract user_id and role from token
+  4. Load user object and role permissions from database
+  5. Evaluate authorization policies:
+     a. Route-level authorization (is user authenticated?)
+     b. Resource-level authorization (can user access this resource?)
+     c. Data-level authorization (can user see this data classification?)
+  6. If all pass: proceed with request
+  7. If any fail: return 403 Forbidden with reason
+
+5.2 PERMISSION MODEL
+
+Permissions are strings that define what actions a role can perform:
+
+Core Permissions:
+  • create_project
+  • manage_users
+  • classify_document
+  • run_ocr
+  • review_document
+  • edit_metadata
+  • approve_final
+  • export_data
+  • view_dashboards
+  • view_audit_logs
+  • override_state
+
+Data Access Permissions:
+  • view_all_documents (Admin, Teacher)
+  • view_public_documents (OCR Reviewer, Teacher)
+  • view_review_queue (OCR Reviewer, Teacher)
+
+Role-Permission Mapping (Truth Table):
+
+  ADMIN:
+    ✓ create_project
+    ✓ manage_users
+    ✓ classify_document
+    ✓ run_ocr
+    ✓ view_all_documents
+    ✓ review_document
+    ✓ edit_metadata
+    ✓ approve_final
+    ✓ export_data
+    ✓ view_dashboards
+    ✓ view_audit_logs
+    ✓ override_state
+
+  OCR_REVIEWER:
+    ✓ view_public_documents
+    ✓ view_review_queue
+    ✓ review_document
+    ✓ edit_metadata
+
+  TEACHER:
+    ✓ view_all_documents
+    ✓ view_review_queue
+    ✓ review_document
+    ✓ edit_metadata
+
+5.3 AUTHORIZATION DECORATORS (Flask Pseudocode)
+
+┌─────────────────────────────────────────────────────────────────┐
+│ @require_permission('classify_document')                        │
+│ @require_role(['admin'])                                        │
+│ def classify_document(doc_id, classification):                  │
+│   # Function body                                               │
+│   pass                                                           │
+└─────────────────────────────────────────────────────────────────┘
+
+Implementation Pattern:
+
+  def require_permission(permission):
+    def decorator(f):
+      @wraps(f)
+      def decorated_function(*args, **kwargs):
+        user = get_current_user()
+        if not user:
+          return 401 Unauthorized
+
+        if not user.has_permission(permission):
+          log_unauthorized_attempt(user, permission)
+          return 403 Forbidden: f"Permission '{permission}' required"
+
+        return f(*args, **kwargs)
+      return decorated_function
+    return decorator
+
+  def require_role(allowed_roles):
+    def decorator(f):
+      @wraps(f)
+      def decorated_function(*args, **kwargs):
+        user = get_current_user()
+        if not user:
+          return 401 Unauthorized
+
+        user_roles = [r.name for r in user.roles]
+        if not any(r in allowed_roles for r in user_roles):
+          return 403 Forbidden: f"Role in {allowed_roles} required"
+
+        return f(*args, **kwargs)
+      return decorated_function
+    return decorator
+
+  def require_data_access(resource_type):
+    def decorator(f):
+      @wraps(f)
+      def decorated_function(*args, **kwargs):
+        user = get_current_user()
+        resource_id = kwargs.get(f'{resource_type}_id')
+
+        if not can_access_resource(user, resource_type, resource_id):
+          return 403 Forbidden: f"No access to {resource_type}"
+
+        return f(*args, **kwargs)
+      return decorated_function
+    return decorator
+
+5.4 DATA-LEVEL FILTERING RULES
+
+Query-level filters automatically applied based on user role:
+
+┌──────────────────────────────────────────────────────────────────┐
+│ ROLE-SPECIFIC QUERY FILTERS (MongoDB)                           │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│ ADMIN:                                                           │
+│   No filter (sees all documents)                                 │
+│   Query: db.documents.find({project_id: project_id})            │
+│                                                                  │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│ OCR_REVIEWER:                                                    │
+│   Filter: Public documents in review state ONLY                 │
+│   Query: db.documents.find({                                    │
+│     project_id: project_id,                                     │
+│     classification: 'PUBLIC',                                   │
+│     status: 'IN_REVIEW'                                          │
+│   })                                                             │
+│                                                                  │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│ TEACHER:                                                         │
+│   Filter: Both Public and Private documents in review state     │
+│   Query: db.documents.find({                                    │
+│     project_id: project_id,                                     │
+│     classification: { $in: ['PUBLIC', 'PRIVATE'] },            │
+│     status: 'IN_REVIEW'                                          │
+│   })                                                             │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
+
+5.5 FIELD-LEVEL ACCESS CONTROL
+
+Certain fields are restricted to specific roles:
+
+┌─────────────────────────────────────┬────────────────────────────┐
+│ FIELD                               │ VISIBLE TO                  │
+├─────────────────────────────────────┼────────────────────────────┤
+│ classification                      │ Admin, Teacher              │
+│ assigned_to                         │ Admin, Processor, Reviewer  │
+│ classified_by, classified_at        │ Admin only                  │
+│ manual_edits                        │ All reviewers, Admin        │
+│ review_notes                        │ Admin, reviewing role only  │
+│ enriched_metadata                   │ Admin, (future enrichment) │
+│ final_approved_by                   │ Admin only                  │
+│ audit_log_ids                       │ Admin only                  │
+└─────────────────────────────────────┴────────────────────────────┘
+
+Implementation (Field Projection):
+
+  def get_document_projection(user_role):
+    """Return MongoDB projection based on role"""
+
+    if user_role == 'admin':
+      return {}  # All fields
+
+    elif user_role == 'reviewer':
+      return {
+        'classification': 0,        # Hide classification
+        'classified_by': 0,
+        'final_approved_by': 0,
+        'final_approval_notes': 0,
+        'audit_log_ids': 0         # Hide audit trail
+      }
+
+    elif user_role == 'processor':
+      return {
+        'classification': 0,
+        'review_notes': 0,
+        'manual_edits': 0,
+        'enriched_metadata': 0,
+        'audit_log_ids': 0
+      }
+
+    elif user_role == 'teacher':
+      return {
+        'final_approved_by': 0,
+        'final_approval_notes': 0,
+        'audit_log_ids': 0
+      }
+
+    else:
+      return {}
+
+================================================================================
+PART 6: AUDIT & TRACEABILITY SYSTEM
+================================================================================
+
+6.1 AUDIT LOGGING REQUIREMENTS
+
+Every action must be logged immutably:
+
+┌──────────────────────────────────────────────────────────────────┐
+│ MANDATORY AUDIT FIELDS (for every entry)                        │
+├──────────────────────────────────────────────────────────────────┤
+│ • action_type: String (enum)                                     │
+│ • actor_id: ObjectId (who performed action)                      │
+│ • actor_role: String (role at time of action)                    │
+│ • actor_ip: String (source IP for forensics)                     │
+│ • timestamp: DateTime (when)                                     │
+│ • document_id: ObjectId (what was changed)                       │
+│ • previous_state: Object (before snapshot)                       │
+│ • new_state: Object (after snapshot)                             │
+│ • changes: Array[{field, old_value, new_value}]                 │
+│ • reason: String (optional, why was action taken)                │
+│ • status: String (success/failure)                               │
+│ • error_message: String (if failed)                              │
+└──────────────────────────────────────────────────────────────────┘
+
+6.2 AUDIT EVENTS & ACTION TYPES
+
+Key Events to Log:
+
+  AUTHENTICATION:
+    • AUTH_LOGIN_SUCCESS
+    • AUTH_LOGIN_FAILURE
+    • AUTH_LOGOUT
+    • AUTH_TOKEN_REFRESH
+    • AUTH_PERMISSION_DENIED
+    • AUTH_UNAUTHORIZED_ACCESS_ATTEMPT
+
+  ADMIN ACTIONS:
+    • ADMIN_CREATE_PROJECT
+    • ADMIN_CLASSIFY_DOC (original + new classification)
+    • ADMIN_ASSIGN_BATCH (batch_ids, assignee, role)
+    • ADMIN_REASSIGN_DOC
+    • ADMIN_FINAL_APPROVE (batch approval)
+    • ADMIN_EXPORT_TO_DOWNSTREAM (destination, record count)
+    • ADMIN_OVERRIDE_STATE (original state + new state + reason)
+    • ADMIN_CREATE_USER
+    • ADMIN_MODIFY_USER_ROLE
+    • ADMIN_VIEW_AUDIT_LOG
+
+  PROCESSOR ACTIONS:
+    • PROCESSOR_START_OCR (provider, settings)
+    • PROCESSOR_COMPLETE_OCR (confidence, text_length)
+    • PROCESSOR_OCR_FAILED (error_type, retry_count)
+    • PROCESSOR_RETRY_OCR
+
+  REVIEWER ACTIONS:
+    • REVIEWER_VIEW_DOC
+    • REVIEWER_CLAIM_DOC
+    • REVIEWER_APPROVE_DOC_ASIC (approve without edits)
+    • REVIEWER_EDIT_AND_APPROVE (field changes)
+    • REVIEWER_REJECT_DOC (reason)
+    • REVIEWER_ESCALATE_DOC
+
+  TEACHER ACTIONS:
+    • TEACHER_VIEW_DOC (log sensitive access)
+    • TEACHER_APPROVE_DOC_ASIC
+    • TEACHER_EDIT_AND_APPROVE (field changes)
+    • TEACHER_ESCALATE_DOC
+
+  SYSTEM ACTIONS:
+    • SYSTEM_AUTO_ROUTE_TO_REVIEW
+    • SYSTEM_TRIGGER_ENRICHMENT
+    • SYSTEM_SLA_VIOLATION
+    • SYSTEM_ERROR
+
+6.3 AUDIT LOG QUERY EXAMPLES
+
+Admin needs to investigate a document's lifecycle:
+
+  db.audit_logs.find({
+    document_id: ObjectId("..."),
+    $sort: { created_at: 1 }
+  })
+
+  Returns complete action history for that document.
+
+Admin needs to find all actions by a specific user on a date:
+
+  db.audit_logs.find({
+    actor_id: ObjectId("..."),
+    created_at: {
+      $gte: DateTime("2026-01-01"),
+      $lt: DateTime("2026-01-02")
+    }
+  })
+
+Compliance: Find all unauthorized access attempts:
+
+  db.audit_logs.find({
+    action_type: 'AUTH_PERMISSION_DENIED'
+  })
+
+Sensitive operations (Private document access):
+
+  db.audit_logs.find({
+    is_sensitive: true,
+    created_at: { $gte: DateTime("2026-01-01") }
+  })
+
+6.4 AUDIT LOG RETENTION & ARCHIVAL
+
+  • Retention: 7 years (compliance requirement)
+  • Active storage: 1 year in main database
+  • Cold storage: 6 years in archival system (S3, tape, etc.)
+  • Purge policy: After 7 years, permanently delete
+  • Access controls: Only compliance officers and admins can access
+
+6.5 BEFORE/AFTER SNAPSHOTS (Data Integrity)
+
+For every state transition, store complete snapshots:
+
+  {
+    action_type: 'REVIEWER_EDIT_AND_APPROVE',
+    document_id: ObjectId("..."),
+
+    previous_state: {
+      status: 'IN_REVIEW',
+      ocr_text: 'Original text...',
+      manual_edits: [],
+      reviewed_by: null,
+      reviewed_at: null
+    },
+
+    new_state: {
+      status: 'REVIEWED_APPROVED',
+      ocr_text: 'Original text...',
+      manual_edits: [
+        {
+          field_name: 'author_name',
+          original_value: 'John Doe',
+          edited_value: 'John D.'
+        }
+      ],
+      reviewed_by: ObjectId("reviewer_user_id"),
+      reviewed_at: DateTime(...)
+    },
+
+    changes: [
+      {
+        field_name: 'status',
+        old_value: 'IN_REVIEW',
+        new_value: 'REVIEWED_APPROVED'
+      },
+      {
+        field_name: 'manual_edits',
+        old_value: [],
+        new_value: [{ field_name: 'author_name', ... }]
+      }
+    ]
+  }
+
+Purpose:
+  • Full reconstruction of document state at any point in time
+  • Forensic analysis of who changed what
+  • Ability to "replay" document's history
+  • Compliance audit trail
+
+================================================================================
+PART 7: ADMIN DASHBOARD REQUIREMENTS
+================================================================================
+
+7.1 DASHBOARD KPI DEFINITIONS
+
+Overview Metrics (High-Level):
+
+  Total Documents in System:
+    Total count across all projects
+    Formula: db.documents.count()
+
+  Documents Processed (All Stages):
+    Count where status != 'UPLOADED'
+    Formula: db.documents.count({status: {$ne: 'UPLOADED'}})
+
+  Documents Approved:
+    Count where status = 'REVIEWED_APPROVED'
+    Formula: db.documents.count({status: 'REVIEWED_APPROVED'})
+
+  Documents Exported:
+    Count where status = 'EXPORTED'
+    Formula: db.documents.count({status: 'EXPORTED'})
+
+  Overall Progress %:
+    (Approved + Exported) / Total * 100
+
+  Bottleneck Stage:
+    Status with highest document count (longest queue)
+
+7.2 USER PRODUCTIVITY METRICS
+
+Per-User Analytics:
+
+  Documents Processed Per User (Processor):
+    db.documents.count({assigned_to: user_id, status: 'OCR_PROCESSED'})
+
+  Documents Reviewed Per User (Reviewer/Teacher):
+    db.documents.count({reviewed_by: user_id, status: 'REVIEWED_APPROVED'})
+
+  Average Processing Time Per User:
+    Avg(document.ocr_processed_at - document.assigned_at)
+
+  Manual Edit Rate:
+    (Documents with manual_edits) / Total reviewed * 100
+
+  Reprocess Rate:
+    Count of documents reassigned for re-OCR / Total processed * 100
+
+  SLA Compliance:
+    Count where completed_at <= due_at / Total completed * 100
+
+  Approval vs Manual Edit Ratio:
+    Approvals (as-is) / Total reviewed
+    vs.
+    Manual edits / Total reviewed
+
+7.3 PROJECT-WISE BREAKDOWN
+
+Per-Project Metrics:
+
+  Project Status:
+    • Total documents
+    • Pending classification
+    • In OCR
+    • In review
+    • Approved
+    • Exported
+
+  Project Progress Timeline:
+    • Documents uploaded on date X
+    • Documents classified on date Y
+    • Documents approved on date Z
+    • Documents exported on date W
+
+  Classification Distribution:
+    • Public documents: X count
+    • Private documents: Y count
+    • Unclassified: Z count
+
+  Reviewer Assignment (Per Project):
+    • Reviewer 1: 150 docs (60% complete)
+    • Reviewer 2: 100 docs (40% complete)
+    • etc.
+
+7.4 QUALITY METRICS
+
+OCR Quality:
+
+  Average OCR Confidence Score:
+    Avg(document.ocr_confidence)
+
+  Failed OCR Rate:
+    Count where ocr_status = 'failed' / Total processed * 100
+
+  Reprocessed Documents:
+    Count where ocr_retry_count > 0
+
+  Provider Performance:
+    Accuracy by OCR provider:
+      • Tesseract: 92% success rate
+      • Google Vision: 98% success rate
+      • Ollama: 85% success rate
+
+Review Quality:
+
+  Enrichment Confidence:
+    Avg(document.enrichment_confidence)
+
+  Documents Requiring Review:
+    Count where enrichment_confidence < 95%
+
+  Manual Edit Frequency:
+    % of documents with manual edits
+
+7.5 SLA & TIMELINE METRICS
+
+SLA Tracking:
+
+  Classification SLA (24h):
+    Count completed on-time / Total classified
+
+  Assignment SLA (2h):
+    Count assigned on-time / Total
+
+  OCR SLA (varies):
+    Count completed on-time / Total processed
+
+  Review SLA (8h public, 24h private):
+    Count reviewed on-time / Total reviewed
+
+  Final Approval SLA (24h):
+    Count approved on-time / Total pending approval
+
+  Export SLA (15 min):
+    Count exported on-time / Total approved
+
+Processing Timeline:
+
+  Days from upload to export (average)
+  Days in each stage (median):
+    • Classification: 2 days
+    • OCR: 1 day
+    • Review: 4 days
+    • Final approval: 1 day
+
+7.6 DASHBOARD FILTERS
+
+Admin can filter all metrics by:
+
+  • Project (dropdown)
+  • Date range (from/to)
+  • User/Reviewer (dropdown)
+  • Document classification (Public/Private/Both)
+  • Document status (dropdown multi-select)
+  • OCR provider (dropdown)
+  • Role (Processor/Reviewer/Teacher)
+
+7.7 DASHBOARD WIDGETS & LAYOUT
+
+Suggested Widget Organization:
+
+  ┌─────────────────────────────────────────────────────┐
+  │ TOP ROW: Summary Cards                              │
+  ├──────────────┬──────────────┬──────────────┬────────┤
+  │ Total Docs   │ In Process   │ Reviewed     │ Export │
+  │ 5,000        │ 1,200        │ 2,100        │ 1,700  │
+  └──────────────┴──────────────┴──────────────┴────────┘
+
+  ┌─────────────────────────────────────────────────────┐
+  │ MIDDLE ROW: Trends & Flows                           │
+  ├──────────────────────────────────────────────────────┤
+  │ Pipeline Progress Bar                               │
+  │ [████████░░] 75% Complete                            │
+  │                                                      │
+  │ Stage Distribution (Horizontal Bar Chart)            │
+  │ Uploaded:         ████ 400 docs (8%)                 │
+  │ Classification:   ██ 100 docs (2%)                   │
+  │ Assigned to OCR:  ████████ 800 docs (16%)            │
+  │ In Review:        ██████ 600 docs (12%)              │
+  │ Reviewed:         ███████████████ 1500 docs (30%)    │
+  │ Final Approval:   ████████ 800 docs (16%)            │
+  │ Exported:         ███████ 1200 docs (24%)            │
+  └──────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────┐
+  │ BOTTOM ROW: Detailed Analytics                       │
+  ├──────────────────────┬───────────────────────────────┤
+  │ User Productivity    │ Quality Metrics               │
+  │                      │                               │
+  │ John (Processor):    │ Avg OCR Confidence: 94%       │
+  │ • 500 docs processed │ Failed OCR: 2%                │
+  │ • 2 docs/hour        │ Enrichment Conf: 91%          │
+  │                      │ Manual Edit Rate: 15%         │
+  │ Sarah (Reviewer):    │                               │
+  │ • 300 docs reviewed  │ SLA Compliance: 98%           │
+  │ • 15 docs/hour       │ Avg Processing Time: 8h       │
+  │ • 10% manual edits   │                               │
+  └──────────────────────┴───────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────┐
+  │ AUDIT LOG SECTION (Bottom)                           │
+  ├──────────────────────────────────────────────────────┤
+  │ Recent Actions                                       │
+  │ [Expandable table with all admin actions]            │
+  │ • 15 min ago: John approved 25 docs                  │
+  │ • 1 hour ago: Admin classified 100 docs as PUBLIC    │
+  │ • 2 hours ago: Sarah edited metadata on doc #234     │
+  │ [View Full Audit Trail]                              │
+  └──────────────────────────────────────────────────────┘
+
+7.8 DRILL-DOWN CAPABILITIES
+
+Clicking on any metric should allow drill-down:
+
+  Click "In Review" (600 docs) →
+    Shows list of all documents currently in IN_REVIEW state
+    Sortable by: date queued, assigned reviewer, classification
+    Can view individual document details
+
+  Click "User: John" →
+    Shows all documents processed by John
+    Sortable by: date, OCR confidence, status
+    Can view individual document audit trail
+
+  Click "Failed OCR (2%)" →
+    Shows only documents where ocr_status = 'failed'
+    Grouped by error type
+    Shows retry count and last error message
+    Can manually reassign for retry
+
+7.9 DASHBOARD PERMISSIONS
+
+  • Admin: Full access to all metrics and data
+  • Supervisor (future): Can see KPIs but no personal data
+  • Compliance: Can see audit logs only
+  • Other roles: No dashboard access (403 Forbidden)
+
+================================================================================
+PART 8: API DESIGN (High-Level Endpoints)
+================================================================================
+
+8.1 AUTHENTICATION ENDPOINTS
+
+  POST /api/auth/register
+    Body: { email, password, name }
+    Returns: { user_id, access_token, refresh_token }
+    Auth: None (public)
+
+  POST /api/auth/login
+    Body: { email, password }
+    Returns: { user_id, access_token, refresh_token }
+    Auth: None (public)
+
+  POST /api/auth/refresh
+    Body: { refresh_token }
+    Returns: { access_token }
+    Auth: None (uses refresh token)
+
+  GET /api/auth/me
+    Returns: { user, roles, permissions }
+    Auth: JWT required
+
+  POST /api/auth/logout
+    Auth: JWT required
+    Effect: Blacklist token
+
+8.2 PROJECT MANAGEMENT ENDPOINTS
+
+  POST /api/projects
+    Body: { name, description }
+    Returns: { project_id, ... }
+    Auth: @require_role('admin')
+
+  GET /api/projects
+    Returns: List of projects (filtered by user access)
+    Auth: JWT required
+
+  GET /api/projects/{project_id}
+    Returns: Project details
+    Auth: @require_data_access('project')
+
+  PUT /api/projects/{project_id}/collaborators
+    Body: { user_id, role }
+    Auth: @require_role('admin')
+
+8.3 DOCUMENT CLASSIFICATION ENDPOINTS
+
+  POST /api/documents/{doc_id}/classify
+    Body: { classification: 'PUBLIC' | 'PRIVATE', reason: string }
+    Returns: { document }
+    Auth: @require_permission('classify_document')
+    Audit: ADMIN_CLASSIFY_DOC
+    Transition: CLASSIFICATION_PENDING → CLASSIFIED_PUBLIC|PRIVATE
+
+  GET /api/documents/{doc_id}
+    Returns: { document } (filtered fields based on role)
+    Auth: @require_data_access('document')
+
+  GET /api/projects/{project_id}/documents
+    Query Params: status, classification, sort, page
+    Returns: Paginated list (role-filtered)
+    Auth: JWT required
+
+8.4 OCR PROCESSING ENDPOINTS (Admin Only)
+
+  POST /api/ocr/batch/process
+    Body: { project_id, document_ids, provider, settings, max_retries }
+    Returns: { job_id, scheduled_count }
+    Auth: @require_permission('run_ocr')
+    Audit: ADMIN_RUN_OCR
+    Transition: CLASSIFIED_* → OCR_PROCESSING → OCR_PROCESSED
+
+  GET /api/ocr/jobs/{job_id}/status
+    Returns: { status, progress, processed_count, failed_count, eta }
+    Auth: @require_role('admin')
+
+  POST /api/ocr/{doc_id}/retry
+    Body: { provider, max_retries: 3, reason: string }
+    Returns: { job_id }
+    Auth: @require_permission('run_ocr')
+    Audit: ADMIN_RETRY_OCR
+
+  POST /api/ocr/configure-provider
+    Body: { provider_name, api_key, settings }
+    Returns: { status: 'configured' }
+    Auth: @require_permission('run_ocr')
+    Audit: ADMIN_CONFIGURE_OCR_PROVIDER
+
+8.5 REVIEW QUEUE & ASSIGNMENT ENDPOINTS
+
+  POST /api/review-queue/bulk-assign
+    Body: { project_id, document_ids, reviewer_role, reason }
+    Returns: { assignment_id, queue_count }
+    Auth: @require_permission('classify_document')
+    Audit: ADMIN_ASSIGN_BATCH
+
+  GET /api/review-queue
+    Returns: Queue of documents ready for review (role-filtered)
+    Auth: @require_role(['reviewer', 'teacher'])
+    Note: OCR Reviewer sees PUBLIC only, Teacher sees both
+
+8.6 REVIEW & APPROVAL ENDPOINTS
+
+  POST /api/review/{doc_id}/claim
+    Effect: Set claimed_by = user_id
+    Returns: { document }
+    Auth: @require_role(['reviewer', 'teacher'])
+    Audit: REVIEWER_CLAIM_DOC | TEACHER_CLAIM_DOC
+
+  POST /api/review/{doc_id}/approve
+    Body: { edit_fields: {} (optional), notes: string }
+    Effect: Update manual_edits array, set reviewed_by, reviewed_at
+    Returns: { document }
+    Auth: @require_data_access('document')
+    Audit: REVIEWER_APPROVE_DOC_ASIC | REVIEWER_EDIT_AND_APPROVE
+    Transition: IN_REVIEW → REVIEWED_APPROVED
+
+  POST /api/review/{doc_id}/reject
+    Body: { reason: string }
+    Effect: Keep in IN_REVIEW, mark for re-assignment
+    Returns: { document }
+    Auth: @require_data_access('document')
+    Audit: REVIEWER_REJECT_DOC
+    Transition: IN_REVIEW → IN_REVIEW (requeue)
+
+8.7 FINAL APPROVAL ENDPOINTS (Admin Only)
+
+  GET /api/final-approval-queue
+    Returns: Documents in REVIEWED_APPROVED state
+    Auth: @require_role('admin')
+
+  POST /api/final-approval/batch
+    Body: { document_ids: [...], approved: true|false, notes: string }
+    Effect: Bulk update status to FINAL_APPROVED | reject back to review
+    Returns: { count, ids }
+    Auth: @require_permission('approve_final')
+    Audit: ADMIN_FINAL_APPROVE
+
+8.8 EXPORT ENDPOINTS
+
+  POST /api/export
+    Body: { document_ids: [...], destination: 'mongodb' | 'archipelago' }
+    Returns: { export_id, status }
+    Auth: @require_permission('export_data')
+    Audit: ADMIN_EXPORT_TO_DOWNSTREAM
+    Transition: FINAL_APPROVED → EXPORTED
+
+  GET /api/export/{export_id}/status
+    Returns: { status, records_exported, errors }
+    Auth: @require_role('admin')
+
+8.9 AUDIT LOG ENDPOINTS
+
+  GET /api/audit-logs
+    Query Params: document_id, actor_id, action_type, date_from, date_to
+    Returns: Paginated audit logs
+    Auth: @require_permission('view_audit_logs')
+
+  GET /api/audit-logs/document/{doc_id}
+    Returns: Complete audit trail for document
+    Auth: @require_role('admin')
+
+  GET /api/audit-logs/user/{user_id}
+    Returns: All actions by user
+    Auth: @require_role('admin')
+
+8.10 ADMIN DASHBOARD ENDPOINTS
+
+  GET /api/dashboard/overview
+    Returns: { total_docs, in_process, approved, exported, bottleneck }
+    Auth: @require_role('admin')
+
+  GET /api/dashboard/user-metrics
+    Query Params: user_id (optional), role, date_range
+    Returns: { processed_count, review_time, sla_compliance, ... }
+    Auth: @require_role('admin')
+
+  GET /api/dashboard/project-breakdown
+    Query Params: project_id
+    Returns: { status_distribution, timeline, classification_dist, ... }
+    Auth: @require_role('admin')
+
+  GET /api/dashboard/quality-metrics
+    Returns: { avg_ocr_confidence, failed_rate, enrichment_confidence, ... }
+    Auth: @require_role('admin')
+
+  GET /api/dashboard/sla-metrics
+    Returns: { compliance_pct, violations, avg_time_per_stage, ... }
+    Auth: @require_role('admin')
+
+8.11 USER & ROLE MANAGEMENT ENDPOINTS
+
+  POST /api/users
+    Body: { email, name, roles: ['admin', 'processor', ...] }
+    Returns: { user_id, ... }
+    Auth: @require_role('admin')
+    Audit: ADMIN_CREATE_USER
+
+  PUT /api/users/{user_id}/roles
+    Body: { roles: [...], reason: string }
+    Auth: @require_role('admin')
+    Audit: ADMIN_MODIFY_USER_ROLE
+
+  GET /api/roles
+    Returns: All available roles and their permissions
+    Auth: @require_role('admin')
+
+================================================================================
+PART 9: CONCURRENCY & CONSISTENCY HANDLING
+================================================================================
+
+9.1 RACE CONDITION SCENARIOS
+
+Scenario 1: Multiple Reviewers Claiming Same Document
+
+  Problem:
+    Two reviewers both click "claim" on same document simultaneously.
+    Both see claimed_by = null, both attempt to claim.
+
+  Solution:
+    Use MongoDB session with transactions:
+
+    session.start_transaction()
+    doc = db.documents.findOne({_id: doc_id, claimed_by: null})
+    if doc is null:
+      abort (document already claimed)
+    db.documents.updateOne(
+      {_id: doc_id},
+      {$set: {claimed_by: user_id, claimed_at: now()}},
+      {session: session}
+    )
+    session.commit_transaction()
+
+    Loser gets: 409 Conflict: Document already claimed by another reviewer
+
+  Alternative (Optimistic Locking):
+    Add version field to document:
+
+    db.documents.findOne({_id: doc_id}) → version: 5, claimed_by: null
+
+    db.documents.updateOne(
+      {_id: doc_id, version: 5, claimed_by: null},
+      {
+        $set: {claimed_by: user_id, version: 6},
+        $push: {audit_log_ids: ...}
+      }
+    )
+
+    If no documents matched (version changed), retry or return 409
+
+9.2 STATUS TRANSITION VALIDATION
+
+Every state transition must be validated:
+
+  Current State + New Action → Valid Next State?
+
+  db.documents.updateOne(
+    {
+      _id: doc_id,
+      status: 'IN_REVIEW'  # Can only transition FROM IN_REVIEW
+    },
+    {
+      $set: {
+        status: 'REVIEWED_APPROVED',  # Can only transition TO this state
+        reviewed_by: user_id,
+        reviewed_at: now()
+      }
+    }
+  )
+
+  If no docs matched: return 409 Conflict (invalid state transition)
+
+9.3 BULK OPERATIONS (Atomic vs. Best-Effort)
+
+Assigning 1000 documents to a processor:
+
+  Option 1: Atomic (All-or-Nothing)
+    db.documents.bulkWrite([
+      ...1000 updateOne operations...
+    ], {ordered: true})
+
+    If any update fails, entire operation fails.
+    Rollback happens automatically.
+    Downside: If 999 succeed and 1 fails, nothing is committed.
+
+  Option 2: Best-Effort (Partial Success)
+    db.documents.bulkWrite([
+      ...1000 updateOne operations...
+    ], {ordered: false})
+
+    Each operation is independent.
+    If 10 fail, 990 succeed (admin sees which ones failed).
+    Better for bulk assignments (can retry failed docs).
+
+    Response: {
+      ok: 1,
+      insertedCount: 0,
+      modifiedCount: 990,
+      deletedCount: 0,
+      upsertedCount: 0,
+      matchedCount: 1000
+    }
+
+    Failed doc_ids returned separately for retry.
+
+9.4 TIMESTAMP & ORDERING GUARANTEES
+
+Issue: Documents processed out of order. Admin sees incorrect timeline.
+
+Solution: Use MongoDB's server-side timestamps.
+
+  db.documents.updateOne(
+    {_id: doc_id},
+    {
+      $set: {
+        reviewed_at: new Date(),  # Server-side timestamp
+        reviewed_by: user_id
+      }
+    }
+  )
+
+  MongoDB guarantees all timestamps are server-synchronized.
+  No client clock drift issues.
+
+9.5 AUDIT LOG IMMUTABILITY
+
+Audit logs should be write-once, never updated.
+
+  db.audit_logs.insertOne({
+    action_type: 'REVIEWER_APPROVE_DOC_ASIC',
+    document_id: ObjectId(...),
+    ...
+    created_at: new Date()
+  })
+
+  Never update or delete audit logs.
+  If audit log is incorrect, insert new "AUDIT_LOG_CORRECTION" entry.
+
+  To prevent accidental deletion/update:
+    Use capped collection (auto-rotates, immutable)
+    OR use MongoDB role with deny_update, deny_delete on audit_logs collection
+
+9.6 TRANSACTION ISOLATION LEVELS
+
+For critical workflows, use transactions:
+
+  MongoDB Transactions (ACID):
+    • Atomicity: All-or-nothing
+    • Consistency: State always valid
+    • Isolation: Serializable (Snapshot isolation in replica sets)
+    • Durability: Persisted to disk
+
+  Use Cases:
+    1. Final approval (update document + insert audit log atomically)
+    2. Classification (update classification + version atomically)
+    3. Assignment (update assignment + create review queue atomically)
+
+  Example: Atomic Final Approval
+
+    session.start_transaction()
+
+    db.documents.updateOne(
+      {_id: doc_id, status: 'REVIEWED_APPROVED'},
+      {$set: {status: 'FINAL_APPROVED', final_approved_by: admin_id, ...}},
+      {session: session}
+    )
+
+    db.audit_logs.insertOne(
+      {action_type: 'ADMIN_FINAL_APPROVE', document_id: doc_id, ...},
+      {session: session}
+    )
+
+    db.assignments.updateOne(
+      {_id: assignment_id},
+      {$inc: {completed_count: 1}},
+      {session: session}
+    )
+
+    session.commit_transaction()
+
+    If any fails: automatic rollback.
+
+================================================================================
+PART 10: SECURITY CONSIDERATIONS & THREAT MITIGATIONS
+================================================================================
+
+10.1 AUTHENTICATION SECURITY
+
+Threat: Weak passwords, credential theft
+
+Mitigations:
+  ✓ Enforce strong password policy (min 12 chars, mixed case, symbols)
+  ✓ Hash passwords with bcrypt (cost: 12)
+  ✓ MFA (optional but recommended for admin roles)
+  ✓ Rate limit login attempts (5 failures → 15 min lockout)
+  ✓ Log all failed login attempts
+  ✓ HTTPS only (no HTTP)
+  ✓ Secure cookie flags: HttpOnly, Secure, SameSite=Strict
+
+10.2 AUTHORIZATION SECURITY
+
+Threat: Privilege escalation, unauthorized data access
+
+Mitigations:
+  ✓ Explicit role-permission model (not implicit)
+  ✓ Default deny (403 if no explicit permission)
+  ✓ Field-level access control (don't return restricted fields)
+  ✓ Data filtering at query level (role-based WHERE clauses)
+  ✓ Regular RBAC audits (quarterly role review)
+  ✓ Separation of duties (no user can classify and approve own doc)
+
+10.3 DATA CLASSIFICATION SECURITY
+
+Threat: Private documents exposed to public reviewers
+
+Mitigations:
+  ✓ Database-level field encryption (at-rest)
+  ✓ API-level filtering (classification check before returning doc)
+  ✓ Immutable classification (can't change after OCR starts)
+  ✓ Audit logging on classification queries
+  ✓ Regular access log reviews (find unauthorized access patterns)
+
+10.4 AUDIT LOG SECURITY
+
+Threat: Audit logs deleted or tampered with
+
+Mitigations:
+  ✓ Write-once audit logs (no updates or deletes)
+  ✓ Capped MongoDB collection (auto-rotates)
+  ✓ Separate audit database with restricted access
+  ✓ Cryptographic checksums (detect tampering)
+  ✓ Archive to immutable storage (S3, WORM tape)
+  ✓ Access controls (only compliance officers can read)
+
+10.5 API SECURITY
+
+Threat: API abuse, data exfiltration
+
+Mitigations:
+  ✓ Rate limiting (per user: 100 req/min, per IP: 1000 req/min)
+  ✓ Input validation (no SQL injection, XSS, etc.)
+  ✓ Request signing (HMAC for sensitive operations)
+  ✓ TLS 1.3+ (encrypted in transit)
+  ✓ CORS restrictions (only authorized domains)
+  ✓ API key rotation (quarterly)
+
+10.6 DOCUMENT INTEGRITY
+
+Threat: OCR output modified by attacker
+
+Mitigations:
+  ✓ Checksums on original files (SHA-256)
+  ✓ Digital signatures on OCR output
+  ✓ Immutable OCR text (once generated, never modified directly)
+  ✓ Version history for manual edits (track before/after)
+  ✓ Final export signature (admin signs batch before export)
+
+10.7 PRIVATE DOCUMENT HANDLING
+
+Threat: Sensitive data leaked during processing
+
+Mitigations:
+  ✓ Private documents only visible to Teacher role
+  ✓ No logging of private content (only metadata)
+  ✓ Encryption at rest for private documents
+  ✓ Separate VPC/subnet for private doc processing (optional)
+  ✓ Audit log alerting (alert on unusual private doc access)
+
+10.8 INSIDER THREAT MITIGATION
+
+Threat: Admin abuse, collusion
+
+Mitigations:
+  ✓ Audit all admin actions with reasons
+  ✓ Four-eyes rule for sensitive actions (2 admins required to export)
+  ✓ Admin action approval workflow (admin A requests, admin B approves)
+  ✓ Time-based access (admin access restricted to business hours)
+  ✓ Regular audit reviews by compliance (monthly)
+  ✓ Background checks for admin roles
+
+10.9 COMPLIANCE & REGULATORY
+
+Data Protection:
+  ✓ GDPR compliance (right to erasure, data portability)
+  ✓ CCPA compliance (opt-out mechanism)
+  ✓ Audit trail retention (7 years minimum)
+
+Standards:
+  ✓ ISO 27001 certification (information security)
+  ✓ SOC 2 Type II audit (control effectiveness)
+  ✓ PCI-DSS (if handling payment data)
+
+================================================================================
+PART 11: IMPLEMENTATION ROADMAP (PHASES)
+================================================================================
+
+Phase 1: Core RBAC Foundation (Week 1-2)
+  ✓ User and Role entities (3 roles: Admin, Reviewer, Teacher)
+  ✓ Authentication (JWT + Google OAuth)
+  ✓ Role-permission mapping (no Processor role)
+  ✓ Admin-exclusive permissions
+  ✓ Basic authorization decorators
+  ✓ Audit logging framework
+  ✓ Database schema creation
+
+Phase 2: Document Classification & OCR Processing (Week 3-4)
+  ✓ Document classification system (Admin only)
+  ✓ State machine implementation
+  ✓ Status transition validation
+  ✓ OCR processing endpoints (Admin only)
+  ✓ Admin OCR provider configuration
+  ✓ Audit log integration
+
+Phase 3: Review Workflow Setup (Week 5-6)
+  ✓ Review queue entity and endpoints
+  ✓ OCR Reviewer role implementation
+  ✓ Teacher role implementation
+  ✓ Document claiming mechanism
+  ✓ Manual edit tracking
+  ✓ Visibility enforcement (Public/Private)
+  ✓ Query-level filtering per role
+
+Phase 4: Approval & Export Workflow (Week 7-8)
+  ✓ Final admin review stage
+  ✓ Final approval endpoints (Admin only)
+  ✓ Export to downstream systems (MongoDB, Archipelago)
+  ✓ Export validation and error handling
+  ✓ State validation throughout
+
+Phase 5: Admin Dashboard (Week 9-10)
+  ✓ KPI calculations and aggregations
+  ✓ Dashboard endpoints (Admin only)
+  ✓ Metrics: OCR quality, review SLAs, export status
+  ✓ Filtering and drill-down capabilities
+  ✓ Audit log viewer (Admin only)
+  ✓ User productivity metrics
+
+Phase 6: Testing, Audit & Production Deployment (Week 11-12)
+  ✓ Integration testing (all workflows)
+  ✓ Security audit and penetration testing
+  ✓ Compliance verification (audit trails, retention)
+  ✓ Production deployment and monitoring
+  ✓ User training and documentation
+
+================================================================================
+PART 12: ASSUMPTIONS & RISKS
+================================================================================
+
+12.1 ASSUMPTIONS
+
+Data Model:
+  ✓ Assumes MongoDB as backend (atomic operations, transactions)
+  ✓ Assumes Flask web framework (decorator pattern for auth)
+  ✓ Assumes JWT for stateless authentication
+  ✓ Assumes 3 roles only (Admin, Reviewer, Teacher)
+
+Workflow:
+  ✓ Assumes Admin handles both classification AND OCR processing
+  ✓ Assumes classification happens before OCR (immutable post-OCR)
+  ✓ Assumes single classification per document
+  ✓ Assumes no reprocessing after export (immutable export)
+  ✓ Assumes Reviewers/Teachers cannot run OCR
+  ✓ Assumes Admin has bandwidth to run OCR in batches
+
+Users:
+  ✓ Assumes users are trained on system
+  ✓ Assumes stable internet connectivity
+  ✓ Assumes Admin has adequate training for OCR configuration
+  ✓ Assumes clear separation between Admin, Reviewer, Teacher roles
+
+Scale:
+  ✓ Assumes < 10M documents (MongoDB performance limit)
+  ✓ Assumes < 100 concurrent users
+  ✓ Assumes Admin can batch process 1000-5000 docs/batch
+
+Compliance:
+  ✓ Assumes 7-year audit retention requirement
+  ✓ Assumes sensitive data classification is accurate
+  ✓ Assumes no need for encryption-in-transit-to-users
+  ✓ Assumes Private document access is restricted to Teacher only
+
+12.2 RISKS & MITIGATIONS
+
+┌──────────────────────────────────────────────────────────────────┐
+│ RISK                              │ LIKELIHOOD │ MITIGATION       │
+├──────────────────────────────────┼────────────┼──────────────────┤
+│ Admin OCR mistakes (config/setup)  │ HIGH       │ Immutable after  │
+│                                   │            │ OCR starts       │
+├──────────────────────────────────┼────────────┼──────────────────┤
+│ Private docs seen by public rev.   │ HIGH       │ API-level + DB   │
+│                                   │            │ filtering        │
+├──────────────────────────────────┼────────────┼──────────────────┤
+│ Admin overload (OCR + classify)    │ HIGH       │ Batch processing │
+│                                   │            │ + monitoring     │
+├──────────────────────────────────┼────────────┼──────────────────┤
+│ Audit logs deleted/tampered       │ MEDIUM     │ Write-once +     │
+│                                   │            │ archive          │
+├──────────────────────────────────┼────────────┼──────────────────┤
+│ Concurrent state transitions      │ MEDIUM     │ MongoDB          │
+│                                   │            │ transactions     │
+├──────────────────────────────────┼────────────┼──────────────────┤
+│ SLA breaches (bottleneck)         │ MEDIUM     │ Monitoring +     │
+│                                   │            │ alerts           │
+├──────────────────────────────────┼────────────┼──────────────────┤
+│ Wrong reviewer assignment          │ MEDIUM     │ Classification   │
+│                                   │            │ enforcement      │
+├──────────────────────────────────┼────────────┼──────────────────┤
+│ Export to wrong destination        │ LOW        │ Approval         │
+│                                   │            │ workflow         │
+└──────────────────────────────────┼────────────┼──────────────────┘
+
+================================================================================
+PART 13: SUMMARY & KEY DECISIONS
+================================================================================
+
+13.1 ARCHITECTURE DECISIONS
+
+Decision 1: Role-Based Access Control (RBAC) over Attribute-Based (ABAC)
+  Rationale: Simpler implementation, easier to audit, sufficient for 4 roles
+  Trade-off: Less flexible for complex permissions (but can extend later)
+
+Decision 2: Immutable Classification (after OCR)
+  Rationale: Prevents retroactive access violations, reduces complexity
+  Trade-off: Admin must classify correctly upfront (higher burden)
+
+Decision 3: Write-Once Audit Logs
+  Rationale: Prevents tampering, ensures compliance, forensic integrity
+  Trade-off: No audit log corrections (must insert new "correction" entry)
+
+Decision 4: Explicit State Machine (not implicit)
+  Rationale: Clear workflow, prevents invalid states, easy to test
+  Trade-off: More validation code (but worth it for reliability)
+
+Decision 5: Field-Level Access Control
+  Rationale: Prevents accidental data leaks, strict security
+  Trade-off: More complex API response building
+
+13.2 SECURITY DECISIONS
+
+Decision 6: Private Documents = Teacher Only (not "Public + Other")
+  Rationale: Strict separation, no cross-contamination
+  Trade-off: Can't have junior reviewers on sensitive content
+
+Decision 7: Admin Exclusive OCR Control (no Processor role)
+  Rationale: Single point of control, audit trail clarity, full governance
+  Trade-off: Admin becomes bottleneck (must handle batches efficiently)
+
+Decision 8: Admin Override with Explicit Justification
+  Rationale: Allows flexibility + accountability
+  Trade-off: Admin must document reasons (discipline required)
+
+Decision 9: MongoDB Transactions for Critical Operations
+  Rationale: Atomic state changes, prevents data corruption
+  Trade-off: Performance cost (< 1% in typical deployments)
+
+13.3 WORKFLOW DECISIONS
+
+Decision 10: Classification Before OCR (Admin responsibility)
+  Rationale: Prevents public/private mixing during processing
+  Trade-off: Admin classifies all docs upfront (batch work)
+
+Decision 11: Admin Runs OCR After Classification
+  Rationale: Single authority control, easier to audit
+  Trade-off: Admin must understand OCR providers and settings
+
+Decision 12: Single Reviewer Per Document (not round-robin)
+  Rationale: Ownership, accountability, no review conflicts
+  Trade-off: If reviewer unavailable, must reassign explicitly
+
+Decision 13: Final Admin Approval (not automatic export)
+  Rationale: Last chance to catch errors, compliance gate
+  Trade-off: Extra step adds 24h SLA
+
+13.4 COMPLIANCE DECISIONS
+
+Decision 14: 7-Year Audit Retention
+  Rationale: Regulatory requirement for many industries
+  Trade-off: Large storage cost ($10k-50k/year for 1M docs)
+
+Decision 15: Separate Audit Database
+  Rationale: Prevent accidental data loss, improve security
+  Trade-off: Operational complexity (separate backups, access controls)
+
+Decision 16: Roles = 3 Only (Admin, Reviewer, Teacher)
+  Rationale: Simplicity, no scope creep, clear responsibilities
+  Trade-off: Future roles require re-architecture (but schema supports extension)
+
+13.5 FUTURE EXTENSIBILITY
+
+System designed to support (without major changes):
+  • Supervisor role (read-only dashboards)
+  • QA Auditor role (compliance reviews)
+  • Senior Admin role (escalation authority)
+  • Workflow notifications (email alerts on SLA breaches)
+  • Approval escalation chains
+  • Time-based access controls
+  • Multi-organization/project support
+  • Custom OCR provider plugins
+
+================================================================================
+PART 14: SUCCESS CRITERIA & VALIDATION
+================================================================================
+
+14.1 FUNCTIONAL SUCCESS CRITERIA
+
+✓ Admin can classify 100 docs/hour without errors
+✓ Processors can run OCR on assigned batches only
+✓ Public documents NEVER visible to processors
+✓ Private documents NEVER visible to public reviewers
+✓ Reviewers can approve/edit docs in < 5 min
+✓ Admin can access full audit trail in < 2 sec
+✓ All state transitions are logged within 100ms
+✓ Export to MongoDB/Archipelago within 15 min (SLA)
+✓ Dashboard loads all metrics in < 3 sec
+
+14.2 SECURITY SUCCESS CRITERIA
+
+✓ Zero unauthorized access attempts succeed (403 rate = 100%)
+✓ All admin actions have audit trails (audit coverage = 100%)
+✓ Private documents accessed only by teacher role (breach rate = 0%)
+✓ Audit logs remain immutable (tampering rate = 0%)
+✓ JWT tokens expire correctly (session hijack rate = 0%)
+✓ Rate limiting blocks abuse (abuse detection rate = 100%)
+
+14.3 COMPLIANCE SUCCESS CRITERIA
+
+✓ Audit logs retained for 7 years
+✓ All PII accessed logged within document (access tracking = 100%)
+✓ Admin override reasons documented (justification coverage = 100%)
+✓ Annual audit passes (findings = 0 critical)
+✓ GDPR right-to-erasure implemented
+✓ SOC 2 Type II ready
+
+================================================================================
+FINAL SIGN-OFF
+================================================================================
+
+DESIGN REVIEW CHECKLIST:
+
+  [✓] Role definitions are clear and non-overlapping
+  [✓] Workflow state machine is complete and validated
+  [✓] Data model supports all required operations
+  [✓] Authorization model is explicit (default deny)
+  [✓] Audit trail is immutable and comprehensive
+  [✓] Security threats are identified and mitigated
+  [✓] API design is RESTful and consistent
+  [✓] Concurrency handling prevents race conditions
+  [✓] Dashboard provides visibility into all metrics
+  [✓] Compliance requirements are met
+  [✓] Future extensibility is designed in
+  [✓] Implementation roadmap is realistic
+
+STATUS: PLANNING PHASE COMPLETE - READY FOR IMPLEMENTATION
+
+NEXT STEPS:
+  1. Architecture review & stakeholder sign-off
+  2. Prototype RBAC system (Phase 1)
+  3. Implement authentication & authorization (Phase 1-2)
+  4. Build document classification workflow (Phase 2-3)
+  5. Develop admin dashboard (Phase 5)
+  6. Security audit & penetration testing (Phase 6)
+  7. Production deployment (Phase 6)
+
+================================================================================
+REVISION NOTES & CHANGE SUMMARY
+================================================================================
+
+REVISION: SIMPLIFIED ROLE MODEL (3 Roles Instead of 4)
+Date: 2026-01-22
+Status: UPDATED & READY FOR REVIEW
+
+QUICK REFERENCE - BEFORE vs AFTER:
+─────────────────────────────────────────────────────────────────────────────
+
+BEFORE: 4 ROLES (Admin, Processor, Reviewer, Teacher)
+  Workflow: Admin → Classify → Assign to Processor → Processor OCR
+            → Route to Reviewer → Approve → Export
+
+AFTER: 3 ROLES (Admin, Reviewer, Teacher)
+  Workflow: Admin → Classify + OCR → Route to Reviewer → Approve → Export
+
+KEY CHANGE: OCR Processor role merged into Admin
+  ❌ REMOVED: Separate processor role
+  ✅ ADDED: OCR processing authority to Admin
+  ✅ BENEFIT: Single authority, simpler audit trail
+  ⚠️  TRADE-OFF: Admin workload increases
+
+CHANGES MADE:
+
+1. ROLE STRUCTURE:
+   ❌ REMOVED: OCR Processor role (no longer needed)
+   ✅ MERGED: Processor functions into Admin role
+   ✅ KEPT: Admin, OCR Reviewer, Teacher (3 roles total)
+
+2. ADMIN ROLE (Enhanced with OCR Control):
+   ✓ Now exclusive owner of OCR processing (all documents)
+   ✓ Handles: Classify → Run OCR → Assign to Review
+   ✓ Can run OCR on both Public and Private documents
+   ✓ Maintains full audit trail of all actions
+   ✓ Configures OCR providers and settings
+
+3. REVIEWER/TEACHER ROLES (Simplified):
+   ✗ CANNOT run OCR (Admin only)
+   ✗ CANNOT classify documents (Admin only)
+   ✓ CAN review and approve documents
+   ✓ CAN manually edit metadata
+   ✓ CAN reject for re-processing (Admin re-queues)
+
+4. DATABASE SCHEMA CHANGES:
+   REMOVED:
+     - assigned_to field (no processor assignment)
+     - assigned_at field
+
+   ADDED:
+     - processed_by field (Admin who ran OCR)
+     - processed_at field (timestamp)
+
+5. STATE MACHINE UPDATES:
+   OLD: ASSIGNED_TO_OCR_PROCESSOR → OCR_PROCESSED
+   NEW: OCR_PROCESSING → OCR_PROCESSED
+   (Admin state, no processor role)
+
+6. API ENDPOINTS RESTRUCTURED:
+   REMOVED:
+     - All Processor endpoints
+
+   ADDED:
+     - POST /api/ocr/batch/process (Admin)
+     - POST /api/ocr/configure-provider (Admin)
+     - POST /api/review-queue/bulk-assign (Admin)
+
+7. DOCUMENTATION ORGANIZATION:
+   ✓ Removed "Future Roles" column (simplified matrix)
+   ✓ Kept all explanations and points in sequential order
+   ✓ Maintained clarity and easy understanding
+   ✓ All references are consistent and non-overlapping
+
+KEY BENEFITS:
+
+  ✅ Single Authority: Admin owns full OCR lifecycle
+  ✅ Clearer Audit Trail: All OCR actions traceable to Admin
+  ✅ Simpler Permission Model: 3 roles vs 4
+  ✅ No Processor Confusion: Clear separation (Admin/Reviewer/Teacher)
+  ✅ Easier Compliance: Fewer role interactions to audit
+  ✅ Better Accountability: Each action has clear owner
+
+KEY RISKS & MITIGATIONS:
+
+  Risk: Admin becomes bottleneck for OCR
+  Mitigation: Batch processing, automated queuing, monitoring
+
+  Risk: Admin needs OCR provider knowledge
+  Mitigation: Training, documentation, configuration templates
+
+  Risk: Scaling OCR at high volume
+  Mitigation: Async batch jobs, NSQ worker integration (existing)
+
+DETAILED COMPARISON TABLES:
+───────────────────────────────────────────────────────────────────────────────
+
+1. ROLE RESPONSIBILITY MATRIX (BEFORE vs AFTER):
+
+┌────────────────────┬─────────────────────────┬──────────────────────────┐
+│ FUNCTION           │ BEFORE (4 Roles)        │ AFTER (3 Roles)          │
+├────────────────────┼─────────────────────────┼──────────────────────────┤
+│ Classify Docs      │ Admin                   │ Admin ✓                  │
+│ Run OCR            │ Processor               │ Admin ✓✓✓ CHANGED        │
+│ Configure OCR      │ None                    │ Admin ✓✓✓ NEW            │
+│ Assign to Review   │ Admin → Processor       │ Admin (direct) ✓         │
+│ Review Public      │ Reviewer                │ Reviewer ✓               │
+│ Review Private     │ Teacher                 │ Teacher ✓                │
+│ Edit Metadata      │ Reviewer/Teacher        │ Reviewer/Teacher ✓       │
+│ Final Approve      │ Admin                   │ Admin ✓                  │
+│ Export             │ Admin                   │ Admin ✓                  │
+│ Manage Users       │ None                    │ Admin ✓✓✓ NEW            │
+└────────────────────┴─────────────────────────┴──────────────────────────┘
+
+2. WORKFLOW STAGES (BEFORE vs AFTER):
+
+BEFORE (5 Stages):
+  ├─ Stage 1: Upload & Classify (Admin)
+  ├─ Stage 2: Assign to Processor (Admin → Processor)
+  ├─ Stage 3: OCR Processing (Processor)
+  ├─ Stage 4: Review (Reviewer/Teacher)
+  └─ Stage 5: Approve & Export (Admin)
+
+AFTER (4 Stages):
+  ├─ Stage 1: Upload, Classify & OCR (Admin only)
+  ├─ Stage 2: Route to Review (Admin → Reviewer/Teacher)
+  ├─ Stage 3: Review (Reviewer/Teacher)
+  └─ Stage 4: Approve & Export (Admin only)
+
+  ✓ One fewer handoff
+  ✓ Faster workflow
+  ✓ Fewer state transitions
+
+3. DOCUMENT STATE MACHINE (BEFORE vs AFTER):
+
+BEFORE (9 States):
+  UPLOADED → CLASSIFICATION_PENDING → CLASSIFIED_*
+  → ASSIGNED_TO_OCR_PROCESSOR → OCR_PROCESSED → IN_REVIEW
+  → REVIEWED_APPROVED → FINAL_ADMIN_REVIEW → FINAL_APPROVED → EXPORTED
+
+AFTER (8 States):
+  UPLOADED → CLASSIFICATION_PENDING → CLASSIFIED_*
+  → OCR_PROCESSING → OCR_PROCESSED → IN_REVIEW
+  → REVIEWED_APPROVED → FINAL_ADMIN_REVIEW → FINAL_APPROVED → EXPORTED
+
+  ✓ One fewer state
+  ✓ Cleaner admin-owned processing
+
+4. API ENDPOINT CHANGES:
+
+REMOVED (Processor-specific):
+  ❌ POST /api/assignments (batch to processor)
+  ❌ GET /api/assignments/my-queue
+  ❌ POST /api/ocr/{doc_id}/process (processor)
+  ❌ All processor status endpoints
+
+ADDED (Admin OCR):
+  ✅ POST /api/ocr/batch/process (admin batch OCR)
+  ✅ POST /api/ocr/configure-provider (admin config)
+  ✅ POST /api/ocr/{doc_id}/retry (admin retry)
+
+UPDATED (Direct Admin):
+  ✓ POST /api/review-queue/bulk-assign (admin to reviewers)
+  ✓ GET /api/review-queue (no assignment tracking)
+
+NEXT STEPS FOR IMPLEMENTATION:
+
+  Phase 1: Update database schema (remove processor assignment fields)
+  Phase 2: Implement 3-role RBAC with updated permissions
+  Phase 3: Build Admin OCR batch processing endpoints
+  Phase 4: Implement Reviewer/Teacher review workflow
+  Phase 5: Build Admin dashboard with OCR metrics
+  Phase 6: Testing, security audit, production deployment
+
+================================================================================
+END OF DOCUMENT (REVISED)
+================================================================================

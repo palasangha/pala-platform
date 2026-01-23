@@ -10,12 +10,22 @@ import asyncio
 import json
 import logging
 import os
+import sys
 from datetime import datetime
 from typing import Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import quote_plus
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
-import nsq
+import gnsq
+
+# Handle event loop conflicts by allowing nested event loops
+try:
+    import nest_asyncio
+    nest_asyncio.apply()
+except ImportError:
+    # nest_asyncio not available, use fallback approach
+    pass
 
 # Import our enrichment components
 from enrichment_service.workers.agent_orchestrator import AgentOrchestrator
@@ -69,7 +79,7 @@ class EnrichmentWorker:
             db=self.db
         )
         self.schema_validator = SchemaValidator(self.config['SCHEMA_PATH'])
-        self.review_queue = ReviewQueue(self.db) if self.db else None
+        self.review_queue = ReviewQueue(self.db) if self.db is not None else None
         self.coordinator = EnrichmentCoordinator(self.config)
 
         # NSQ configuration
@@ -86,12 +96,37 @@ class EnrichmentWorker:
 
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration from environment variables"""
+        # Parse NSQD_ADDRESS if provided (format: "host:port"), otherwise use separate host/port
+        nsqd_address = os.getenv('NSQD_ADDRESS', '')
+        if ':' in nsqd_address:
+            nsqd_host, nsqd_port = nsqd_address.rsplit(':', 1)
+            nsqd_port = int(nsqd_port)
+        else:
+            nsqd_host = os.getenv('NSQD_HOST', 'nsqd')
+            nsqd_port = int(os.getenv('NSQD_PORT', '4150'))
+
+        # Build MONGO_URI with proper URL encoding for credentials
+        mongo_uri = os.getenv('MONGO_URI')
+        if not mongo_uri:
+            # If MONGO_URI not provided, build from components
+            mongo_user = os.getenv('MONGO_USERNAME', 'gvpocr_admin')
+            mongo_pass = os.getenv('MONGO_PASSWORD', '')
+            mongo_host = os.getenv('MONGO_HOST', 'mongodb')
+            mongo_port = os.getenv('MONGO_PORT', '27017')
+            mongo_db = os.getenv('DB_NAME', 'gvpocr')
+
+            if mongo_pass:
+                # URL-encode username and password to handle special characters
+                mongo_uri = f"mongodb://{quote_plus(mongo_user)}:{quote_plus(mongo_pass)}@{mongo_host}:{mongo_port}/{mongo_db}?authSource=admin"
+            else:
+                mongo_uri = f"mongodb://{mongo_host}:{mongo_port}/{mongo_db}"
+
         return {
-            'MONGO_URI': os.getenv('MONGO_URI', 'mongodb://localhost:27017/gvpocr'),
+            'MONGO_URI': mongo_uri,
             'DB_NAME': os.getenv('DB_NAME', 'gvpocr'),
-            'NSQD_HOST': os.getenv('NSQD_HOST', 'localhost'),
-            'NSQD_PORT': int(os.getenv('NSQD_PORT', '4150')),
-            'LOOKUPD_HTTP_ADDRESSES': os.getenv('LOOKUPD_HTTP_ADDRESSES', 'localhost:4161').split(','),
+            'NSQD_HOST': nsqd_host,
+            'NSQD_PORT': nsqd_port,
+            'LOOKUPD_HTTP_ADDRESSES': os.getenv('NSQLOOKUPD_ADDRESSES', os.getenv('LOOKUPD_HTTP_ADDRESSES', 'nsqlookupd:4161')).split(','),
             'ENRICHMENT_TOPIC': os.getenv('ENRICHMENT_TOPIC', 'enrichment'),
             'ENRICHMENT_CHANNEL': os.getenv('ENRICHMENT_CHANNEL', 'enrichment_worker'),
             'SCHEMA_PATH': os.getenv('SCHEMA_PATH', '/app/enrichment_service/schema/historical_letters_schema.json'),
@@ -287,40 +322,64 @@ class EnrichmentWorker:
         """
         Start consuming messages from NSQ
 
-        This is a blocking call that runs until the worker is stopped
+        Runs the blocking gnsq consumer in a thread pool to avoid blocking the event loop
         """
-        logger.info(f"Starting NSQ consumer: topic={self.enrichment_topic}, channel={self.channel}")
+        logger.info(f"Starting NSQ consumer: topic={self.enrichment_topic}, channel={self.enrichment_channel}")
+        logger.info(f"Lookupd addresses: {self.lookupd_http_addresses}")
 
         try:
-            # Create consumer
-            reader = nsq.Reader(
-                topic=self.enrichment_topic,
-                channel=self.channel,
-                lookupd_http_addresses=self.lookupd_http_addresses,
-                max_in_flight=100  # Max concurrent messages
-            )
+            # Create consumer using gnsq
+            # Try connecting directly to nsqd first, then fall back to lookupd
+            try:
+                logger.info(f"Attempting direct connection to nsqd: {self.nsq_host}:{self.nsq_port}")
+                consumer = gnsq.Consumer(
+                    self.enrichment_topic,
+                    self.enrichment_channel,
+                    nsqd_tcp_addresses=[f"{self.nsq_host}:{self.nsq_port}"],
+                    max_in_flight=100
+                )
+                logger.info("✅ Connected to nsqd directly")
+            except Exception as e:
+                logger.warning(f"Direct nsqd connection failed, trying lookupd: {e}")
+                consumer = gnsq.Consumer(
+                    self.enrichment_topic,
+                    self.enrichment_channel,
+                    self.lookupd_http_addresses,
+                    max_in_flight=100
+                )
+                logger.info("✅ Connected to nsqlookupd")
 
             # Set message handler
-            reader.set_message_handler(self._handle_message)
+            consumer.on_message.connect(self._handle_message)
 
-            # Start consuming
-            nsq.run()
+            logger.info("NSQ Consumer created, starting to consume messages...")
+
+            # Run gnsq consumer in thread pool to avoid blocking the event loop
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, consumer.start)
 
         except Exception as e:
             logger.error(f"NSQ consumer error: {e}", exc_info=True)
             raise
 
-    def _handle_message(self, message) -> bool:
+    def _handle_message(self, sender=None, message=None) -> bool:
         """
         NSQ message handler - runs async task in thread to avoid blocking NSQ loop
+        
+        Called by blinker signal which sends (sender, message=msg)
 
         Args:
+            sender: The signal sender (self)
             message: NSQ message object
 
         Returns:
             True if message was processed successfully
         """
         try:
+            if message is None:
+                logger.error("No message provided to handler")
+                return False
+                
             # Decode message
             task_data = json.loads(message.body.decode('utf-8'))
 
@@ -351,21 +410,49 @@ class EnrichmentWorker:
         """
         Process task synchronously (wrapper for async process_task)
 
+        Runs async process_task in a fresh event loop in a separate thread
+
         Args:
             task_data: Task data dict
 
         Returns:
             True if processed successfully
         """
-        try:
-            # Create new event loop for this thread (NSQ is sync, we're in sync handler)
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        def run_async_task_in_thread():
+            """Helper to run async task in its own event loop in a separate thread"""
             try:
+                # Clear any existing event loop for this thread
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # This shouldn't happen in a fresh thread, but handle it
+                        logger.warning("Event loop already running in thread")
+                        loop = None
+                except RuntimeError:
+                    loop = None
+
+                # Create a completely fresh event loop
+                if loop is None or loop.is_closed():
+                    asyncio.set_event_loop(None)
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+
+                # Run the coroutine
                 result = loop.run_until_complete(self.process_task(task_data))
                 return result
             finally:
-                loop.close()
+                # Always clean up
+                try:
+                    loop.close()
+                except:
+                    pass
+                asyncio.set_event_loop(None)
+
+        try:
+            # Run in thread pool to ensure complete isolation from main event loop
+            future = self.executor.submit(run_async_task_in_thread)
+            result = future.result(timeout=300)  # 5 minute timeout
+            return result
         except Exception as e:
             logger.error(f"Error in sync task processing: {e}", exc_info=True)
             return False

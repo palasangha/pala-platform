@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
-import nsq
+import gnsq
 import time
 
 logger = logging.getLogger(__name__)
@@ -55,11 +55,38 @@ class EnrichmentCoordinator:
 
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration from environment variables"""
+        # Build MongoDB URI with authentication if credentials provided
+        mongo_uri = os.getenv('MONGO_URI', 'mongodb://localhost:27017/gvpocr')
+        mongo_username = os.getenv('MONGO_USERNAME')
+        mongo_password = os.getenv('MONGO_PASSWORD')
+
+        # If URI doesn't have auth but credentials are provided, build authenticated URI
+        if mongo_username and mongo_password and '@' not in mongo_uri:
+            # URL-encode the password to handle special characters like @, :, etc.
+            from urllib.parse import quote_plus
+            encoded_username = quote_plus(mongo_username)
+            encoded_password = quote_plus(mongo_password)
+            # Extract host and database from URI
+            # mongodb://host:port/db -> mongodb://user:pass@host:port/db?authSource=admin
+            mongo_uri = mongo_uri.replace('mongodb://', f'mongodb://{encoded_username}:{encoded_password}@')
+            # Add authSource=admin parameter if not already present
+            if '?authSource=' not in mongo_uri:
+                mongo_uri = mongo_uri + '?authSource=admin'
+
+        # Parse NSQD_ADDRESS if provided (format: "host:port"), otherwise use separate host/port
+        nsqd_address = os.getenv('NSQD_ADDRESS', '')
+        if ':' in nsqd_address:
+            nsqd_host, nsqd_port = nsqd_address.rsplit(':', 1)
+            nsqd_port = int(nsqd_port)
+        else:
+            nsqd_host = os.getenv('NSQD_HOST', 'nsqd')
+            nsqd_port = int(os.getenv('NSQD_PORT', '4150'))
+
         return {
-            'MONGO_URI': os.getenv('MONGO_URI', 'mongodb://localhost:27017/gvpocr'),
+            'MONGO_URI': mongo_uri,
             'DB_NAME': os.getenv('DB_NAME', 'gvpocr'),
-            'NSQD_HOST': os.getenv('NSQD_HOST', 'localhost'),
-            'NSQD_PORT': int(os.getenv('NSQD_PORT', '4150')),
+            'NSQD_HOST': nsqd_host,
+            'NSQD_PORT': nsqd_port,
             'ENRICHMENT_TOPIC': os.getenv('ENRICHMENT_TOPIC', 'enrichment'),
             'BATCH_SIZE': int(os.getenv('ENRICHMENT_BATCH_SIZE', '50')),
             'ENRICHMENT_ENABLED': os.getenv('ENRICHMENT_ENABLED', 'true').lower() == 'true'
@@ -90,7 +117,7 @@ class EnrichmentCoordinator:
 
         try:
             # Fetch OCR job details
-            ocr_job = self.db.bulk_jobs.find_one({'_id': ocr_job_id})
+            ocr_job = self.db.bulk_jobs.find_one({'job_id': ocr_job_id})
             if not ocr_job:
                 logger.error(f"OCR job {ocr_job_id} not found")
                 return None
@@ -100,10 +127,11 @@ class EnrichmentCoordinator:
                 logger.warning(f"OCR job {ocr_job_id} not completed, skipping enrichment")
                 return None
 
-            # Get list of processed documents
-            ocr_results = list(self.db.ocr_results.find({'ocr_job_id': ocr_job_id}))
+            # Get list of processed documents from job checkpoint
+            checkpoint = ocr_job.get('checkpoint', {})
+            ocr_results = checkpoint.get('results', [])
             if not ocr_results:
-                logger.warning(f"No OCR results found for job {ocr_job_id}")
+                logger.warning(f"No OCR results found in checkpoint for job {ocr_job_id}")
                 return None
 
             logger.info(f"Creating enrichment job for {len(ocr_results)} documents")
@@ -178,23 +206,27 @@ class EnrichmentCoordinator:
 
         for result in ocr_results:
             try:
+                # Get document ID from result (use file path as unique identifier)
+                doc_id = result.get('_id') or result.get('file', f"doc_{published_count}")
+                
                 # Build enrichment task
                 task = {
-                    'task_id': f"task_{enrichment_job_id}_{result['_id']}",
+                    'task_id': f"task_{enrichment_job_id}_{doc_id}",
                     'enrichment_job_id': enrichment_job_id,
-                    'ocr_job_id': result['ocr_job_id'],
-                    'document_id': str(result['_id']),
+                    'ocr_job_id': result.get('ocr_job_id', ''),
+                    'document_id': str(doc_id),
                     'ocr_data': {
                         'text': result.get('text', ''),
                         'full_text': result.get('full_text', ''),
                         'confidence': result.get('confidence', 0.0),
                         'detected_language': result.get('detected_language', 'en'),
-                        'blocks': result.get('blocks', []),
-                        'words': result.get('words', []),
+                        'blocks_count': result.get('blocks_count', 0),
+                        'words_count': result.get('words_count', 0),
                         'provider': result.get('provider', 'unknown'),
-                        'ocr_job_id': result.get('ocr_job_id', ''),
+                        'file': result.get('file', ''),
                         'file_path': result.get('file_path', ''),
-                        'file_metadata': result.get('file_metadata', {})
+                        'file_index': result.get('file_index', 0),
+                        'status': result.get('status', 'success')
                     },
                     'enrichment_config': {
                         'enable_ollama': os.getenv('ENABLE_OLLAMA', 'true').lower() == 'true',
@@ -219,7 +251,7 @@ class EnrichmentCoordinator:
                 published_count += 1
 
             except Exception as e:
-                logger.error(f"Error publishing task for document {result.get('_id')}: {e}")
+                logger.error(f"Error publishing task for document {result.get('file', 'unknown')}: {e}")
                 continue
 
         return published_count
@@ -255,17 +287,22 @@ class EnrichmentCoordinator:
             # Fallback: Use direct HTTP publishing
             import requests
             try:
+                # Use HTTP API on port 4151 (NSQ admin/HTTP port)
+                nsq_http_url = f"http://{self.nsq_host}:4151/pub"
+                params = {'topic': self.enrichment_topic}
+                
                 response = requests.post(
-                    f"http://{self.nsq_host}:4151/pub",
-                    params={'topic': self.enrichment_topic},
+                    nsq_http_url,
+                    params=params,
                     data=task_json.encode('utf-8'),
                     timeout=5
                 )
+                
                 if response.status_code == 200:
                     logger.debug(f"Published task {task['task_id']} to NSQ (HTTP)")
                     return True
                 else:
-                    logger.error(f"NSQ HTTP publish failed: {response.status_code}")
+                    logger.error(f"NSQ HTTP publish failed: {response.status_code} - URL: {nsq_http_url}")
                     return False
             except Exception as e:
                 logger.error(f"Error publishing to NSQ: {e}")
@@ -379,7 +416,17 @@ def trigger_enrichment_after_ocr(ocr_job_id: str, collection_id: str, collection
 
 
 if __name__ == '__main__':
-    # Simple test
+    # Simple test and keep-alive for Docker container
+    import time
     logging.basicConfig(level=logging.INFO)
     coordinator = EnrichmentCoordinator()
     print("EnrichmentCoordinator initialized successfully")
+
+    # Keep-alive loop (Docker service mode)
+    logger.info("Coordinator service started - keeping alive...")
+    try:
+        while True:
+            time.sleep(60)  # Check every minute
+            # Can add monitoring tasks here if needed
+    except KeyboardInterrupt:
+        logger.info("Coordinator service stopped")

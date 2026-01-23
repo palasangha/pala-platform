@@ -127,7 +127,7 @@ class MCPClient:
                     raise MCPConnectionError(f"Failed to connect after {self.max_retries} attempts: {e}")
 
     async def disconnect(self) -> None:
-        """Disconnect from MCP server"""
+        """Disconnect from MCP server and clean up pending requests"""
         if self.connection:
             try:
                 await self.connection.close()
@@ -136,6 +136,13 @@ class MCPClient:
             finally:
                 self.is_connected = False
                 self.connection = None
+
+        # Clean up any pending requests
+        with self.pending_requests_lock:
+            for request_id, future in list(self.pending_requests.items()):
+                if not future.done():
+                    future.set_exception(MCPConnectionError("Connection closed"))
+            self.pending_requests.clear()
 
     async def invoke_tool(
         self,

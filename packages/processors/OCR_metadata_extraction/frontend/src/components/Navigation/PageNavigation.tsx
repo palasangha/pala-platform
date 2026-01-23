@@ -1,21 +1,31 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { FolderOpen, Zap, Database, Activity, Layers, LogOut, Settings, Home, Link2 } from 'lucide-react';
+import { FolderOpen, Zap, Database, Activity, Layers, LogOut, Settings, Home, Link2, BarChart, CheckSquare, FileText, Boxes, Edit, ChevronDown } from 'lucide-react';
 
 export const PageNavigation: React.FC<{ onLogout?: () => void }> = ({ onLogout }) => {
   const navigate = useNavigate();
   const location = useLocation();
+  const [rbacDropdownOpen, setRbacDropdownOpen] = useState(false);
 
   const navItems = [
     { path: '/projects', label: 'Projects', icon: FolderOpen },
     { path: '/bulk', label: 'Bulk OCR', icon: Zap },
     { path: '/ocr-chains', label: 'OCR Chains', icon: Link2 },
-    { path: '/archipelago-raw-uploader', label: 'Archipelago', icon: Database },
+    { path: '/archipelago-raw-uploader', label: 'Archipelago Upload', icon: Database },
     { path: '/workers', label: 'Workers', icon: Activity },
     { path: '/supervisor', label: 'Supervisor', icon: Layers },
+    { path: '/swarm', label: 'Swarm', icon: Boxes },
+  ];
+
+  const rbacItems = [
+    { path: '/rbac/admin-dashboard', label: 'Dashboard', icon: BarChart },
+    { path: '/rbac/review-queue', label: 'Review Queue', icon: CheckSquare },
+    { path: '/rbac/audit-logs', label: 'Audit Logs', icon: FileText },
+    { path: '/archipelago-metadata-updater', label: 'Metadata Update', icon: Edit },
   ];
 
   const isActive = (path: string) => location.pathname === path;
+  const isRbacActive = rbacItems.some(item => isActive(item.path));
 
   return (
     <div className="bg-gradient-to-r from-slate-900 to-slate-800 shadow-lg border-b border-slate-700">
@@ -62,6 +72,49 @@ export const PageNavigation: React.FC<{ onLogout?: () => void }> = ({ onLogout }
               </button>
             );
           })}
+
+          {/* RBAC Dropdown Menu */}
+          <div className="relative">
+            <button
+              onClick={() => setRbacDropdownOpen(!rbacDropdownOpen)}
+              className={`flex items-center gap-2 px-4 py-3 transition-all duration-200 font-medium whitespace-nowrap border-b-2 ${
+                isRbacActive || rbacDropdownOpen
+                  ? 'bg-slate-700 text-purple-400 border-b-2 border-purple-500 shadow-md'
+                  : 'text-slate-300 hover:text-white border-b-2 border-transparent hover:bg-slate-700'
+              }`}
+            >
+              <BarChart className="w-4 h-4" />
+              <span>RBAC</span>
+              <ChevronDown className={`w-4 h-4 transition-transform ${rbacDropdownOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {/* Dropdown Menu */}
+            {rbacDropdownOpen && (
+              <div className="absolute top-full left-0 mt-0 bg-slate-800 border border-slate-700 rounded-b-lg shadow-lg z-50 min-w-48">
+                {rbacItems.map((item) => {
+                  const Icon = item.icon;
+                  const active = isActive(item.path);
+                  return (
+                    <button
+                      key={item.path}
+                      onClick={() => {
+                        navigate(item.path);
+                        setRbacDropdownOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-2 px-4 py-2 transition-all duration-200 font-medium border-l-2 ${
+                        active
+                          ? 'bg-slate-700 text-purple-400 border-l-purple-500 border-l-2'
+                          : 'text-slate-300 hover:text-white hover:bg-slate-700 border-l-transparent'
+                      }`}
+                    >
+                      <Icon className="w-4 h-4" />
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
           {/* Settings Button - Always at the end */}
           <div className="ml-auto">

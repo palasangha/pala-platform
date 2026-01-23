@@ -685,7 +685,12 @@ class BulkJob:
         # Include results if available and convert relative URLs to absolute HTTPS URLs
         if bulk_job.get('results'):
             results = bulk_job.get('results')
-            result['results'] = BulkJob._convert_urls_to_https(results)
+            # Only include results if it's a dict with summary (not a list from checkpoint)
+            if isinstance(results, dict) and 'summary' in results:
+                result['results'] = BulkJob._convert_urls_to_https(results)
+            elif isinstance(results, dict):
+                # Results dict without summary - include as-is
+                result['results'] = results
 
         # Include error if present
         if bulk_job.get('error'):
@@ -699,10 +704,10 @@ class BulkJob:
         Convert relative image URLs to absolute HTTPS URLs in results
 
         Args:
-            results: List of result dictionaries that may contain intermediate_images
+            results: Dict with summary/results_preview or list of result dictionaries
 
         Returns:
-            List of results with updated URLs
+            Results with updated URLs (same type as input)
         """
         try:
             from flask import request
@@ -714,8 +719,32 @@ class BulkJob:
             # No Flask request context, return results as-is
             return results
 
+        # Handle dict results (with summary/results_preview structure)
+        if isinstance(results, dict):
+            results_copy = dict(results)
+            if 'results_preview' in results_copy and isinstance(results_copy['results_preview'], dict):
+                if 'successful_samples' in results_copy['results_preview']:
+                    samples = results_copy['results_preview']['successful_samples']
+                    if isinstance(samples, list):
+                        results_copy['results_preview']['successful_samples'] = BulkJob._convert_list_urls(samples, base_url)
+            return results_copy
+
+        # Handle list results
+        if isinstance(results, list):
+            return BulkJob._convert_list_urls(results, base_url)
+
+        return results
+
+    @staticmethod
+    def _convert_list_urls(results_list, base_url):
+        """Helper to convert URLs in a list of results"""
         converted_results = []
-        for result in results:
+        for result in results_list:
+            # Skip non-dict results (e.g., strings)
+            if not isinstance(result, dict):
+                converted_results.append(result)
+                continue
+
             if result.get('intermediate_images'):
                 result = dict(result)  # Make a copy to avoid modifying original
                 intermediate_images = result.get('intermediate_images', {})

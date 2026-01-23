@@ -26,5 +26,8 @@ def init_db(app):
 # Import models
 from app.models.project import Project
 from app.models.image import Image
+from app.models.user import User
+from app.models.role import Role
+from app.models.audit_log import AuditLog
 from app.models.bulk_job import BulkJob
 from app.models.export import Export

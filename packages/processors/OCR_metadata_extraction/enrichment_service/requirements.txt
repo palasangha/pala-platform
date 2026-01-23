@@ -12,6 +12,7 @@ python-dotenv==1.0.0
 websockets>=12.0
 asyncio-contextmanager>=1.0.0
 aiohttp>=3.9.0
+nest-asyncio>=1.5.8
 
 # Message queue
 gnsq==1.0.2

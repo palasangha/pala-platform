@@ -488,7 +488,7 @@ class CostTracker:
             today = datetime.utcnow()
             start_of_month = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             try:
-                if self.db:
+                if self.db is not None:
                     # Validate database connection
                     self.db.client.admin.command('ping')
 

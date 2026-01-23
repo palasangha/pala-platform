@@ -531,7 +531,7 @@ class ResultAggregator:
         return individual_json_files
 
     def _create_zip_archive(self, output_dir, job_id, export_files, individual_json_files=None):
-        """Create ZIP archive containing all reports and individual JSON files"""
+        """Create ZIP archive containing all reports, individual JSON files, and enrichment results"""
         zip_file = os.path.join(output_dir, f'{job_id}_bulk_ocr_results.zip')
 
         try:
@@ -552,6 +552,11 @@ class ResultAggregator:
                             zipf.write(json_file, arcname=arcname)
                             logger.debug(f"Added to zip: {arcname}")
 
+                # Add enrichment results if available
+                enrichment_count = self._add_enrichment_results_to_zip(zipf, job_id)
+                if enrichment_count > 0:
+                    logger.info(f"Added {enrichment_count} enriched documents to ZIP")
+
             # Log zip file information
             if os.path.exists(zip_file):
                 zip_size = os.path.getsize(zip_file)
@@ -571,3 +576,103 @@ class ResultAggregator:
             raise
 
         return zip_file
+
+    def _add_enrichment_results_to_zip(self, zipf, ocr_job_id):
+        """
+        Add enrichment results to ZIP archive if they exist
+        
+        Args:
+            zipf: ZipFile object
+            ocr_job_id: OCR job ID to find corresponding enriched documents
+            
+        Returns:
+            Count of enriched documents added
+        """
+        try:
+            # Find enrichment job(s) for this OCR job
+            enrichment_jobs = list(self.mongo.db.enrichment_jobs.find({
+                'ocr_job_id': ocr_job_id,
+                'status': {'$in': ['completed', 'published', 'in_progress']}
+            }))
+            
+            if not enrichment_jobs:
+                logger.debug(f"No enrichment jobs found for OCR job {ocr_job_id}")
+                return 0
+            
+            enrichment_count = 0
+            
+            # For each enrichment job, fetch enriched documents
+            for enrichment_job in enrichment_jobs:
+                enrichment_job_id = enrichment_job['_id']
+                
+                # Fetch enriched documents for this job
+                enriched_docs = list(self.mongo.db.enriched_documents.find({
+                    'enrichment_job_id': enrichment_job_id
+                }))
+                
+                if not enriched_docs:
+                    logger.debug(f"No enriched documents found for job {enrichment_job_id}")
+                    continue
+                
+                # Create enriched_results folder in ZIP
+                enrichment_folder = 'enriched_results'
+                
+                # Add individual enriched documents as JSON
+                for doc in enriched_docs:
+                    try:
+                        # Get document filename from OCR data
+                        doc_id = doc.get('document_id', doc.get('_id', f'doc_{enrichment_count}'))
+                        ocr_data = doc.get('ocr_data', {})
+                        original_file = ocr_data.get('file', 'unknown')
+                        base_name = os.path.splitext(original_file)[0]
+                        
+                        # Create enriched JSON with combined OCR + enrichment data
+                        enriched_json = {
+                            'document_id': doc_id,
+                            'enrichment_job_id': enrichment_job_id,
+                            'ocr_data': ocr_data,
+                            'enriched_data': doc.get('enriched_data', {}),
+                            'quality_metrics': doc.get('quality_metrics', {}),
+                            'enrichment_metadata': doc.get('enrichment_metadata', {}),
+                            'review_status': doc.get('review_status', 'not_required'),
+                            'review_notes': doc.get('review_notes', ''),
+                            'created_at': str(doc.get('created_at', '')),
+                            'updated_at': str(doc.get('updated_at', ''))
+                        }
+                        
+                        # Add to ZIP
+                        arcname = os.path.join(enrichment_folder, f'{base_name}_enriched.json')
+                        zipf.writestr(arcname, json.dumps(enriched_json, indent=2, ensure_ascii=False, default=str))
+                        enrichment_count += 1
+                        logger.debug(f"Added enriched document to ZIP: {arcname}")
+                        
+                    except Exception as e:
+                        logger.error(f"Error adding enriched document to ZIP: {e}")
+                        continue
+                
+                # Also add enrichment job summary
+                try:
+                    summary_data = {
+                        'enrichment_job_id': enrichment_job_id,
+                        'ocr_job_id': ocr_job_id,
+                        'status': enrichment_job.get('status'),
+                        'total_documents': enrichment_job.get('total_documents', 0),
+                        'processed_count': enrichment_job.get('processed_count', 0),
+                        'success_count': enrichment_job.get('success_count', 0),
+                        'error_count': enrichment_job.get('error_count', 0),
+                        'review_count': enrichment_job.get('review_count', 0),
+                        'cost_summary': enrichment_job.get('cost_summary', {}),
+                        'created_at': str(enrichment_job.get('created_at', '')),
+                        'completed_at': str(enrichment_job.get('completed_at', ''))
+                    }
+                    arcname = os.path.join('enriched_results', 'enrichment_job_summary.json')
+                    zipf.writestr(arcname, json.dumps(summary_data, indent=2, ensure_ascii=False, default=str))
+                    logger.debug(f"Added enrichment job summary to ZIP: {arcname}")
+                except Exception as e:
+                    logger.error(f"Error adding enrichment summary to ZIP: {e}")
+            
+            return enrichment_count
+            
+        except Exception as e:
+            logger.error(f"Error adding enrichment results to ZIP: {e}")
+            return 0

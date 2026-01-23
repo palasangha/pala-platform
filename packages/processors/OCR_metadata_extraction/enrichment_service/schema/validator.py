@@ -279,3 +279,7 @@ Review Reason: {result['review_reason']}
             "most_common_missing_fields": [f[0] for f in most_common[:10]],
             "missing_field_distribution": dict(most_common[:10])
         }
+
+
+# Alias for import compatibility
+SchemaValidator = HistoricalLettersValidator
