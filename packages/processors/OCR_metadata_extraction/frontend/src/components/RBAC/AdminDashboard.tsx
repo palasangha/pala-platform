@@ -27,7 +27,7 @@ export const AdminDashboard: React.FC = () => {
       setError(null);
 
       const response = await axios.get(
-        `/api/rbac/dashboard`,
+        `/api/dashboard/overview`,
         {
           headers: {
             Authorization: `Bearer ${accessToken}`

@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Download, RefreshCw, ArrowLeft, Loader, CheckCircle, AlertCircle } from 'lucide-react';
-import AppLayout from '@/components/Layout/AppLayout';
 import ChainTimeline from '@/components/OCRChain/ChainTimeline';
 import { chainAPI } from '@/services/api';
 
@@ -142,30 +141,26 @@ export default function OCRChainResults() {
 
   if (loading) {
     return (
-      <AppLayout>
-        <div className="flex items-center justify-center h-screen">
-          <div className="text-center">
-            <Loader size={40} className="animate-spin text-blue-500 mx-auto mb-4" />
-            <p className="text-gray-600">Loading job details...</p>
-          </div>
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <Loader size={40} className="animate-spin text-blue-500 mx-auto mb-4" />
+          <p className="text-gray-600">Loading job details...</p>
         </div>
-      </AppLayout>
+      </div>
     );
   }
 
   if (error || !job) {
     return (
-      <AppLayout>
-        <div className="max-w-6xl mx-auto p-6">
-          <div className="bg-red-50 border border-red-200 rounded-lg p-6 flex items-gap gap-4">
-            <AlertCircle size={24} className="text-red-600 flex-shrink-0" />
-            <div>
-              <h2 className="font-semibold text-red-900">Error</h2>
-              <p className="text-red-800">{error || 'Job not found'}</p>
-            </div>
+      <div className="max-w-6xl mx-auto p-6">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6 flex items-gap gap-4">
+          <AlertCircle size={24} className="text-red-600 flex-shrink-0" />
+          <div>
+            <h2 className="font-semibold text-red-900">Error</h2>
+            <p className="text-red-800">{error || 'Job not found'}</p>
           </div>
         </div>
-      </AppLayout>
+      </div>
     );
   }
 
@@ -178,8 +173,7 @@ export default function OCRChainResults() {
   const progress = job.progress || {};
 
   return (
-    <AppLayout>
-      <div className="max-w-7xl mx-auto p-6 space-y-6">
+    <div className="max-w-7xl mx-auto p-6 space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -357,6 +351,5 @@ export default function OCRChainResults() {
           </div>
         )}
       </div>
-    </AppLayout>
   );
 }

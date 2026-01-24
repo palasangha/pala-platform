@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Play, FolderOpen, Save, AlertCircle, CheckCircle, Loader } from 'lucide-react';
-import AppLayout from '@/components/Layout/AppLayout';
 import ChainStepEditor from '@/components/OCRChain/ChainStepEditor';
 import FolderPicker from '@/components/OCRChain/FolderPicker';
 import { chainAPI } from '@/services/api';
@@ -168,8 +167,7 @@ export default function OCRChainBuilder() {
   const sortedSteps = [...steps].sort((a, b) => a.step_number - b.step_number);
 
   return (
-    <AppLayout>
-      <div className="max-w-6xl mx-auto p-6">
+    <div className="max-w-6xl mx-auto p-6">
         {/* Header */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">OCR Provider Chaining</h1>
@@ -377,6 +375,5 @@ export default function OCRChainBuilder() {
           </div>
         )}
       </div>
-    </AppLayout>
   );
 }
