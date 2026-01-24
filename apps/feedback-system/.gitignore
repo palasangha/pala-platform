@@ -1,0 +1,46 @@
+# Environment variables
+.env
+.env.local
+
+# Node modules
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Docker volumes (persistent data)
+volumes/mongodb/*
+volumes/backups/*
+volumes/reports/*
+
+# Keep directory structure
+!volumes/mongodb/.gitkeep
+!volumes/backups/.gitkeep
+!volumes/reports/.gitkeep
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+*~
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Flutter
+frontend/.dart_tool/
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/.packages
+frontend/build/
+frontend/pubspec.lock
+
+# Temporary files
+*.tmp
+*.temp

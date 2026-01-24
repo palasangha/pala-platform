@@ -1,0 +1,11 @@
+{
+    "name": "Feedback System - Global Vipassana Pagoda",
+    "short_name": "Feedback",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#ffffff",
+    "theme_color": "#3498db",
+    "description": "Feedback collection system for Global Vipassana Pagoda departments",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false
+}

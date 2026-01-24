@@ -62,16 +62,17 @@ class PaddleOCRProvider:
             from paddleocr import PaddleOCR, LayoutDetection
             
             logger.info("Loading PaddleOCR models...")
-            self.ocr = PaddleOCR(
-                lang=lang,
-                use_gpu=use_gpu,
-                show_log=False
-            )
+            # Use simple initialization - newer API
+            self.ocr = PaddleOCR(lang=lang)
             logger.info("✓ PaddleOCR text model loaded")
             
             logger.info("Loading Layout Detection model...")
-            self.layout_engine = LayoutDetection()
-            logger.info("✓ Layout Detection model loaded")
+            try:
+                self.layout_engine = LayoutDetection()
+                logger.info("✓ Layout Detection model loaded")
+            except:
+                logger.warning("Layout Detection not available, will skip layout analysis")
+                self.layout_engine = None
             
             self.lang = lang
             self.use_gpu = use_gpu
