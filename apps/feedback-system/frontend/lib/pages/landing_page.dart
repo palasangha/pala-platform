@@ -52,99 +52,136 @@ class _LandingPageState extends State<LandingPage> {
           ),
         ),
         child: SafeArea(
-          child: Column(
-            children: [
-              // Header
-              Padding(
-                padding: const EdgeInsets.all(24.0),
-                child: Column(
-                  children: [
-                    const SizedBox(height: 20),
-                    Text(
-                      'Global Vipassana Pagoda',
-                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            color: Theme.of(context).colorScheme.primary,
-                          ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Feedback System',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            color: Colors.grey[700],
-                          ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'We value your feedback. Please select your department to share your experience.',
-                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                            color: Colors.grey[600],
-                          ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                ),
-              ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final screenWidth = constraints.maxWidth;
+              final screenHeight = constraints.maxHeight;
 
-              // Department Grid
-              Expanded(
-                child: isLoading
-                    ? const Center(child: CircularProgressIndicator())
-                    : errorMessage != null
-                        ? Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.error_outline,
-                                  size: 64,
-                                  color: Colors.red[300],
-                                ),
-                                const SizedBox(height: 16),
-                                Text(
-                                  'Failed to load departments',
-                                  style: Theme.of(context).textTheme.titleLarge,
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  errorMessage!,
-                                  style: TextStyle(color: Colors.grey[600]),
-                                  textAlign: TextAlign.center,
-                                ),
-                                const SizedBox(height: 24),
-                                ElevatedButton.icon(
-                                  onPressed: () {
-                                    setState(() {
-                                      isLoading = true;
-                                      errorMessage = null;
-                                    });
-                                    _loadDepartments();
-                                  },
-                                  icon: const Icon(Icons.refresh),
-                                  label: const Text('Retry'),
-                                ),
-                              ],
-                            ),
-                          )
-                        : LayoutBuilder(
-                            builder: (context, constraints) {
-                              // Responsive grid
-                              int crossAxisCount = 1;
-                              if (constraints.maxWidth > 1200) {
-                                crossAxisCount = 3;
-                              } else if (constraints.maxWidth > 800) {
-                                crossAxisCount = 2;
-                              }
+              // Determine grid columns based on width
+              int crossAxisCount = 1;
+              if (screenWidth > 1200) {
+                crossAxisCount = 3;
+              } else if (screenWidth > 800) {
+                crossAxisCount = 2;
+              }
 
-                              return GridView.builder(
-                                padding: const EdgeInsets.all(24),
+              // Calculate header height (compact)
+              final headerHeight = screenWidth > 600 ? 120.0 : 100.0;
+
+              // Calculate available height for grid
+              final gridHeight = screenHeight - headerHeight;
+
+              // Calculate number of rows needed
+              final itemCount = departments.length;
+              final rowCount = (itemCount / crossAxisCount).ceil();
+
+              // Calculate item height to fit perfectly
+              final spacing = 12.0;
+              final padding = 16.0;
+              final availableGridHeight = gridHeight - (padding * 2);
+              final totalSpacing = spacing * (rowCount - 1);
+              final itemHeight = (availableGridHeight - totalSpacing) / rowCount;
+
+              // Calculate aspect ratio
+              final itemWidth = (screenWidth - (padding * 2) - (spacing * (crossAxisCount - 1))) / crossAxisCount;
+              final childAspectRatio = itemWidth / itemHeight;
+
+              return Column(
+                children: [
+                  // Compact Header
+                  SizedBox(
+                    height: headerHeight,
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: screenWidth > 600 ? 24.0 : 16.0,
+                        vertical: 8.0,
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            'Global Vipassana Pagoda',
+                            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  color: Theme.of(context).colorScheme.primary,
+                                  fontSize: screenWidth > 600 ? 28 : 24,
+                                ),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Feedback System',
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  color: Colors.grey[700],
+                                  fontSize: screenWidth > 600 ? 18 : 16,
+                                ),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Please select your department',
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                  color: Colors.grey[600],
+                                  fontSize: screenWidth > 600 ? 14 : 12,
+                                ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  // Department Grid (fits perfectly)
+                  Expanded(
+                    child: isLoading
+                        ? const Center(child: CircularProgressIndicator())
+                        : errorMessage != null
+                            ? Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(24.0),
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.error_outline,
+                                        size: 48,
+                                        color: Colors.red[300],
+                                      ),
+                                      const SizedBox(height: 12),
+                                      Text(
+                                        'Failed to load departments',
+                                        style: Theme.of(context).textTheme.titleMedium,
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        errorMessage!,
+                                        style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                      const SizedBox(height: 16),
+                                      ElevatedButton.icon(
+                                        onPressed: () {
+                                          setState(() {
+                                            isLoading = true;
+                                            errorMessage = null;
+                                          });
+                                          _loadDepartments();
+                                        },
+                                        icon: const Icon(Icons.refresh, size: 18),
+                                        label: const Text('Retry'),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              )
+                            : GridView.builder(
+                                physics: const NeverScrollableScrollPhysics(),
+                                padding: EdgeInsets.all(padding),
                                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                                   crossAxisCount: crossAxisCount,
-                                  crossAxisSpacing: 16,
-                                  mainAxisSpacing: 16,
-                                  childAspectRatio: 1.5,
+                                  crossAxisSpacing: spacing,
+                                  mainAxisSpacing: spacing,
+                                  childAspectRatio: childAspectRatio.clamp(0.8, 2.5),
                                 ),
                                 itemCount: departments.length,
                                 itemBuilder: (context, index) {
@@ -157,26 +194,14 @@ class _LandingPageState extends State<LandingPage> {
                                     onTap: () {
                                       context.go('/feedback/${dept['code']}');
                                     },
+                                    isCompact: screenWidth < 600 || screenHeight < 600,
                                   );
                                 },
-                              );
-                            },
-                          ),
-              ),
-
-              // Admin Link
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: TextButton.icon(
-                  onPressed: () => context.go('/admin'),
-                  icon: const Icon(Icons.admin_panel_settings),
-                  label: const Text('Admin Login'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: Colors.grey[600],
+                              ),
                   ),
-                ),
-              ),
-            ],
+                ],
+              );
+            },
           ),
         ),
       ),
@@ -190,6 +215,7 @@ class _DepartmentCard extends StatelessWidget {
   final String description;
   final bool isActive;
   final VoidCallback onTap;
+  final bool isCompact;
 
   const _DepartmentCard({
     required this.name,
@@ -197,16 +223,19 @@ class _DepartmentCard extends StatelessWidget {
     required this.description,
     required this.isActive,
     required this.onTap,
+    this.isCompact = false,
   });
 
   IconData _getIconForDepartment(String code) {
     switch (code) {
       case 'global_pagoda':
         return Icons.temple_buddhist;
+      case 'shop':
       case 'souvenir_store':
         return Icons.store;
       case 'dpvc':
         return Icons.self_improvement;
+      case 'dhamma_lane':
       case 'dhammalaya':
         return Icons.local_library;
       case 'food_court':
@@ -218,13 +247,16 @@ class _DepartmentCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final iconSize = isCompact ? 32.0 : 40.0;
+    final padding = isCompact ? 12.0 : 16.0;
+
     return Card(
       elevation: isActive ? 4 : 2,
       child: InkWell(
         onTap: isActive ? onTap : null,
         borderRadius: BorderRadius.circular(12),
         child: Container(
-          padding: const EdgeInsets.all(24),
+          padding: EdgeInsets.all(padding),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
             gradient: isActive
@@ -241,40 +273,54 @@ class _DepartmentCard extends StatelessWidget {
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
                 _getIconForDepartment(code),
-                size: 48,
+                size: iconSize,
                 color: isActive
                     ? Theme.of(context).colorScheme.primary
                     : Colors.grey[500],
               ),
-              const SizedBox(height: 16),
-              Text(
-                name,
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: isActive ? null : Colors.grey[600],
-                    ),
-                textAlign: TextAlign.center,
-              ),
-              if (description.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
-                  description,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: isActive ? Colors.grey[700] : Colors.grey[500],
+              SizedBox(height: isCompact ? 8 : 12),
+              Flexible(
+                child: Text(
+                  name,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: isActive ? null : Colors.grey[600],
+                        fontSize: isCompact ? 14 : 16,
                       ),
                   textAlign: TextAlign.center,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
+              ),
+              if (description.isNotEmpty && !isCompact) ...[
+                const SizedBox(height: 4),
+                Flexible(
+                  child: Text(
+                    description,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: isActive ? Colors.grey[700] : Colors.grey[500],
+                          fontSize: 11,
+                        ),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
               ],
               if (!isActive) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: 4),
                 Chip(
-                  label: const Text('Inactive'),
+                  label: Text(
+                    'Inactive',
+                    style: TextStyle(fontSize: isCompact ? 10 : 12),
+                  ),
                   backgroundColor: Colors.grey[400],
+                  padding: EdgeInsets.zero,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
               ],
             ],
