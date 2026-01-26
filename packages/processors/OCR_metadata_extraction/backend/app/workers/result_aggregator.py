@@ -13,15 +13,13 @@ from app.models.bulk_job import BulkJob
 
 logger = logging.getLogger(__name__)
 
-# Import enrichment coordinator if available
+# Import inline enrichment service
 try:
-    import sys
-    sys.path.insert(0, '/app/enrichment_service')
-    from coordinator.enrichment_coordinator import trigger_enrichment_after_ocr
+    from app.services.inline_enrichment_service import get_inline_enrichment_service
     ENRICHMENT_AVAILABLE = True
 except ImportError:
     ENRICHMENT_AVAILABLE = False
-    logger.warning("Enrichment service not available")
+    logger.warning("Inline enrichment service not available")
 
 
 class ResultAggregator:
@@ -194,7 +192,45 @@ class ResultAggregator:
             # Create individual JSON files for each result (for compatibility with threading mode)
             individual_json_files = self._create_individual_json_files(output_dir, results)
 
-            # Create ZIP archive with main reports and individual JSON files
+            # Trigger inline enrichment BEFORE ZIP creation so enriched data is available
+            if ENRICHMENT_AVAILABLE and os.getenv('ENRICHMENT_ENABLED', 'true').lower() == 'true':
+                try:
+                    logger.info(f"[ENRICHMENT] Step 1: Starting inline enrichment for OCR job {job_id}")
+                    logger.info(f"[ENRICHMENT] Step 1: Total OCR results to enrich: {len(results)}")
+                    logger.info(f"[ENRICHMENT] Step 1: ENRICHMENT_AVAILABLE={ENRICHMENT_AVAILABLE}, ENRICHMENT_ENABLED={os.getenv('ENRICHMENT_ENABLED')}")
+                    
+                    # Initialize inline enrichment service
+                    logger.info(f"[ENRICHMENT] Step 2: Initializing enrichment service")
+                    enrichment_service = get_inline_enrichment_service()
+                    logger.info(f"[ENRICHMENT] Step 2: Service initialized: {enrichment_service}")
+                    
+                    # Process enrichment synchronously
+                    logger.info(f"[ENRICHMENT] Step 3: Calling enrich_ocr_results with timeout=900s")
+                    enrichment_output = enrichment_service.enrich_ocr_results(results, timeout=900)
+                    logger.info(f"[ENRICHMENT] Step 3: Enrichment completed, output keys: {list(enrichment_output.keys())}")
+                    
+                    enriched_results = enrichment_output.get('enriched_results', {})
+                    enrichment_stats = enrichment_output.get('statistics', {})
+                    logger.info(f"[ENRICHMENT] Step 4: Extracted enriched_results count: {len(enriched_results)}")
+                    logger.info(f"[ENRICHMENT] Step 4: Enrichment stats: {enrichment_stats}")
+                    
+                    logger.info(f"[ENRICHMENT] Step 5: Enrichment completed for job {job_id}: "
+                    f"{enrichment_stats.get('successful', 0)} successful, "
+                    f"{enrichment_stats.get('failed', 0)} failed")
+                    
+                    # Save enriched results to MongoDB for ZIP inclusion
+                    if enriched_results:
+                        logger.info(f"[ENRICHMENT] Step 6: Saving {len(enriched_results)} enriched documents to MongoDB")
+                        self._save_enriched_results_to_db(job_id, enriched_results, enrichment_stats)
+                        logger.info(f"[ENRICHMENT] Step 6: Enriched documents saved successfully")
+                    else:
+                        logger.warning(f"[ENRICHMENT] Step 6: No enriched results to save (enriched_results is empty)")
+                    
+                except Exception as enrich_error:
+                    logger.error(f"[ENRICHMENT] ERROR: Enrichment failed: {enrich_error}", exc_info=True)
+                    # Don't fail the entire job if enrichment fails - it's optional
+
+            # Create ZIP archive with main reports, individual JSON files, AND enrichment data
             zip_file = self._create_zip_archive(output_dir, job_id, export_files, individual_json_files)
             export_files['zip'] = zip_file
 
@@ -239,31 +275,6 @@ class ResultAggregator:
             BulkJob.mark_as_completed(self.mongo, job_id, final_results)
 
             logger.info(f"Job {job_id} aggregation completed successfully")
-
-            # Trigger enrichment pipeline if available and enabled
-            if ENRICHMENT_AVAILABLE and os.getenv('ENRICHMENT_ENABLED', 'true').lower() == 'true':
-                try:
-                    collection_id = job.get('collection_id', 'auto')
-                    collection_metadata = {
-                        'collection_id': collection_id,
-                        'collection_name': job.get('collection_name', 'Unknown'),
-                        'archive_name': job.get('archive_name', 'Unknown'),
-                        'total_documents': len(results)
-                    }
-
-                    enrichment_job_id = trigger_enrichment_after_ocr(
-                        ocr_job_id=job_id,
-                        collection_id=collection_id,
-                        collection_metadata=collection_metadata
-                    )
-
-                    if enrichment_job_id:
-                        logger.info(f"Triggered enrichment job {enrichment_job_id} for OCR job {job_id}")
-                    else:
-                        logger.warning(f"Failed to trigger enrichment for OCR job {job_id}")
-
-                except Exception as enrich_error:
-                    logger.error(f"Error triggering enrichment: {enrich_error}", exc_info=True)
 
         except Exception as e:
             logger.error(f"Failed to aggregate results for job {job_id}: {e}", exc_info=True)
@@ -504,7 +515,9 @@ class ResultAggregator:
     def _create_individual_json_files(self, output_dir, results):
         """Create individual JSON file for each processed result"""
         individual_json_folder = os.path.join(output_dir, 'individual_files')
+        raw_outputs_folder = os.path.join(output_dir, 'raw_model_outputs')
         os.makedirs(individual_json_folder, exist_ok=True)
+        os.makedirs(raw_outputs_folder, exist_ok=True)
 
         individual_json_files = []
         try:
@@ -524,6 +537,25 @@ class ResultAggregator:
                 individual_json_files.append(json_filepath)
                 logger.debug(f"Created individual JSON: {json_filename}")
 
+                # Create raw outputs file if raw_llm_response exists
+                raw_llm_response = result.get('raw_llm_response', '')
+                if raw_llm_response:
+                    raw_json_filename = f"{base_name}_raw_ocr.json"
+                    raw_json_filepath = os.path.join(raw_outputs_folder, raw_json_filename)
+
+                    raw_data = {
+                        'file': original_filename,
+                        'raw_llm_response': raw_llm_response,
+                        'processed_at': result.get('processed_at', ''),
+                        'provider': result.get('provider', 'unknown')
+                    }
+
+                    with open(raw_json_filepath, 'w', encoding='utf-8') as f:
+                        json.dump(raw_data, f, indent=2, ensure_ascii=False)
+
+                    individual_json_files.append(raw_json_filepath)
+                    logger.debug(f"Created raw OCR output: {raw_json_filename}")
+
             logger.info(f"Created {len(individual_json_files)} individual JSON files")
         except Exception as e:
             logger.error(f"Error creating individual JSON files: {str(e)}")
@@ -533,24 +565,47 @@ class ResultAggregator:
     def _create_zip_archive(self, output_dir, job_id, export_files, individual_json_files=None):
         """Create ZIP archive containing all reports, individual JSON files, and enrichment results"""
         zip_file = os.path.join(output_dir, f'{job_id}_bulk_ocr_results.zip')
+        
+        logger.info(f"[ZIP] Step 8: Starting ZIP creation for job {job_id}")
+        logger.info(f"[ZIP] Step 8: ZIP file path: {zip_file}")
 
         try:
+            logger.info(f"[ZIP] Step 9: Opening ZipFile for writing")
             with zipfile.ZipFile(zip_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                logger.info(f"[ZIP] Step 9a: Adding main report files")
+                
                 # Add main report files
+                added_count = 0
                 for format_type, file_path in export_files.items():
                     if format_type != 'zip' and file_path and os.path.exists(file_path):
                         arcname = os.path.basename(file_path)
                         zipf.write(file_path, arcname)
-                        logger.debug(f"Added to zip: {arcname}")
+                        added_count += 1
+                        logger.debug(f"[ZIP] Step 9a: Added to zip: {arcname}")
+                
+                logger.info(f"[ZIP] Step 9b: Added {added_count} report files to ZIP")
 
                 # Add individual JSON files in a subfolder
                 if individual_json_files:
+                    logger.info(f"[ZIP] Step 9c: Adding {len(individual_json_files)} individual JSON files")
+                    ind_count = 0
                     for json_file in individual_json_files:
                         if os.path.exists(json_file):
-                            # Store in 'individual_files/' folder within zip
-                            arcname = os.path.join('individual_files', os.path.basename(json_file))
+                            # Determine which subfolder this file belongs to
+                            parent_folder = os.path.basename(os.path.dirname(json_file))
+                            if parent_folder == 'raw_model_outputs':
+                                arcname = os.path.join('raw_model_outputs', os.path.basename(json_file))
+                            else:
+                                arcname = os.path.join('individual_files', os.path.basename(json_file))
                             zipf.write(json_file, arcname=arcname)
-                            logger.debug(f"Added to zip: {arcname}")
+                            ind_count += 1
+                            logger.debug(f"[ZIP] Step 9c: Added to zip: {arcname}")
+                    
+                    logger.info(f"[ZIP] Step 9d: Added {ind_count} individual JSON files to ZIP")
+                else:
+                    logger.info(f"[ZIP] Step 9c: No individual JSON files provided")
+                
+                logger.info(f"[ZIP] Step 9e: Now calling _add_enrichment_results_to_zip")
 
                 # Add enrichment results if available
                 enrichment_count = self._add_enrichment_results_to_zip(zipf, job_id)
@@ -589,25 +644,69 @@ class ResultAggregator:
             Count of enriched documents added
         """
         try:
+            logger.info(f"[ZIP-ENRICHMENT] Step 10: Starting to add enrichment results for job {ocr_job_id}")
+            
             # Find enrichment job(s) for this OCR job
+            logger.info(f"[ZIP-ENRICHMENT] Step 10a: Querying enrichment_jobs collection")
             enrichment_jobs = list(self.mongo.db.enrichment_jobs.find({
                 'ocr_job_id': ocr_job_id,
                 'status': {'$in': ['completed', 'published', 'in_progress']}
             }))
             
+            logger.info(f"[ZIP-ENRICHMENT] Step 10a: Found {len(enrichment_jobs)} enrichment jobs")
+            
             if not enrichment_jobs:
-                logger.debug(f"No enrichment jobs found for OCR job {ocr_job_id}")
-                return 0
+                logger.info(f"[ZIP-ENRICHMENT] Step 10b: No enrichment jobs found, trying direct enriched_documents query")
+                
+                # Try direct query for inline enrichment
+                enriched_docs = list(self.mongo.db.enriched_documents.find({'ocr_job_id': ocr_job_id}))
+                logger.info(f"[ZIP-ENRICHMENT] Step 10b: Direct query for enriched_documents returned {len(enriched_docs)} documents")
+                
+                if enriched_docs:
+                    logger.info(f"[ZIP-ENRICHMENT] Step 10c: Processing {len(enriched_docs)} enriched documents for ZIP")
+                    enrichment_count = 0
+                    
+                    for doc in enriched_docs:
+                        try:
+                            filename = doc.get('filename', 'unknown')
+                            base_name = os.path.splitext(filename)[0]
+                            logger.info(f"[ZIP-ENRICHMENT] Step 10d: Adding enriched doc - filename: {filename}, base_name: {base_name}")
+
+                            # Create enriched JSON
+                            enriched_json = {
+                                'filename': filename,
+                                'enriched_data': doc.get('enriched_data', {}),
+                                'enrichment_stats': doc.get('enrichment_stats', {}),
+                                'created_at': str(doc.get('created_at', '')),
+                                'updated_at': str(doc.get('updated_at', ''))
+                            }
+
+                            # Add to ZIP
+                            arcname = os.path.join('enriched_results', f'{base_name}_enriched.json')
+                            zipf.writestr(arcname, json.dumps(enriched_json, indent=2, ensure_ascii=False, default=str))
+                            enrichment_count += 1
+                            logger.info(f"[ZIP-ENRICHMENT] Step 10e: Added to ZIP: {arcname}")
+                            
+                        except Exception as e:
+                            logger.error(f"[ZIP-ENRICHMENT] ERROR adding doc to ZIP: {e}", exc_info=True)
+                            continue
+                    
+                    logger.info(f"[ZIP-ENRICHMENT] Step 10f: Successfully added {enrichment_count} enriched documents to ZIP")
+                    return enrichment_count
+                else:
+                    logger.warning(f"[ZIP-ENRICHMENT] Step 10b: No enriched documents found for ocr_job_id={ocr_job_id}")
+                    return 0
             
             enrichment_count = 0
             
             # For each enrichment job, fetch enriched documents
+            logger.info(f"[ZIP-ENRICHMENT] Step 11: Processing {len(enrichment_jobs)} enrichment jobs (NSQ-based)")
             for enrichment_job in enrichment_jobs:
                 enrichment_job_id = enrichment_job['_id']
                 
-                # Fetch enriched documents for this job
+                # Fetch enriched documents for this job (from inline enrichment service)
                 enriched_docs = list(self.mongo.db.enriched_documents.find({
-                    'enrichment_job_id': enrichment_job_id
+                    'ocr_job_id': ocr_job_id
                 }))
                 
                 if not enriched_docs:
@@ -620,32 +719,24 @@ class ResultAggregator:
                 # Add individual enriched documents as JSON
                 for doc in enriched_docs:
                     try:
-                        # Get document filename from OCR data
-                        doc_id = doc.get('document_id', doc.get('_id', f'doc_{enrichment_count}'))
-                        ocr_data = doc.get('ocr_data', {})
-                        original_file = ocr_data.get('file', 'unknown')
-                        base_name = os.path.splitext(original_file)[0]
-                        
-                        # Create enriched JSON with combined OCR + enrichment data
+                        # Get filename from saved document (from inline enrichment)
+                        filename = doc.get('filename', 'unknown')
+                        base_name = os.path.splitext(filename)[0]
+
+                        # Create enriched JSON with inline enrichment data
                         enriched_json = {
-                            'document_id': doc_id,
-                            'enrichment_job_id': enrichment_job_id,
-                            'ocr_data': ocr_data,
+                            'filename': filename,
                             'enriched_data': doc.get('enriched_data', {}),
-                            'quality_metrics': doc.get('quality_metrics', {}),
-                            'enrichment_metadata': doc.get('enrichment_metadata', {}),
-                            'review_status': doc.get('review_status', 'not_required'),
-                            'review_notes': doc.get('review_notes', ''),
+                            'enrichment_stats': doc.get('enrichment_stats', {}),
                             'created_at': str(doc.get('created_at', '')),
                             'updated_at': str(doc.get('updated_at', ''))
                         }
-                        
+
                         # Add to ZIP
                         arcname = os.path.join(enrichment_folder, f'{base_name}_enriched.json')
                         zipf.writestr(arcname, json.dumps(enriched_json, indent=2, ensure_ascii=False, default=str))
                         enrichment_count += 1
                         logger.debug(f"Added enriched document to ZIP: {arcname}")
-                        
                     except Exception as e:
                         logger.error(f"Error adding enriched document to ZIP: {e}")
                         continue
@@ -676,3 +767,142 @@ class ResultAggregator:
         except Exception as e:
             logger.error(f"Error adding enrichment results to ZIP: {e}")
             return 0
+
+    def regenerate_zip_with_enrichment(self, ocr_job_id: str) -> bool:
+        """
+        Regenerate ZIP file to include enrichment results
+        
+        Args:
+            ocr_job_id: OCR job ID
+            
+        Returns:
+            True if regenerated successfully
+        """
+        try:
+            # Find the job
+            job = self.mongo.db.bulk_jobs.find_one({'job_id': ocr_job_id})
+            if not job:
+                logger.error(f"OCR job {ocr_job_id} not found")
+                return False
+            
+            # Get existing ZIP path
+            results = job.get('results', {})
+            report_files = results.get('report_files', {})
+            old_zip_path = report_files.get('zip', '')
+            
+            if not old_zip_path or not os.path.exists(old_zip_path):
+                logger.error(f"Original ZIP not found: {old_zip_path}")
+                return False
+            
+            logger.info(f"Regenerating ZIP with enrichment data: {old_zip_path}")
+            
+            # Create new ZIP in temp location
+            output_dir = os.path.dirname(old_zip_path)
+            temp_zip = os.path.join(output_dir, f'{ocr_job_id}_temp.zip')
+            
+            # Copy original ZIP and add enrichment data
+            with zipfile.ZipFile(old_zip_path, 'r') as zip_in:
+                with zipfile.ZipFile(temp_zip, 'w', zipfile.ZIP_DEFLATED) as zip_out:
+                    # Copy all existing files
+                    for item in zip_in.namelist():
+                        data = zip_in.read(item)
+                        zip_out.writestr(item, data)
+                    
+                    # Add enrichment results
+                    enrichment_count = self._add_enrichment_results_to_zip(zip_out, ocr_job_id)
+                    logger.info(f"Added {enrichment_count} enriched documents to ZIP")
+            
+            # Replace old ZIP with new one
+            if os.path.exists(temp_zip):
+                os.replace(temp_zip, old_zip_path)
+                logger.info(f"✓ ZIP regenerated successfully: {old_zip_path}")
+                return True
+            else:
+                logger.error("Temp ZIP was not created")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error regenerating ZIP: {e}", exc_info=True)
+            return False
+
+    def _save_enriched_results(self, ocr_job_id: str, enriched_results: dict, enrichment_stats: dict):
+        """
+        Save enriched results to MongoDB for ZIP inclusion
+        
+        Args:
+            ocr_job_id: OCR job ID
+            enriched_results: Dictionary of enriched document data
+            enrichment_stats: Enrichment processing statistics
+        """
+        try:
+            # Create enrichment documents for storage
+            for filename, enriched_data in enriched_results.items():
+                enriched_doc = {
+                    'ocr_job_id': ocr_job_id,
+                    'filename': filename,
+                    'enriched_data': enriched_data,
+                    'enrichment_stats': enrichment_stats,
+                    'created_at': datetime.utcnow(),
+                    'updated_at': datetime.utcnow()
+                }
+                
+                # Store in MongoDB collection for ZIP regeneration
+                self.mongo.db.enriched_documents.insert_one(enriched_doc)
+                logger.debug(f"Saved enriched document: {filename}")
+            
+            logger.info(f"Saved {len(enriched_results)} enriched documents to MongoDB for job {ocr_job_id}")
+            
+            # Regenerate ZIP with enrichment data
+            logger.info(f"Regenerating ZIP with enrichment data for job {ocr_job_id}")
+            self.regenerate_zip_with_enrichment(ocr_job_id)
+            
+        except Exception as e:
+            logger.error(f"Error saving enriched results: {e}", exc_info=True)
+
+    def _save_enriched_results_to_db(self, ocr_job_id: str, enriched_results: dict, enrichment_stats: dict):
+        """
+        Save enriched results to MongoDB for ZIP inclusion (without regenerating)
+        
+        Args:
+            ocr_job_id: OCR job ID
+            enriched_results: Dictionary of enriched document data
+            enrichment_stats: Enrichment processing statistics
+        """
+        try:
+            logger.info(f"[ENRICHMENT-DB] Step 6a: Starting to save enriched results, count={len(enriched_results)}")
+            logger.info(f"[ENRICHMENT-DB] Step 6a: OCR Job ID: {ocr_job_id}")
+            logger.info(f"[ENRICHMENT-DB] Step 6a: Enrichment Stats: {enrichment_stats}")
+            
+            # Create enrichment documents for storage
+            saved_count = 0
+            for filename, enriched_data in enriched_results.items():
+                logger.info(f"[ENRICHMENT-DB] Step 6b: Processing file: {filename}")
+                logger.info(f"[ENRICHMENT-DB] Step 6b: Enriched data keys: {list(enriched_data.keys()) if isinstance(enriched_data, dict) else 'NOT A DICT'}")
+                
+                enriched_doc = {
+                    'ocr_job_id': ocr_job_id,
+                    'filename': filename,
+                    'enriched_data': enriched_data,
+                    'enrichment_stats': enrichment_stats,
+                    'created_at': datetime.utcnow(),
+                    'updated_at': datetime.utcnow()
+                }
+                
+                logger.info(f"[ENRICHMENT-DB] Step 6c: Document to insert: {list(enriched_doc.keys())}")
+                
+                # Store in MongoDB collection for ZIP inclusion
+                result = self.mongo.db.enriched_documents.insert_one(enriched_doc)
+                saved_count += 1
+                logger.info(f"[ENRICHMENT-DB] Step 6d: Saved document with ID: {result.inserted_id}, filename: {filename}")
+            
+            logger.info(f"[ENRICHMENT-DB] Step 6e: All saved! Total documents inserted: {saved_count}/{len(enriched_results)}")
+            logger.info(f"[ENRICHMENT-DB] Step 7: Verifying MongoDB save by querying collection")
+            
+            # Verify save by querying
+            verify_docs = list(self.mongo.db.enriched_documents.find({'ocr_job_id': ocr_job_id}))
+            logger.info(f"[ENRICHMENT-DB] Step 7: Verification query returned {len(verify_docs)} documents")
+            for doc in verify_docs:
+                logger.info(f"[ENRICHMENT-DB] Step 7: Found doc - filename: {doc.get('filename')}, id: {doc.get('_id')}")
+            
+        except Exception as e:
+            logger.error(f"[ENRICHMENT-DB] ERROR: Failed to save enriched results to DB: {e}", exc_info=True)

@@ -100,7 +100,8 @@ services:
     - ./backend/app:/app/app
     - ./backend/run.py:/app/run.py
     - ./backend/uploads:/app/uploads
-    - ./backend/google-credentials.json:/app/google-credentials.json:ro
+    - ./data:/app/data
+    - ./backend/google-credentials.json:/app/google-credentials/:ro
     - ./enrichment_service:/app/enrichment_service
     - bhushanji_shared:/app/Bhushanji:ro
     - /mnt/sda1/mango1_home/newsletters:/app/newsletters:ro
@@ -400,7 +401,7 @@ services:
     - ./backend/app:/app/app
     - ./backend/run_aggregator.py:/app/run_aggregator.py
     - ./backend/uploads:/app/uploads
-    - ./backend/google-credentials.json:/app/google-credentials.json:ro
+    - ./backend/google-credentials.json:/app/google-credentials/:ro
     - ./enrichment_service:/app/enrichment_service
     - ${GVPOCR_PATH}:/app/Bhushanji:ro
     - /mnt/sda1/mango1_home/newsletters:/app/newsletters:ro
@@ -435,7 +436,8 @@ services:
     - LMSTUDIO_TIMEOUT=${LMSTUDIO_TIMEOUT:-600}
     volumes:
     - ./backend/uploads:/app/uploads
-    - ./backend/google-credentials.json:/app/google-credentials.json:ro
+    - ./data:/app/data
+    - ./backend/google-credentials.json:/app/google-credentials/:ro
     - bhushanji_shared:/app/Bhushanji:ro
     - /mnt/sda1/mango1_home/newsletters:/app/newsletters:ro
     depends_on:
@@ -456,7 +458,7 @@ services:
     ports:
     - 1234:1234
     environment:
-    - DISPLAY=:2
+    - DISPLAY=:1
     - QT_X11_NO_MITSHM=1
     - QT_DEBUG_PLUGINS=1
     - LIBGL_ALWAYS_INDIRECT=1
@@ -632,7 +634,7 @@ services:
     environment:
     - PORT=3003
     - JWT_SECRET=${MCP_JWT_SECRET:-mcp_development_secret}
-    - LOG_LEVEL=info
+    - LOG_LEVEL=debug
     - ENVIRONMENT=production
     networks:
     - gvpocr-network
@@ -657,7 +659,7 @@ services:
     - OLLAMA_HOST=http://ollama:11434
     - OLLAMA_MODEL=llama3.2
     - AGENT_ID=metadata-agent
-    - LOG_LEVEL=info
+    - LOG_LEVEL=debug
     networks:
     - gvpocr-network
     depends_on:
@@ -682,9 +684,8 @@ services:
     - MCP_SERVER_URL=ws://mcp-server:3003
     - OLLAMA_HOST=http://ollama:11434
     - OLLAMA_MODEL=llama3.2
-    - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     - AGENT_ID=entity-agent
-    - LOG_LEVEL=info
+    - LOG_LEVEL=debug
     networks:
     - gvpocr-network
     depends_on:
@@ -708,9 +709,9 @@ services:
     environment:
     - MCP_SERVER_URL=ws://mcp-server:3003
     - OLLAMA_HOST=http://ollama:11434
-    - OLLAMA_MODEL=mixtral
+    - OLLAMA_MODEL=llama3.2
     - AGENT_ID=structure-agent
-    - LOG_LEVEL=info
+    - LOG_LEVEL=debug
     networks:
     - gvpocr-network
     depends_on:
@@ -734,10 +735,9 @@ services:
     environment:
     - MCP_SERVER_URL=ws://mcp-server:3003
     - OLLAMA_HOST=http://ollama:11434
-    - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-    - CLAUDE_MODEL=claude-sonnet-4
+    - OLLAMA_MODEL=llama3.2
     - AGENT_ID=content-agent
-    - LOG_LEVEL=info
+    - LOG_LEVEL=debug
     networks:
     - gvpocr-network
     depends_on:
@@ -760,10 +760,10 @@ services:
     restart: unless-stopped
     environment:
     - MCP_SERVER_URL=ws://mcp-server:3003
-    - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-    - CLAUDE_MODEL=claude-opus-4-5
+    - OLLAMA_HOST=http://ollama:11434
+    - OLLAMA_MODEL=llama3.2
     - AGENT_ID=context-agent
-    - LOG_LEVEL=info
+    - LOG_LEVEL=debug
     networks:
     - gvpocr-network
     depends_on:
@@ -809,9 +809,9 @@ services:
     healthcheck:
       test:
       - CMD
-      - pgrep
-      - -f
-      - enrichment_coordinator
+      - python
+      - -c
+      - "import pymongo; pymongo.MongoClient('mongodb://mongodb:27017/gvpocr').server_info(); print('healthy')"
       interval: 30s
       timeout: 10s
       retries: 3
@@ -841,6 +841,7 @@ services:
     - NSQD_ADDRESS=nsqd:4150
     - NSQLOOKUPD_ADDRESSES=nsqlookupd:4161
     - MCP_SERVER_URL=ws://mcp-server:3003
+    - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     - ENRICHMENT_ENABLED=true
     - MAX_CLAUDE_TOKENS_PER_DOC=50000
     - COST_ALERT_THRESHOLD_USD=100.00
@@ -852,6 +853,28 @@ services:
     - nsqd
     deploy:
       replicas: 2
+  zip-regeneration-worker:
+    image: ocr_metadata_extraction-backend
+    container_name: gvpocr-zip-worker
+    command: python -u /app/app/workers/zip_regeneration_worker.py
+    restart: unless-stopped
+    volumes:
+    - ./backend:/app
+    - ./enrichment_service:/app/enrichment_service
+    environment:
+    - FLASK_ENV=production
+    - LOG_LEVEL=INFO
+    - MONGO_URI=mongodb://mongodb:27017/gvpocr
+    - MONGO_USERNAME=${MONGO_ROOT_USERNAME:-gvpocr_admin}
+    - MONGO_PASSWORD=${MONGO_ROOT_PASSWORD}
+    - NSQD_HOST=nsqd
+    - NSQD_PORT=4150
+    - NSQLOOKUPD_ADDRESSES=nsqlookupd:4161
+    networks:
+    - gvpocr-network
+    depends_on:
+    - mongodb
+    - nsqd
   # review-api:
   #   image: ocr_metadata_extraction-enrichment-api
   #   container_name: gvpocr-review-api
