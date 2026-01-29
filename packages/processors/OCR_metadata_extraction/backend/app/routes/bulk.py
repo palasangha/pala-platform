@@ -1090,9 +1090,13 @@ def get_job_history(current_user_id):
         limit = min(int(request.args.get('limit', 20)), 100)
         skip = (page - 1) * limit
 
+        logger.info(f"[JOB_HISTORY] Fetching jobs for user: {current_user_id}, page: {page}, limit: {limit}")
+
         # Get jobs from database
         jobs = BulkJob.find_by_user(mongo, current_user_id, skip=skip, limit=limit)
         total_count = BulkJob.count_by_user(mongo, current_user_id)
+
+        logger.info(f"[JOB_HISTORY] Found {len(jobs)} jobs out of {total_count} total for user {current_user_id}")
 
         # Convert to dictionaries
         jobs_list = [BulkJob.to_dict(job) for job in jobs]

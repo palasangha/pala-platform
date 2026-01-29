@@ -67,6 +67,7 @@ const BulkJobHistory: React.FC = () => {
       }
 
       const token = localStorage.getItem('access_token');
+      console.log(`[BulkJobHistory] Fetching jobs - page: ${pageNum}, token exists: ${!!token}`);
 
       const response = await fetch(`/api/bulk/history?page=${pageNum}&limit=${limit}`, {
         headers: {
@@ -75,16 +76,20 @@ const BulkJobHistory: React.FC = () => {
       });
 
       if (!response.ok) {
+        console.error(`[BulkJobHistory] API error: ${response.status} ${response.statusText}`);
         throw new Error('Failed to fetch job history');
       }
 
       const data = await response.json();
+      console.log(`[BulkJobHistory] Fetched ${data.jobs.length} jobs`);
       setJobs(data.jobs);
       setTotalPages(data.pagination.pages);
       setLastRefresh(new Date());
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load job history');
+      const errorMsg = err instanceof Error ? err.message : 'Failed to load job history';
+      console.error(`[BulkJobHistory] Error: ${errorMsg}`);
+      setError(errorMsg);
     } finally {
       if (!silent) {
         setIsLoading(false);
@@ -503,6 +508,14 @@ const BulkJobHistory: React.FC = () => {
   };
 
   useEffect(() => {
+    // Check if user has valid auth token
+    const token = localStorage.getItem('access_token');
+    if (!token) {
+      setJobs([]);
+      setIsLoading(false);
+      return;
+    }
+
     fetchJobHistory(page);
     checkArchipelagoConnection();
 
