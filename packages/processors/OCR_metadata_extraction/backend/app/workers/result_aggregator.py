@@ -192,43 +192,69 @@ class ResultAggregator:
             # Create individual JSON files for each result (for compatibility with threading mode)
             individual_json_files = self._create_individual_json_files(output_dir, results)
 
-            # Trigger inline enrichment BEFORE ZIP creation so enriched data is available
-            if ENRICHMENT_AVAILABLE and os.getenv('ENRICHMENT_ENABLED', 'true').lower() == 'true':
+            # Check if results already have per-file enrichment (from BulkProcessor)
+            pre_enriched_results = {}
+            unenriched_results = []
+            
+            for result in results:
+                if 'enrichment' in result:
+                    pre_enriched_results[result.get('file')] = result.get('enrichment')
+                else:
+                    unenriched_results.append(result)
+            
+            if pre_enriched_results:
+                logger.info(f"[ENRICHMENT] Found {len(pre_enriched_results)} pre-enriched results from file processing")
+            
+            # Trigger inline enrichment for unenriched results (BEFORE ZIP creation)
+            if unenriched_results and ENRICHMENT_AVAILABLE and os.getenv('ENRICHMENT_ENABLED', 'true').lower() == 'true':
                 try:
-                    logger.info(f"[ENRICHMENT] Step 1: Starting inline enrichment for OCR job {job_id}")
-                    logger.info(f"[ENRICHMENT] Step 1: Total OCR results to enrich: {len(results)}")
-                    logger.info(f"[ENRICHMENT] Step 1: ENRICHMENT_AVAILABLE={ENRICHMENT_AVAILABLE}, ENRICHMENT_ENABLED={os.getenv('ENRICHMENT_ENABLED')}")
+                    logger.info(f"[ENRICHMENT] Step 1: Starting batch enrichment for remaining {len(unenriched_results)} OCR results")
                     
                     # Initialize inline enrichment service
                     logger.info(f"[ENRICHMENT] Step 2: Initializing enrichment service")
                     enrichment_service = get_inline_enrichment_service()
                     logger.info(f"[ENRICHMENT] Step 2: Service initialized: {enrichment_service}")
                     
-                    # Process enrichment synchronously
-                    logger.info(f"[ENRICHMENT] Step 3: Calling enrich_ocr_results with timeout=900s")
-                    enrichment_output = enrichment_service.enrich_ocr_results(results, timeout=900)
+                    # Process enrichment synchronously for unenriched results only
+                    logger.info(f"[ENRICHMENT] Step 3: Calling enrich_ocr_results with timeout=900s for {len(unenriched_results)} results")
+                    enrichment_output = enrichment_service.enrich_ocr_results(unenriched_results, timeout=900)
                     logger.info(f"[ENRICHMENT] Step 3: Enrichment completed, output keys: {list(enrichment_output.keys())}")
                     
-                    enriched_results = enrichment_output.get('enriched_results', {})
+                    batch_enriched_results = enrichment_output.get('enriched_results', {})
                     enrichment_stats = enrichment_output.get('statistics', {})
-                    logger.info(f"[ENRICHMENT] Step 4: Extracted enriched_results count: {len(enriched_results)}")
+                    logger.info(f"[ENRICHMENT] Step 4: Extracted enriched_results count: {len(batch_enriched_results)}")
                     logger.info(f"[ENRICHMENT] Step 4: Enrichment stats: {enrichment_stats}")
                     
-                    logger.info(f"[ENRICHMENT] Step 5: Enrichment completed for job {job_id}: "
+                    logger.info(f"[ENRICHMENT] Step 5: Batch enrichment completed for job {job_id}: "
                     f"{enrichment_stats.get('successful', 0)} successful, "
                     f"{enrichment_stats.get('failed', 0)} failed")
                     
-                    # Save enriched results to MongoDB for ZIP inclusion
-                    if enriched_results:
-                        logger.info(f"[ENRICHMENT] Step 6: Saving {len(enriched_results)} enriched documents to MongoDB")
-                        self._save_enriched_results_to_db(job_id, enriched_results, enrichment_stats)
+                    # Merge batch-enriched results with pre-enriched ones
+                    all_enriched_results = {**pre_enriched_results, **batch_enriched_results}
+                    
+                    # Save all enriched results to MongoDB for ZIP inclusion
+                    if all_enriched_results:
+                        logger.info(f"[ENRICHMENT] Step 6: Saving {len(all_enriched_results)} enriched documents to MongoDB (pre-enriched: {len(pre_enriched_results)}, batch-enriched: {len(batch_enriched_results)})")
+                        self._save_enriched_results_to_db(job_id, all_enriched_results, enrichment_stats)
                         logger.info(f"[ENRICHMENT] Step 6: Enriched documents saved successfully")
                     else:
-                        logger.warning(f"[ENRICHMENT] Step 6: No enriched results to save (enriched_results is empty)")
+                        logger.warning(f"[ENRICHMENT] Step 6: No enriched results to save (all_enriched_results is empty)")
                     
                 except Exception as enrich_error:
-                    logger.error(f"[ENRICHMENT] ERROR: Enrichment failed: {enrich_error}", exc_info=True)
-                    # Don't fail the entire job if enrichment fails - it's optional
+                    logger.error(f"[ENRICHMENT] ERROR: Batch enrichment failed: {enrich_error}", exc_info=True)
+                    # Still use pre-enriched results even if batch enrichment fails
+                    if pre_enriched_results:
+                        logger.info(f"[ENRICHMENT] Using {len(pre_enriched_results)} pre-enriched results from file processing")
+                        try:
+                            self._save_enriched_results_to_db(job_id, pre_enriched_results, {})
+                        except Exception as save_error:
+                            logger.error(f"[ENRICHMENT] Failed to save pre-enriched results: {save_error}")
+            elif pre_enriched_results and not unenriched_results:
+                logger.info(f"[ENRICHMENT] All results already enriched during file processing, skipping batch enrichment")
+                try:
+                    self._save_enriched_results_to_db(job_id, pre_enriched_results, {})
+                except Exception as save_error:
+                    logger.error(f"[ENRICHMENT] Failed to save pre-enriched results: {save_error}")
 
             # Create ZIP archive with main reports, individual JSON files, AND enrichment data
             zip_file = self._create_zip_archive(output_dir, job_id, export_files, individual_json_files)

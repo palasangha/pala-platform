@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
-import { Download, BarChart3, FolderOpen, Zap, LogOut, History, Activity, Server } from 'lucide-react';
+import { Download, BarChart3, FolderOpen, Zap, LogOut, History, Activity, Server, Pause, Play } from 'lucide-react';
 import BulkJobHistory from './BulkJobHistory';
 
 interface ProcessingResult {
@@ -28,6 +28,7 @@ interface BulkProcessingState {
   exportFormats: string[];
   prompt: string;
   isProcessing: boolean;
+  isPaused: boolean;
   isCreatingProject: boolean;
   progress: {
     current: number;
@@ -189,6 +190,7 @@ const BulkOCRProcessor: React.FC = () => {
     exportFormats: ['json', 'csv', 'text'],
     prompt: '',
     isProcessing: false,
+    isPaused: false,
     isCreatingProject: false,
     progress: {
       current: 0,
@@ -706,6 +708,44 @@ const BulkOCRProcessor: React.FC = () => {
       // but we can also stop it manually here if we want.
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to cancel job');
+    }
+  };
+
+  const handlePauseProcessing = async () => {
+    if (!currentJobId) return;
+
+    try {
+      const response = await authenticatedFetch(`/api/bulk/pause/${currentJobId}`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to pause job');
+      }
+
+      setState({ ...state, isPaused: true });
+      alert('Job paused successfully');
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to pause job');
+    }
+  };
+
+  const handleResumeProcessing = async () => {
+    if (!currentJobId) return;
+
+    try {
+      const response = await authenticatedFetch(`/api/bulk/resume/${currentJobId}`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to resume job');
+      }
+
+      setState({ ...state, isPaused: false });
+      alert('Job resumed successfully');
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to resume job');
     }
   };
 
@@ -1246,7 +1286,7 @@ const BulkOCRProcessor: React.FC = () => {
                   ({state.progress.percentage}%)
                 </p>
 
-                {/* Cancel Button */}
+                {/* Control Buttons */}
                 <div className="mt-4 flex gap-2">
                   <button
                     onClick={handleDownloadSampleResults}
@@ -1255,6 +1295,23 @@ const BulkOCRProcessor: React.FC = () => {
                     <Download className="w-5 h-5" />
                     Download Samples ({state.progress.current})
                   </button>
+                  {!state.isPaused ? (
+                    <button
+                      onClick={handlePauseProcessing}
+                      className="flex-1 px-4 py-2 bg-yellow-500 text-white font-semibold rounded-lg hover:bg-yellow-600 transition-colors flex items-center justify-center gap-2"
+                    >
+                      <Pause className="w-5 h-5" />
+                      Pause Job
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleResumeProcessing}
+                      className="flex-1 px-4 py-2 bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600 transition-colors flex items-center justify-center gap-2"
+                    >
+                      <Play className="w-5 h-5" />
+                      Resume Job
+                    </button>
+                  )}
                   <button
                     onClick={handleCancelProcessing}
                     className="flex-1 px-4 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition-colors flex items-center justify-center gap-2"
@@ -1264,7 +1321,7 @@ const BulkOCRProcessor: React.FC = () => {
                   </button>
                 </div>
                 <p className="text-xs text-gray-500 mt-2 text-center">
-                  💡 Download steps so far to verify quality, or cancel if something is wrong
+                  💡 Pause to verify quality, Resume to continue, or Cancel to stop processing
                 </p>
               </div>
             )}

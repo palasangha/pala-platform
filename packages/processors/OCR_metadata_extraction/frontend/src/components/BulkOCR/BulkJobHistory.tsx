@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Download, Eye, Trash2, Clock, CheckCircle, XCircle, RefreshCw, ChevronLeft, ChevronRight, FileText, AlertCircle, TrendingUp, Languages, FolderOpen, Calendar, Upload, FolderPlus } from 'lucide-react';
+import { Download, Eye, Trash2, Clock, CheckCircle, XCircle, RefreshCw, ChevronLeft, ChevronRight, FileText, AlertCircle, TrendingUp, Languages, FolderOpen, Calendar, Upload, FolderPlus, Pause, Play, Square } from 'lucide-react';
 
 interface BulkJob {
   id: string;
@@ -9,7 +9,7 @@ interface BulkJob {
   languages: string[];
   handwriting: boolean;
   recursive: boolean;
-  status: 'processing' | 'completed' | 'error';
+  status: 'processing' | 'paused' | 'completed' | 'error';
   progress: {
     current: number;
     total: number;
@@ -140,6 +140,50 @@ const BulkJobHistory: React.FC = () => {
       fetchJobHistory(page);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to cancel job');
+    }
+  };
+
+  const handlePauseJob = async (jobId: string) => {
+    try {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch(`/api/bulk/pause/${jobId}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to pause job');
+      }
+
+      alert('Job paused successfully');
+      // Refresh the list
+      fetchJobHistory(page);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to pause job');
+    }
+  };
+
+  const handleResumeJob = async (jobId: string) => {
+    try {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch(`/api/bulk/resume/${jobId}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to resume job');
+      }
+
+      alert('Job resumed successfully');
+      // Refresh the list
+      fetchJobHistory(page);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to resume job');
     }
   };
 
@@ -431,6 +475,8 @@ const BulkJobHistory: React.FC = () => {
         return <XCircle className="w-5 h-5 text-red-500" />;
       case 'processing':
         return <RefreshCw className="w-5 h-5 text-blue-500 animate-spin" />;
+      case 'paused':
+        return <AlertCircle className="w-5 h-5 text-yellow-500" />;
       case 'cancelled':
         return <XCircle className="w-5 h-5 text-gray-500" />;
       default:
@@ -447,6 +493,8 @@ const BulkJobHistory: React.FC = () => {
         return <span className={`${baseClasses} bg-red-100 text-red-800`}>Failed</span>;
       case 'processing':
         return <span className={`${baseClasses} bg-blue-100 text-blue-800`}>Processing</span>;
+      case 'paused':
+        return <span className={`${baseClasses} bg-yellow-100 text-yellow-800`}>Paused</span>;
       case 'cancelled':
         return <span className={`${baseClasses} bg-gray-100 text-gray-800`}>Cancelled</span>;
       default:
@@ -644,13 +692,40 @@ const BulkJobHistory: React.FC = () => {
                       </>
                     )}
                     {job.status === 'processing' && (
-                      <button
-                        onClick={() => handleCancelJob(job.job_id)}
-                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                        title="Cancel Job"
-                      >
-                        <XCircle className="w-5 h-5" />
-                      </button>
+                      <>
+                        <button
+                          onClick={() => handlePauseJob(job.job_id)}
+                          className="p-2 text-yellow-600 hover:bg-yellow-50 rounded-lg transition-colors"
+                          title="Pause Job"
+                        >
+                          <Pause className="w-5 h-5" />
+                        </button>
+                        <button
+                          onClick={() => handleCancelJob(job.job_id)}
+                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Cancel Job"
+                        >
+                          <Square className="w-5 h-5" />
+                        </button>
+                      </>
+                    )}
+                    {job.status === 'paused' && (
+                      <>
+                        <button
+                          onClick={() => handleResumeJob(job.job_id)}
+                          className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                          title="Resume Job"
+                        >
+                          <Play className="w-5 h-5" />
+                        </button>
+                        <button
+                          onClick={() => handleCancelJob(job.job_id)}
+                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Cancel Job"
+                        >
+                          <Square className="w-5 h-5" />
+                        </button>
+                      </>
                     )}
                     <button
                       onClick={() => handleDeleteJob(job.job_id)}
@@ -854,6 +929,62 @@ const BulkJobHistory: React.FC = () => {
                       >
                         <span className="text-xs text-white font-semibold">{selectedJob.progress.percentage}%</span>
                       </div>
+                    </div>
+                    <div className="flex gap-2 mt-4">
+                      <button
+                        onClick={() => handlePauseJob(selectedJob.job_id)}
+                        className="flex-1 px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-colors flex items-center justify-center gap-2"
+                      >
+                        <Pause className="w-4 h-4" />
+                        Pause
+                      </button>
+                      <button
+                        onClick={() => handleCancelJob(selectedJob.job_id)}
+                        className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors flex items-center justify-center gap-2"
+                      >
+                        <Square className="w-4 h-4" />
+                        Stop
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Paused Progress */}
+              {selectedJob.status === 'paused' && (
+                <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200 mb-6">
+                  <div className="flex items-center gap-2 mb-3">
+                    <AlertCircle className="w-5 h-5 text-yellow-600" />
+                    <h4 className="font-semibold text-gray-800">Processing Paused</h4>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-700">{selectedJob.progress.filename}</span>
+                      <span className="font-semibold">{selectedJob.progress.current} / {selectedJob.progress.total}</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-3">
+                      <div
+                        className="bg-yellow-600 h-3 rounded-full transition-all duration-300 flex items-center justify-end pr-2"
+                        style={{ width: `${selectedJob.progress.percentage}%` }}
+                      >
+                        <span className="text-xs text-white font-semibold">{selectedJob.progress.percentage}%</span>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 mt-4">
+                      <button
+                        onClick={() => handleResumeJob(selectedJob.job_id)}
+                        className="flex-1 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors flex items-center justify-center gap-2"
+                      >
+                        <Play className="w-4 h-4" />
+                        Resume
+                      </button>
+                      <button
+                        onClick={() => handleCancelJob(selectedJob.job_id)}
+                        className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors flex items-center justify-center gap-2"
+                      >
+                        <Square className="w-4 h-4" />
+                        Cancel
+                      </button>
                     </div>
                   </div>
                 </div>

@@ -13,11 +13,20 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock, Event
 import time
+import asyncio
 
 from .ocr_service import OCRService
 from .pdf_service import PDFService
 
 logger = logging.getLogger(__name__)
+
+# Optional enrichment import
+try:
+    from .inline_enrichment_service import get_inline_enrichment_service
+    ENRICHMENT_AVAILABLE = True
+except ImportError:
+    ENRICHMENT_AVAILABLE = False
+    logger.warning("Inline enrichment service not available")
 
 
 class BulkProcessor:
@@ -29,7 +38,7 @@ class BulkProcessor:
         '.pdf'  # Also support PDFs
     }
     
-    def __init__(self, ocr_service: OCRService, progress_callback: Optional[Callable] = None, max_workers: int = 4, job_id: str = None):
+    def __init__(self, ocr_service: OCRService, progress_callback: Optional[Callable] = None, max_workers: int = 4, job_id: str = None, enable_enrichment: bool = True):
         """
         Initialize bulk processor
 
@@ -38,6 +47,7 @@ class BulkProcessor:
             progress_callback: Optional callback function(current, total, filename) for progress tracking
             max_workers: Maximum number of parallel workers (default: 4)
             job_id: Unique job identifier for pause/resume functionality
+            enable_enrichment: Whether to enrich each file after OCR (default: True)
         """
         self.ocr_service = ocr_service
         self.progress_callback = progress_callback
@@ -45,7 +55,20 @@ class BulkProcessor:
         self.job_id = job_id
         self.results = []
         self.errors = []
+        self.enriched_results = {}  # Store enrichment data per file
         self._lock = Lock()  # Thread-safe access to results and errors
+
+        # Enrichment settings
+        self.enable_enrichment = enable_enrichment and ENRICHMENT_AVAILABLE
+        self.enrichment_service = None
+        if self.enable_enrichment:
+            try:
+                self.enrichment_service = get_inline_enrichment_service()
+                logger.info("Per-file enrichment enabled")
+            except Exception as e:
+                logger.warning(f"Failed to initialize enrichment service: {e}")
+                self.enable_enrichment = False
+
         self._processed_count = 0  # Track processed files for progress
 
         # Pause/Resume control
@@ -107,6 +130,43 @@ class BulkProcessor:
             logger.info(f"Job {self.job_id} paused, waiting for resume...")
             self._pause_event.wait()  # Block until resume() is called
             logger.info(f"Job {self.job_id} resumed")
+
+    async def _enrich_ocr_result(self, ocr_result: Dict, filename: str) -> Optional[Dict]:
+        """
+        Enrich a single OCR result with metadata
+        
+        Args:
+            ocr_result: Result from OCR service
+            filename: Original filename
+            
+        Returns:
+            Enriched metadata or None if enrichment fails
+        """
+        if not self.enable_enrichment or not self.enrichment_service:
+            return None
+        
+        try:
+            ocr_text = ocr_result.get('text', '')
+            if not ocr_text or len(ocr_text.strip()) < 10:
+                logger.debug(f"Skipping enrichment for {filename}: insufficient text")
+                return None
+            
+            logger.info(f"Enriching {filename} (text length: {len(ocr_text)})")
+            
+            # Call enrichment service asynchronously
+            enrichment_output = await self.enrichment_service.enrich_document(ocr_text, filename)
+            
+            if enrichment_output and enrichment_output.get('success'):
+                enriched_data = enrichment_output.get('result', {})
+                logger.debug(f"Enrichment successful for {filename}: {len(enriched_data)} fields")
+                return enriched_data
+            else:
+                logger.warning(f"Enrichment failed for {filename}: {enrichment_output}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error enriching {filename}: {str(e)}")
+            return None
 
     def scan_folder(self, folder_path: str, recursive: bool = True) -> List[str]:
         """
@@ -195,7 +255,7 @@ class BulkProcessor:
                 with self._lock:
                     self._consecutive_errors = 0
                     if image_path in self._retry_count:
-                        del self._retry_count[image_path/Bhushanji]
+                        del self._retry_count[image_path]
 
                 # Prepare result with metadata
                 result = {
@@ -227,6 +287,24 @@ class BulkProcessor:
                 # Add page count for PDFs
                 if ocr_result.get('pages_processed'):
                     result['pages_processed'] = ocr_result.get('pages_processed')
+
+                # Enrich the result after OCR completes (if enabled)
+                if self.enable_enrichment:
+                    logger.info(f"Starting enrichment for {filename}")
+                    try:
+                        # Run enrichment in event loop
+                        enriched_data = asyncio.run(self._enrich_ocr_result(ocr_result, filename))
+                        if enriched_data:
+                            result['enrichment'] = enriched_data
+                            result['enriched_at'] = datetime.now().isoformat()
+                            with self._lock:
+                                self.enriched_results[filename] = enriched_data
+                            logger.info(f"Enrichment completed for {filename}")
+                        else:
+                            logger.debug(f"No enrichment data generated for {filename}")
+                    except Exception as enrich_error:
+                        logger.warning(f"Enrichment failed for {filename}, continuing with OCR only: {enrich_error}")
+                        # Don't fail the entire job if enrichment fails
 
                 return result, None
 
@@ -692,3 +770,85 @@ class BulkProcessor:
             'csv': self.export_to_csv(base_path),
             'text': self.export_to_text(base_path)
         }
+
+    def generate_sample_results(self, output_folder: str, sample_size: Optional[int] = None) -> str:
+        """
+        Generate a zip file with sample results from processed files
+        
+        Args:
+            output_folder: Folder where to save the zip file
+            sample_size: Number of results to include (default: all)
+            
+        Returns:
+            Path to the generated zip file
+            
+        Raises:
+            ValueError: If no results have been processed yet
+        """
+        import zipfile
+        import shutil
+        
+        if not self.results:
+            raise ValueError("No results available yet. Please wait for processing to start.")
+        
+        # Determine sample size
+        if sample_size is None or sample_size <= 0:
+            sample_size = len(self.results)
+        else:
+            sample_size = min(sample_size, len(self.results))
+        
+        # Create temp folder for samples
+        if not os.path.isdir(output_folder):
+            os.makedirs(output_folder, exist_ok=True)
+        
+        samples_folder = os.path.join(output_folder, 'samples')
+        os.makedirs(samples_folder, exist_ok=True)
+        
+        # Get sample results
+        sample_results = self.results[:sample_size]
+        
+        # Create JSON summary
+        summary = {
+            'total_results': len(self.results),
+            'sample_size': sample_size,
+            'timestamp': str(datetime.now()),
+            'results': sample_results
+        }
+        
+        summary_path = os.path.join(samples_folder, 'summary.json')
+        with open(summary_path, 'w', encoding='utf-8') as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
+        
+        # Create CSV with samples
+        if sample_results:
+            csv_path = os.path.join(samples_folder, 'samples.csv')
+            with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=['file', 'confidence', 'text_length', 'language'])
+                writer.writeheader()
+                for result in sample_results:
+                    writer.writerow({
+                        'file': result.get('file', ''),
+                        'confidence': result.get('confidence', 0),
+                        'text_length': len(result.get('text', '')),
+                        'language': result.get('language', '')
+                    })
+        
+        # Create error report if there are errors
+        if self.errors:
+            errors_path = os.path.join(samples_folder, 'errors.json')
+            with open(errors_path, 'w', encoding='utf-8') as f:
+                json.dump({'errors': self.errors}, f, indent=2, ensure_ascii=False)
+        
+        # Create zip file
+        zip_path = os.path.join(output_folder, f'sample_results_{self.job_id or "export"}.zip')
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, dirs, files in os.walk(samples_folder):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, samples_folder)
+                    zipf.write(file_path, arcname)
+        
+        # Cleanup samples folder
+        shutil.rmtree(samples_folder)
+        
+        return zip_path
