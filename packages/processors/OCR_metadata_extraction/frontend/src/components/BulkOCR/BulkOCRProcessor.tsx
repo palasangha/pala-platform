@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
-import { Download, BarChart3, FolderOpen, Zap, LogOut, History, Activity, Server, Pause, Play } from 'lucide-react';
+import { Download, BarChart3, FolderOpen, Zap, LogOut, History, Activity, Server, Pause, Play, RefreshCw, Square } from 'lucide-react';
 import BulkJobHistory from './BulkJobHistory';
 
 interface ProcessingResult {
@@ -180,6 +180,7 @@ const BulkOCRProcessor: React.FC = () => {
   };
 
   const [showHistory, setShowHistory] = useState(false);
+  const [showCurrentJob, setShowCurrentJob] = useState(true);
 
   const [state, setState] = useState<BulkProcessingState>({
     folderPath: '',
@@ -1042,15 +1043,19 @@ const BulkOCRProcessor: React.FC = () => {
             <button
               onClick={() => {
                 setShowHistory(false);
+                setShowCurrentJob(true);
                 navigate('/bulk');
               }}
-              className={`flex items-center gap-2 px-4 py-2 text-gray-700 font-medium rounded-md hover:bg-gray-100 ${!showHistory ? 'border-b-2 border-blue-600' : ''}`}
+              className={`flex items-center gap-2 px-4 py-2 text-gray-700 font-medium rounded-md hover:bg-gray-100 ${showCurrentJob && !showHistory ? 'border-b-2 border-blue-600' : ''}`}
             >
               <Zap className="w-4 h-4" />
               Bulk Processing
             </button>
             <button
-              onClick={() => setShowHistory(true)}
+              onClick={() => {
+                setShowHistory(true);
+                setShowCurrentJob(false);
+              }}
               className={`flex items-center gap-2 px-4 py-2 text-gray-700 font-medium rounded-md hover:bg-gray-100 ${showHistory ? 'border-b-2 border-blue-600' : ''}`}
             >
               <History className="w-4 h-4" />
@@ -1078,6 +1083,130 @@ const BulkOCRProcessor: React.FC = () => {
       <main className="max-w-7xl mx-auto p-6">
         {showHistory ? (
           <BulkJobHistory />
+        ) : showCurrentJob && state.isProcessing ? (
+          // Current Job Details Section
+          <div className="space-y-6">
+            {/* Current Job Status Card */}
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg shadow-lg p-6 border-l-4 border-blue-600">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-3xl font-bold text-gray-800 flex items-center gap-2">
+                  <Zap className="w-8 h-8 text-blue-600" />
+                  Current Job In Progress
+                </h2>
+                <span className="px-4 py-2 bg-blue-600 text-white rounded-full text-sm font-semibold flex items-center gap-2">
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Processing
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                {/* Job Information */}
+                <div className="bg-white rounded-lg p-4 border border-gray-200">
+                  <h3 className="text-lg font-semibold text-gray-800 mb-4">Job Details</h3>
+                  <div className="space-y-3 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Job ID:</span>
+                      <span className="font-mono text-gray-800">{currentJobId?.slice(0, 12)}...</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Folder Path:</span>
+                      <span className="text-gray-800 truncate">{state.folderPath}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">OCR Provider:</span>
+                      <span className="text-gray-800 capitalize">{state.provider}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Languages:</span>
+                      <span className="text-gray-800">{state.languages.join(', ')}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Processing Mode:</span>
+                      <span className="text-gray-800">{state.isPaused ? '⏸ Paused' : '▶ Running'}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Progress Statistics */}
+                <div className="bg-white rounded-lg p-4 border border-gray-200">
+                  <h3 className="text-lg font-semibold text-gray-800 mb-4">Progress</h3>
+                  <div className="space-y-4">
+                    <div>
+                      <div className="flex justify-between text-sm mb-2">
+                        <span className="text-gray-600">Files Processed</span>
+                        <span className="font-semibold text-gray-800">{state.progress.current} / {state.progress.total}</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-3">
+                        <div
+                          className="bg-blue-600 h-3 rounded-full transition-all duration-300"
+                          style={{ width: `${state.progress.percentage}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-600">Completion:</span>
+                      <span className="font-semibold text-blue-600">{state.progress.percentage}%</span>
+                    </div>
+                    <div className="text-xs text-gray-500 mt-2">
+                      Current: {state.progress.filename}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-3 flex-wrap">
+                <button
+                  onClick={handleDownloadSampleResults}
+                  disabled={state.progress.current === 0}
+                  className="px-4 py-2 bg-orange-500 text-white font-semibold rounded-lg hover:bg-orange-600 disabled:bg-gray-400 transition-colors flex items-center gap-2"
+                >
+                  <Download className="w-4 h-4" />
+                  Download Samples ({state.progress.current})
+                </button>
+                {!state.isPaused ? (
+                  <button
+                    onClick={handlePauseProcessing}
+                    className="px-4 py-2 bg-yellow-500 text-white font-semibold rounded-lg hover:bg-yellow-600 transition-colors flex items-center gap-2"
+                  >
+                    <Pause className="w-4 h-4" />
+                    Pause Job
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleResumeProcessing}
+                    className="px-4 py-2 bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600 transition-colors flex items-center gap-2"
+                  >
+                    <Play className="w-4 h-4" />
+                    Resume Job
+                  </button>
+                )}
+                <button
+                  onClick={handleCancelProcessing}
+                  className="px-4 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition-colors flex items-center gap-2"
+                >
+                  <Square className="w-4 h-4" />
+                  Cancel Job
+                </button>
+                <button
+                  onClick={handleCreateProject}
+                  disabled={state.isCreatingProject || state.progress.current === 0}
+                  className="px-4 py-2 bg-purple-500 text-white font-semibold rounded-lg hover:bg-purple-600 disabled:bg-gray-400 transition-colors flex items-center gap-2"
+                >
+                  <FolderOpen className="w-4 h-4" />
+                  Create Project from Current Job
+                </button>
+              </div>
+            </div>
+
+            {/* Go back to configuration */}
+            <button
+              onClick={() => setShowCurrentJob(false)}
+              className="w-full py-3 border-2 border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              Back to Configuration
+            </button>
+          </div>
         ) : (
           <div className="bg-white rounded-lg shadow-lg p-6">
             <h2 className="text-3xl font-bold text-gray-800 mb-6 flex items-center gap-2">
