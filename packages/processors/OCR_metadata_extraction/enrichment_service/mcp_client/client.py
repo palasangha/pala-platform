@@ -58,6 +58,7 @@ class MCPClient:
         self.is_connected = False
         self.pending_requests: Dict[str, asyncio.Future] = {}
         self.pending_requests_lock = Lock()  # Thread-safe access to pending_requests
+        self.listener_task: Optional[asyncio.Task] = None  # Track active listener
 
         # Request ID tracking to prevent collisions
         self.request_id_counter = 0
@@ -111,8 +112,9 @@ class MCPClient:
 
                 logger.info("Connected to MCP server")
 
-                # Start message listening loop
-                asyncio.create_task(self._listen())
+                # Start message listening loop only if not already running
+                if self.listener_task is None or self.listener_task.done():
+                    self.listener_task = asyncio.create_task(self._listen())
                 return
 
             except Exception as e:
@@ -128,6 +130,15 @@ class MCPClient:
 
     async def disconnect(self) -> None:
         """Disconnect from MCP server and clean up pending requests"""
+        # Cancel the listener task
+        if self.listener_task and not self.listener_task.done():
+            self.listener_task.cancel()
+            try:
+                await self.listener_task
+            except asyncio.CancelledError:
+                pass
+            self.listener_task = None
+
         if self.connection:
             try:
                 await self.connection.close()
@@ -179,7 +190,7 @@ class MCPClient:
             "jsonrpc": "2.0",
             "method": "tools/invoke",
             "params": {
-                "name": tool_name,
+                "toolName": tool_name,
                 "arguments": arguments
             },
             "id": request_id
@@ -202,16 +213,18 @@ class MCPClient:
             await self.connection.send(message)
             self.stats["bytes_sent"] += len(message)
 
-            logger.debug(f"Invoked tool: agent={agent_id}, tool={tool_name}, request_id={request_id}")
+            logger.info(f"🔄 MCP request sent: agent={agent_id}, tool={tool_name}, request_id={request_id}, timeout={timeout}s")
 
             # Wait for response with timeout
             result = await asyncio.wait_for(response_future, timeout=timeout)
 
+            logger.info(f"✓ MCP response received: agent={agent_id}, tool={tool_name}, request_id={request_id}")
             self.stats["invocations_success"] += 1
             return result
 
         except asyncio.TimeoutError:
             self.stats["invocations_failed"] += 1
+            logger.error(f"⏱️ MCP TIMEOUT: agent={agent_id}, tool={tool_name} after {timeout}s - model may be overloaded or stuck")
             # Mark future as cancelled to prevent dangling references
             if not response_future.done():
                 response_future.cancel()
@@ -281,6 +294,7 @@ class MCPClient:
         except Exception as e:
             logger.error(f"Connection lost: {e}", exc_info=True)
             self.is_connected = False
+            self.listener_task = None  # Mark task as done
 
             # Attempt to reconnect
             if self.retry_attempt < self.max_retries:

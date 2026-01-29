@@ -10,6 +10,9 @@
 import { EventEmitter } from 'events';
 import { ToolRegistry, ToolInvocationRequest, ToolInvocationResult } from './tool-registry';
 import { ensureTraceId } from '../tracing';
+import { Logger } from '../logging/logger';
+
+const logger = new Logger({ name: 'ToolInvoker', level: (process.env.LOG_LEVEL as any) || 'info' });
 
 /**
  * Agent connection interface (implemented by transport layer)
@@ -48,10 +51,13 @@ export class ToolInvoker extends EventEmitter {
     const { toolName, arguments: args, requestId } = request;
     const traceId = ensureTraceId(request.traceId);
 
+    logger.info('🔍 TRACE: ToolInvoker.invoke() called', { toolName, hasArgs: !!args, requestId, traceId });
+
     // Validate tool exists
     const tool = this.registry.getTool(toolName);
     if (!tool) {
       const error = `Tool '${toolName}' not found`;
+      logger.error('❌ TRACE: Tool not found in registry', { toolName });
       this.emit('invocation:failed', { ...request, traceId }, new Error(error));
       return {
         success: false,
@@ -62,11 +68,15 @@ export class ToolInvoker extends EventEmitter {
       };
     }
 
+    logger.info('✓ TRACE: Tool found in registry', { toolName, agentId: tool.agentId });
+
     // Validate arguments against schema
     try {
       this.registry.validateArguments(toolName, args);
+      logger.debug('✓ TRACE: Arguments validated', { toolName });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
+      logger.error('❌ TRACE: Argument validation failed', { toolName, error });
       this.emit('invocation:failed', { ...request, traceId }, err as Error);
       return {
         success: false,
@@ -81,6 +91,7 @@ export class ToolInvoker extends EventEmitter {
     const connection = this.getAgentConnection(tool.agentId);
     if (!connection) {
       const error = `Agent '${tool.agentId}' not connected`;
+      logger.error('❌ TRACE: Agent connection not found', { agentId: tool.agentId, toolName });
       this.emit('invocation:failed', { ...request, traceId }, new Error(error));
       return {
         success: false,
@@ -91,11 +102,20 @@ export class ToolInvoker extends EventEmitter {
       };
     }
 
+    logger.info('✓ TRACE: Agent connection found', { agentId: tool.agentId, toolName });
+
     // Emit started event
     this.emit('invocation:started', { ...request, traceId });
 
     // Generate invocation ID
     const invocationId = requestId || this.generateInvocationId();
+
+    logger.info('🔍 TRACE: Sending invocation to agent', { 
+      agentId: tool.agentId, 
+      toolName, 
+      invocationId,
+      timeout: this.invocationTimeout
+    });
 
     try {
       // Send invocation request to agent
@@ -106,6 +126,8 @@ export class ToolInvoker extends EventEmitter {
         args,
         traceId
       );
+
+      logger.info('✓ TRACE: Tool invocation completed successfully', { toolName, agentId: tool.agentId });
 
       const successResult: ToolInvocationResult = {
         success: true,
@@ -119,6 +141,7 @@ export class ToolInvoker extends EventEmitter {
       return successResult;
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
+      logger.error('❌ TRACE: Tool invocation failed', { toolName, agentId: tool.agentId, error });
       const errorResult: ToolInvocationResult = {
         success: false,
         error,
@@ -143,14 +166,18 @@ export class ToolInvoker extends EventEmitter {
     traceId: string
   ): Promise<any> {
     return new Promise((resolve, reject) => {
+      logger.debug('🔍 TRACE: Setting up invocation promise', { invocationId, toolName, timeout: this.invocationTimeout });
+
       // Set timeout
       const timeout = setTimeout(() => {
+        logger.error('⏱️ TRACE: Invocation timed out', { invocationId, toolName, timeout: this.invocationTimeout });
         this.pendingInvocations.delete(invocationId);
         reject(new Error(`Tool invocation timed out after ${this.invocationTimeout}ms`));
       }, this.invocationTimeout);
 
       // Store resolver
       this.pendingInvocations.set(invocationId, (result) => {
+        logger.debug('✓ TRACE: Invocation response received', { invocationId, toolName, hasError: !!result.error });
         clearTimeout(timeout);
         if (result.error) {
           reject(new Error(result.error.message || result.error));
@@ -158,6 +185,13 @@ export class ToolInvoker extends EventEmitter {
           // JSON-RPC response has result field directly
           resolve(result.result);
         }
+      });
+
+      logger.info('🔍 TRACE: Sending message to agent', { 
+        invocationId, 
+        toolName,
+        argKeys: Object.keys(args),
+        traceId 
       });
 
       // Send message to agent
@@ -172,7 +206,11 @@ export class ToolInvoker extends EventEmitter {
           id: invocationId,
           traceId,
         })
+        .then(() => {
+          logger.debug('✓ TRACE: Message sent to agent successfully', { invocationId, toolName });
+        })
         .catch((err) => {
+          logger.error('❌ TRACE: Failed to send message to agent', { invocationId, toolName, error: err.message });
           clearTimeout(timeout);
           this.pendingInvocations.delete(invocationId);
           reject(err);
@@ -184,13 +222,22 @@ export class ToolInvoker extends EventEmitter {
    * Handle invocation response from agent
    */
   handleInvocationResponse(invocationId: string, response: any): void {
+    logger.info('🔍 TRACE: handleInvocationResponse() called', { 
+      invocationId, 
+      hasPending: this.pendingInvocations.has(invocationId),
+      pendingCount: this.pendingInvocations.size,
+      responseKeys: response ? Object.keys(response) : []
+    });
+
     const resolver = this.pendingInvocations.get(invocationId);
     if (!resolver) {
       // Response for unknown invocation - might be timeout or duplicate
+      logger.warn('⚠️ TRACE: Response for unknown invocation ID', { invocationId });
       return;
     }
 
     this.pendingInvocations.delete(invocationId);
+    logger.debug('✓ TRACE: Resolving invocation promise', { invocationId });
     resolver(response);
   }
 

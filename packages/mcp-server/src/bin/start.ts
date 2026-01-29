@@ -6,9 +6,14 @@
  */
 
 import { MCPServer } from '../index.js';
+import { Logger } from '../logging/logger.js';
 
 const port = parseInt(process.env.PORT || '3000', 10);
 const jwtSecret = process.env.MCP_JWT_SECRET;
+const logLevel = (process.env.LOG_LEVEL || 'info') as 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
+
+// Set global log level
+Logger.setGlobalLevel = logLevel;
 
 const server = new MCPServer({
   port,

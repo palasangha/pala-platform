@@ -1,30 +1,26 @@
 """
-Historical Researcher - Uses Claude Opus to research historical context
+Historical Researcher - Uses Ollama for historical context research
 """
 
 import logging
+import os
+import requests
 from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
 class HistoricalResearcher:
-    """Researches historical context using Claude Opus"""
+    """Researches historical context using Ollama"""
 
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key
-        self.enabled = bool(api_key)
+        # Ollama doesn't need API key, but keep parameter for compatibility
+        self.ollama_host = os.getenv('OLLAMA_HOST', 'http://ollama:11434')
+        self.ollama_model = os.getenv('OLLAMA_MODEL', 'llama3.2')
+        self.enabled = True
 
-        if self.enabled:
-            try:
-                from anthropic import Anthropic
-                self.client = Anthropic(api_key=api_key)
-                logger.info("HistoricalResearcher initialized with Claude Opus")
-            except Exception as e:
-                logger.warning(f"Could not initialize Claude client: {e}")
-                self.enabled = False
-        else:
-            logger.info("HistoricalResearcher running in fallback mode")
+        # Don't test connection at startup - will test on first use
+        logger.info(f"HistoricalResearcher initialized with Ollama ({self.ollama_model})")
 
     async def research(
         self,
@@ -35,9 +31,7 @@ class HistoricalResearcher:
         date: str = ""
     ) -> Dict[str, Any]:
         """
-        Research historical context for document
-
-        Uses Claude Opus for highest quality contextual analysis
+        Research historical context for document using Ollama
         """
         if not text:
             return {"historical_context": "", "confidence": 0.0}
@@ -48,27 +42,34 @@ class HistoricalResearcher:
         try:
             prompt = self._build_research_prompt(text, people, locations, events, date)
 
-            # Use Claude Opus for highest quality
-            response = self.client.messages.create(
-                model="claude-opus-4-20250805",
-                max_tokens=1500,
-                messages=[{
-                    "role": "user",
-                    "content": prompt
-                }]
+            # Use Ollama for context generation
+            response = requests.post(
+                f"{self.ollama_host}/api/generate",
+                json={
+                    "model": self.ollama_model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.7,
+                        "num_predict": 1000
+                    }
+                },
+                timeout=180
             )
+            response.raise_for_status()
 
-            historical_context = response.content[0].text.strip()
+            result = response.json()
+            historical_context = result.get('response', '').strip()
             logger.info(f"Generated historical context: {len(historical_context)} chars")
 
             return {
                 "historical_context": historical_context,
-                "confidence": 0.95,
-                "model": "claude-opus"
+                "confidence": 0.85,
+                "model": f"ollama-{self.ollama_model}"
             }
 
         except Exception as e:
-            logger.error(f"Claude Opus error: {e}")
+            logger.error(f"Ollama error: {e}")
             return self._fallback_research(text, date)
 
     def _build_research_prompt(

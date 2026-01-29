@@ -85,14 +85,14 @@ def download_file():
 def _resolve_file_path(relative_path):
     """
     Resolve relative file path to full absolute path
-    
+
     Handles different path prefixes:
     - Bhushanji/ → /data/Bhushanji/
-    - newsletters/ → /data/newsletters/
-    
+    - newsletters/ → /data/newsletters/06 News Letters_NL/
+
     Args:
         relative_path: Relative path from request
-        
+
     Returns:
         Full absolute path
     """
@@ -100,12 +100,12 @@ def _resolve_file_path(relative_path):
         base_path = os.getenv('GVPOCR_PATH', '/data/Bhushanji')
         relative_part = relative_path.replace('Bhushanji/', '', 1)
         return os.path.join(base_path, relative_part)
-    
+
     elif relative_path.startswith('newsletters/'):
-        base_path = os.getenv('NEWSLETTERS_PATH', '/data/newsletters')
+        base_path = os.getenv('NEWSLETTERS_PATH', '/app/newsletters')
         relative_part = relative_path.replace('newsletters/', '', 1)
         return os.path.join(base_path, relative_part)
-    
+
     else:
         # Default to GVPOCR_PATH
         base_path = os.getenv('GVPOCR_PATH', '/data/Bhushanji')
@@ -115,27 +115,27 @@ def _resolve_file_path(relative_path):
 def _is_path_safe(full_path):
     """
     Security check: ensure path is within allowed base directories
-    
+
     Args:
         full_path: Full absolute path to check
-        
+
     Returns:
         True if path is safe, False otherwise
     """
     # List of allowed base directories
     allowed_bases = [
         os.getenv('GVPOCR_PATH', '/data/Bhushanji'),
-        os.getenv('NEWSLETTERS_PATH', '/data/newsletters'),
+        os.getenv('NEWSLETTERS_PATH', '/app/newsletters'),
         Config.UPLOAD_FOLDER
     ]
-    
+
     # Normalize paths for comparison
     full_path_norm = os.path.normpath(os.path.abspath(full_path))
-    
+
     for base in allowed_bases:
         base_norm = os.path.normpath(os.path.abspath(base))
         # Check if full_path is within this base directory
         if full_path_norm.startswith(base_norm + os.sep) or full_path_norm == base_norm:
             return True
-    
+
     return False

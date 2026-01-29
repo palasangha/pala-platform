@@ -76,15 +76,22 @@ export class ToolRegistry extends EventEmitter {
   private agentTools: Map<string, Set<string>> = new Map();
 
   /**
-   * Register a tool from an agent
+   * Register a tool from an agent (idempotent - allows re-registration by same agent)
    */
   register(tool: ToolDefinition): void {
     // Validate tool definition
     const validated = ToolDefinitionSchema.parse(tool);
 
-    // Check for duplicate tool names
-    if (this.tools.has(validated.name)) {
-      throw new Error(`Tool '${validated.name}' is already registered`);
+    // Check if tool is already registered
+    const existingTool = this.tools.get(validated.name);
+    if (existingTool) {
+      // If same agent is re-registering, update silently (idempotent)
+      if (existingTool.agentId === validated.agentId) {
+        this.tools.set(validated.name, validated);
+        return; // Skip emission, tool already registered
+      }
+      // Different agent trying to register same tool name
+      throw new Error(`Tool '${validated.name}' is already registered by agent '${existingTool.agentId}'`);
     }
 
     // Store tool

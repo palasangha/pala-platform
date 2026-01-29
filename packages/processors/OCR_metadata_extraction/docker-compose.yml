@@ -86,6 +86,7 @@ services:
     - ARCHIPELAGO_USERNAME=${ARCHIPELAGO_USERNAME}
     - ARCHIPELAGO_PASSWORD=${ARCHIPELAGO_PASSWORD}
     - GVPOCR_PATH=/app/Bhushanji
+    - NEWSLETTERS_PATH=/app/newsletters
     - GVPOCR_ROOT=/app
     - CORS_ORIGINS=https://docgenai.com,http://localhost:3000,http://localhost:80,http://ocr.vridhamma.org:3000,https://ocr.vridhamma.org:3000,http://ocr.vridhamma.org:5000,https://ocr.vridhamma.org:5000,https://172.12.0.132:5000,https://172.12.0.132:3000,https://docgenai.com:3000
     - PYTHON_HOST= 0.0.0.0
@@ -104,8 +105,7 @@ services:
     - ./backend/google-credentials.json:/app/google-credentials/:ro
     - ./enrichment_service:/app/enrichment_service
     - bhushanji_shared:/app/Bhushanji:ro
-    - /mnt/sda1/mango1_home/newsletters:/app/newsletters:ro
-    - /mnt/sda1/mango1_home/network_shares/dhamma_for_all:/app/dhamma_for_all:ro
+    - /mnt/sda1/mango1_home/newsletters_local:/app/newsletters:ro
     - ./ssh_keys:/app/ssh_keys:ro
     - ./docker-compose.worker.yml:/app/docker-compose.worker.yml:ro
     - ./worker.Dockerfile:/app/worker.Dockerfile:ro
@@ -425,6 +425,8 @@ services:
     - MONGO_USERNAME=${MONGO_ROOT_USERNAME:-gvpocr_admin}
     - MONGO_PASSWORD=${MONGO_ROOT_PASSWORD}
     - GVPOCR_PATH=/app/Bhushanji
+    - GVPOCR_SERVER_URL=http://backend:5000
+    - NEWSLETTERS_PATH=/app/newsletters
     - OLLAMA_HOST=http://ollama:11434
     - VLLM_HOST=http://vllm:8000
     - LLAMACPP_ENABLED=${LLAMACPP_ENABLED:-true}
@@ -439,7 +441,7 @@ services:
     - ./data:/app/data
     - ./backend/google-credentials.json:/app/google-credentials/:ro
     - bhushanji_shared:/app/Bhushanji:ro
-    - /mnt/sda1/mango1_home/newsletters:/app/newsletters:ro
+    - /mnt/sda1/mango1_home/newsletters_local:/app/newsletters:ro
     depends_on:
     - mongodb
     - nsqd
@@ -458,7 +460,7 @@ services:
     ports:
     - 1234:1234
     environment:
-    - DISPLAY=:1
+    - DISPLAY=${DISPLAY:-:2}
     - QT_X11_NO_MITSHM=1
     - QT_DEBUG_PLUGINS=1
     - LIBGL_ALWAYS_INDIRECT=1

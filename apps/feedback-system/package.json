@@ -1,0 +1,17 @@
+{
+  "name": "feedback-system",
+  "version": "1.0.0",
+  "description": "A **zero-cost, self-hosted, Docker-based feedback management system** for Global Vipassana Pagoda and its departments.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {},
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "@types/node": "^25.0.10"
+  }
+}

@@ -22,8 +22,8 @@ router.get('/', verifyToken, filterDepartmentAccess, async (req, res, next) => {
     const query = {};
 
     // Apply department filter based on role
-    if (req.departmentFilter.code) {
-      query.department_code = req.departmentFilter.code;
+    if (req.departmentFilter.department_code) {
+      query.department_code = req.departmentFilter.department_code;
     } else if (department_code) {
       query.department_code = department_code;
     }

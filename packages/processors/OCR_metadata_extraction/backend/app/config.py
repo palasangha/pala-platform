@@ -121,7 +121,7 @@ class Config:
     # NSQ Configuration for distributed message queue
     USE_NSQ = os.getenv('USE_NSQ', 'false').lower() == 'true'  # Enable NSQ-based bulk processing
     NSQD_ADDRESS = os.getenv('NSQD_ADDRESS', 'nsqd:4150')  # NSQ daemon TCP address
-    NSQLOOKUPD_ADDRESSES = [addr.strip() for addr in os.getenv('NSQLOOKUPD_ADDRESSES', 'nsqlookupd:4161').split(',')]  # NSQ lookupd HTTP addresses
+    NSQLOOKUPD_ADDRESSES = [addr.strip() for addr in os.getenv('NSQLOOKUPD_ADDRESSES', 'localhost:4161').split(',')]  # NSQ lookupd HTTP addresses
 
     # SSHFS Configuration for remote worker file sharing
     SSHFS_ENABLED = os.getenv('SSHFS_ENABLED', 'true').lower() == 'true'

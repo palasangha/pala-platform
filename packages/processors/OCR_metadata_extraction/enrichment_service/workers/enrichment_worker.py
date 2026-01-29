@@ -36,6 +36,22 @@ from enrichment_service.models.enriched_document import EnrichedDocument
 from enrichment_service.review.review_queue import ReviewQueue
 from enrichment_service.coordinator.enrichment_coordinator import EnrichmentCoordinator
 
+# Import AMI parser from context-agent
+import sys
+from pathlib import Path
+context_agent_path = Path(__file__).parent.parent.parent.parent / 'agents' / 'context-agent'
+if context_agent_path.exists():
+    sys.path.insert(0, str(context_agent_path))
+    try:
+        from tools.ami_metadata_parser import AMIMetadataParser
+        AMI_PARSER_AVAILABLE = True
+    except ImportError:
+        AMI_PARSER_AVAILABLE = False
+        AMIMetadataParser = None
+else:
+    AMI_PARSER_AVAILABLE = False
+    AMIMetadataParser = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -72,11 +88,23 @@ class EnrichmentWorker:
             server_url=self.config.get('MCP_SERVER_URL', 'ws://localhost:3000')
         )
 
+        # Initialize AMI parser if available
+        ami_parser = None
+        if AMI_PARSER_AVAILABLE and AMIMetadataParser:
+            try:
+                ami_parser = AMIMetadataParser()
+                logger.info("✓ AMI Metadata Parser initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize AMI parser: {e}")
+        else:
+            logger.info("AMI Metadata Parser not available")
+
         # Initialize components with proper parameters
         self.orchestrator = AgentOrchestrator(
             mcp_client=self.mcp_client,
             schema_path=self.config.get('SCHEMA_PATH'),
-            db=self.db
+            db=self.db,
+            ami_parser=ami_parser
         )
         self.schema_validator = SchemaValidator(self.config['SCHEMA_PATH'])
         self.review_queue = ReviewQueue(self.db) if self.db is not None else None
@@ -187,7 +215,8 @@ class EnrichmentWorker:
                 ocr_data=ocr_data,
                 enriched_data=enrichment_result['enriched_data'],
                 completeness_report=completeness_report,
-                enrichment_job_id=enrichment_job_id
+                enrichment_job_id=enrichment_job_id,
+                raw_agent_responses=enrichment_result.get('raw_agent_responses', {})
             )
 
             if not saved:
@@ -224,6 +253,9 @@ class EnrichmentWorker:
                     'success_count': 1
                 }
             )
+            
+            # Check if job is complete and trigger ZIP regeneration
+            self._check_and_complete_job(enrichment_job_id)
 
             logger.info(f"✓ Task {task_id} completed successfully")
             return True
@@ -244,7 +276,8 @@ class EnrichmentWorker:
         ocr_data: Dict[str, Any],
         enriched_data: Dict[str, Any],
         completeness_report: Dict[str, Any],
-        enrichment_job_id: str
+        enrichment_job_id: str,
+        raw_agent_responses: Dict[str, Any] = None
     ) -> bool:
         """
         Save enriched document to MongoDB
@@ -255,6 +288,7 @@ class EnrichmentWorker:
             enriched_data: Enriched data from agents
             completeness_report: Completeness validation report
             enrichment_job_id: Parent enrichment job ID
+            raw_agent_responses: Raw responses from each agent (for auditing)
 
         Returns:
             True if saved successfully
@@ -268,6 +302,7 @@ class EnrichmentWorker:
                 'enrichment_job_id': enrichment_job_id,
                 'ocr_data': ocr_data,
                 'enriched_data': enriched_data,
+                'raw_agent_responses': raw_agent_responses or {},  # Store raw agent responses
                 'quality_metrics': {
                     'completeness_score': completeness_report['completeness_score'],
                     'missing_fields': completeness_report['missing_fields'],
@@ -317,6 +352,34 @@ class EnrichmentWorker:
             logger.debug(f"Recorded review routing for job {enrichment_job_id}")
         except Exception as e:
             logger.error(f"Error recording review: {e}")
+    
+    def _check_and_complete_job(self, enrichment_job_id: str) -> None:
+        """
+        Check if enrichment job is complete and mark it as such
+        This triggers ZIP regeneration
+        
+        Args:
+            enrichment_job_id: Enrichment job ID to check
+        """
+        try:
+            # Get current job status
+            job = self.coordinator.get_job_status(enrichment_job_id)
+            if not job:
+                logger.error(f"Job {enrichment_job_id} not found")
+                return
+            
+            total_docs = job.get('total_documents', 0)
+            processed = job.get('processed_count', 0)
+            
+            # Check if all documents processed
+            if processed >= total_docs and total_docs > 0:
+                logger.info(f"Job {enrichment_job_id} complete: {processed}/{total_docs} documents processed")
+                self.coordinator.mark_job_completed(enrichment_job_id)
+            else:
+                logger.debug(f"Job {enrichment_job_id} in progress: {processed}/{total_docs} documents")
+                
+        except Exception as e:
+            logger.error(f"Error checking job completion: {e}", exc_info=True)
 
     async def start_consuming(self):
         """
@@ -451,7 +514,7 @@ class EnrichmentWorker:
         try:
             # Run in thread pool to ensure complete isolation from main event loop
             future = self.executor.submit(run_async_task_in_thread)
-            result = future.result(timeout=300)  # 5 minute timeout
+            result = future.result(timeout=900)  # 15 minute timeout (Phase 1: 180s + Phase 2: 480s + Phase 3: 960s worst case)
             return result
         except Exception as e:
             logger.error(f"Error in sync task processing: {e}", exc_info=True)

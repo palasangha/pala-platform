@@ -22,6 +22,7 @@ import AppLayout from '@/components/Layout/AppLayout';
 import { AdminDashboard } from '@/components/RBAC/AdminDashboard';
 import { ReviewQueue } from '@/components/RBAC/ReviewQueue';
 import { AuditLogViewer } from '@/components/RBAC/AuditLogViewer';
+import { UserRoleManagement } from '@/components/RBAC/UserRoleManagement';
 
 // Archipelago Metadata Updater
 import { ArchipelagoMetadataUpdater } from '@/pages/ArchipelagoMetadataUpdater';
@@ -193,6 +194,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <AuditLogViewer />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/rbac/user-roles"
+            element={
+              <ProtectedRoute>
+                <UserRoleManagement />
               </ProtectedRoute>
             }
           />

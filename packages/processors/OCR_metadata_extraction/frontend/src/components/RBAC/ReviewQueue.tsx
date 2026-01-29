@@ -50,7 +50,7 @@ export const ReviewQueue: React.FC = () => {
       setError(null);
 
       const response = await axios.get<ReviewQueueResponse>(
-        `/api/rbac/review-queue`,
+        `/api/review-queue`,
         {
           params: {
             page: pagination.page,
@@ -78,7 +78,7 @@ export const ReviewQueue: React.FC = () => {
       setError(null);
 
       await axios.post(
-        `/api/rbac/review/${docId}/claim`,
+        `/api/review/${docId}/claim`,
         {},
         {
           headers: {
@@ -104,7 +104,7 @@ export const ReviewQueue: React.FC = () => {
       setError(null);
 
       await axios.post(
-        `/api/rbac/review/${docId}/approve`,
+        `/api/review/${docId}/approve`,
         {
           edit_fields: edits,
           notes: notes
@@ -133,7 +133,7 @@ export const ReviewQueue: React.FC = () => {
       setError(null);
 
       await axios.post(
-        `/api/rbac/review/${docId}/reject`,
+        `/api/review/${docId}/reject`,
         { reason },
         {
           headers: {

@@ -265,7 +265,25 @@ class LMStudioProvider(BaseOCRProvider):
                     if 'ocr_text' in parsed_json:
                         ocr_text = parsed_json['ocr_text']
                         structured_data = parsed_json.get('structured_data', {})
-                        logger.info(f"Successfully extracted structured data with {len(structured_data)} sections")
+
+                        # Validate completeness of structured data
+                        if structured_data:
+                            is_valid, missing_fields, completeness = self._validate_structured_data(structured_data)
+                            logger.info(
+                                f"Structured data extracted - Completeness: {completeness:.1f}% "
+                                f"({len(structured_data)} sections)"
+                            )
+                            if missing_fields:
+                                logger.warning(f"Missing fields ({len(missing_fields)}): {', '.join(missing_fields[:5])}")
+
+                            # Add validation metadata
+                            structured_data['_validation'] = {
+                                'is_complete': is_valid,
+                                'completeness_score': completeness,
+                                'missing_fields': missing_fields
+                            }
+                        else:
+                            logger.info("Successfully extracted structured data with {len(structured_data)} sections")
                     else:
                         logger.warning("JSON parsed but missing 'ocr_text' field, falling back to text-only")
                         structured_data = None
@@ -279,7 +297,8 @@ class LMStudioProvider(BaseOCRProvider):
                 'full_text': ocr_text,
                 'words': [],
                 'blocks': [{'text': ocr_text}] if ocr_text else [],
-                'confidence': 0.95  # LM Studio doesn't provide confidence scores
+                'confidence': 0.95,  # LM Studio doesn't provide confidence scores
+                'raw_llm_response': llm_response  # Store raw LLM output for auditing/debugging
             }
 
             # Add structured data if available
@@ -339,6 +358,7 @@ class LMStudioProvider(BaseOCRProvider):
             all_text = []
             all_blocks = []
             all_structured_pages = []
+            all_raw_responses = []
             page_count = len(page_images)
 
             for page_num, page_img in enumerate(page_images, 1):
@@ -427,6 +447,7 @@ class LMStudioProvider(BaseOCRProvider):
                 if 'choices' in result and len(result['choices']) > 0:
                     llm_response = result['choices'][0]['message']['content'].strip()
                     logger.debug(f"Page {page_num} response received: {len(llm_response)} chars")
+                    all_raw_responses.append({'page': page_num, 'response': llm_response})
                 else:
                     llm_response = ''
                     logger.warning(f"No content extracted from page {page_num}")
@@ -436,16 +457,37 @@ class LMStudioProvider(BaseOCRProvider):
                 page_text = llm_response
 
                 if page_enable_structured and llm_response:
+                    logger.info(f"Page {page_num}: Attempting to parse structured JSON from response")
                     success, parsed_json, error = self._parse_json_response(llm_response)
 
                     if success and parsed_json and 'ocr_text' in parsed_json:
                         page_text = parsed_json['ocr_text']
                         page_structured = parsed_json.get('structured_data', {})
-                        logger.debug(f"Page {page_num} structured data extracted")
+                        logger.info(f"Page {page_num}: Successfully parsed structured JSON")
+
+                        # Validate completeness of structured data for this page
+                        if page_structured:
+                            is_valid, missing_fields, completeness = self._validate_structured_data(page_structured)
+                            logger.info(
+                                f"Page {page_num} structured data - Completeness: {completeness:.1f}%"
+                            )
+                            if missing_fields and len(missing_fields) > 0:
+                                logger.debug(f"Page {page_num} missing: {', '.join(missing_fields[:3])}")
+
+                            # Add validation metadata
+                            page_structured['_validation'] = {
+                                'is_complete': is_valid,
+                                'completeness_score': completeness,
+                                'missing_fields': missing_fields
+                            }
+
                         all_structured_pages.append(page_structured)
                     else:
-                        logger.debug(f"Page {page_num} JSON parsing failed or missing ocr_text, using text-only")
+                        logger.warning(f"Page {page_num} JSON parsing failed: {error}. Using text-only mode")
                         page_structured = None
+                else:
+                    if not page_enable_structured:
+                        logger.debug(f"Page {page_num}: Structured output disabled, using text-only")
 
                 if page_text:
                     # Add page separator for multi-page PDFs
@@ -475,7 +517,8 @@ class LMStudioProvider(BaseOCRProvider):
                 'words': [],
                 'blocks': all_blocks,
                 'confidence': 0.95,
-                'pages_processed': page_count
+                'pages_processed': page_count,
+                'raw_llm_response': all_raw_responses
             }
 
             # Add structured data if any pages provided it
@@ -509,6 +552,127 @@ class LMStudioProvider(BaseOCRProvider):
             if "PDF2Image library not available" in str(e):
                 raise Exception(f"Cannot process PDF: {str(e)}")
             raise
+
+    def _validate_structured_data(self, structured_data):
+        """
+        Validate that structured_data contains all required sections and fields
+
+        Returns:
+            Tuple of (is_valid: bool, missing_fields: list, completeness_score: float)
+        """
+        required_structure = {
+            'document': {
+                'date': ['creation_date', 'sent_date'],
+                'languages': [],
+                'physical_attributes': ['letterhead', 'pages'],
+                'correspondence': {
+                    'sender': ['name', 'location', 'contact_info'],
+                    'recipient': ['name', 'location']
+                }
+            },
+            'content': ['full_text', 'salutation', 'body', 'closing', 'signature']
+        }
+
+        missing_fields = []
+        total_fields = 0
+        present_fields = 0
+
+        # Check document section
+        if 'document' not in structured_data:
+            missing_fields.append('document')
+        else:
+            doc = structured_data['document']
+
+            # Check date
+            if 'date' not in doc:
+                missing_fields.append('document.date')
+            else:
+                total_fields += 2
+                if 'creation_date' in doc['date']:
+                    present_fields += 1
+                else:
+                    missing_fields.append('document.date.creation_date')
+                if 'sent_date' in doc['date']:
+                    present_fields += 1
+                else:
+                    missing_fields.append('document.date.sent_date')
+
+            # Check languages
+            total_fields += 1
+            if 'languages' in doc:
+                present_fields += 1
+            else:
+                missing_fields.append('document.languages')
+
+            # Check physical_attributes
+            if 'physical_attributes' not in doc:
+                missing_fields.append('document.physical_attributes')
+            else:
+                total_fields += 2
+                if 'letterhead' in doc['physical_attributes']:
+                    present_fields += 1
+                else:
+                    missing_fields.append('document.physical_attributes.letterhead')
+                if 'pages' in doc['physical_attributes']:
+                    present_fields += 1
+                else:
+                    missing_fields.append('document.physical_attributes.pages')
+
+            # Check correspondence
+            if 'correspondence' not in doc:
+                missing_fields.append('document.correspondence')
+            else:
+                corr = doc['correspondence']
+                total_fields += 5
+
+                if 'sender' in corr:
+                    sender = corr['sender']
+                    if 'name' in sender:
+                        present_fields += 1
+                    else:
+                        missing_fields.append('document.correspondence.sender.name')
+                    if 'location' in sender:
+                        present_fields += 1
+                    else:
+                        missing_fields.append('document.correspondence.sender.location')
+                    if 'contact_info' in sender:
+                        present_fields += 1
+                    else:
+                        missing_fields.append('document.correspondence.sender.contact_info')
+                else:
+                    missing_fields.append('document.correspondence.sender')
+
+                if 'recipient' in corr:
+                    recipient = corr['recipient']
+                    if 'name' in recipient:
+                        present_fields += 1
+                    else:
+                        missing_fields.append('document.correspondence.recipient.name')
+                    if 'location' in recipient:
+                        present_fields += 1
+                    else:
+                        missing_fields.append('document.correspondence.recipient.location')
+                else:
+                    missing_fields.append('document.correspondence.recipient')
+
+        # Check content section
+        if 'content' not in structured_data:
+            missing_fields.append('content')
+        else:
+            content = structured_data['content']
+            content_fields = ['full_text', 'salutation', 'body', 'closing', 'signature']
+            total_fields += len(content_fields)
+
+            for field in content_fields:
+                if field in content:
+                    present_fields += 1
+                else:
+                    missing_fields.append(f'content.{field}')
+
+        completeness_score = (present_fields / total_fields * 100) if total_fields > 0 else 0
+        is_valid = len(missing_fields) == 0
+
+        return is_valid, missing_fields, completeness_score
 
     def _parse_json_response(self, llm_response: str):
         """

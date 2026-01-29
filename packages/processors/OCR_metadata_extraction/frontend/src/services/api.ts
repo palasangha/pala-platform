@@ -322,4 +322,25 @@ export const chainAPI = {
   },
 };
 
+// RBAC APIs
+export const rbacAPI = {
+  // User management
+  listUsers: async (page = 1, perPage = 50): Promise<{ users: any[]; total: number; page: number; per_page: number; total_pages: number }> => {
+    const { data } = await api.get('/users', {
+      params: { page, per_page: perPage },
+    });
+    return data;
+  },
+
+  getUserRoles: async (userId: string): Promise<{ user_id: string; roles: string[] }> => {
+    const { data } = await api.get(`/users/${userId}/roles`);
+    return data;
+  },
+
+  updateUserRoles: async (userId: string, roles: string[]): Promise<{ status: string; message: string; user_id: string; previous_roles: string[]; new_roles: string[] }> => {
+    const { data } = await api.post(`/users/${userId}/roles`, { roles });
+    return data;
+  },
+};
+
 export default api;

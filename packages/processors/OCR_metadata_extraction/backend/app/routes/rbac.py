@@ -12,6 +12,82 @@ rbac_bp = Blueprint('rbac', __name__, url_prefix='/rbac')
 
 
 # ============================================================================
+# DOCUMENT LIST ENDPOINT
+# ============================================================================
+
+@rbac_bp.route('/documents', methods=['GET'])
+@token_required
+def list_documents(current_user_id):
+    """List documents based on user role and permissions"""
+    try:
+        # Get user to check roles
+        user = User.find_by_id(mongo, current_user_id)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        user_roles = user.get('roles', [])
+        is_admin = 'admin' in user_roles
+        is_teacher = 'teacher' in user_roles
+        is_reviewer = 'reviewer' in user_roles
+        
+        # Build query based on role
+        query = {}
+        
+        # Get filters from query params
+        status_filter = request.args.get('status')
+        classification_filter = request.args.get('classification')
+        
+        # Apply status filter if provided
+        if status_filter:
+            query['review_status'] = status_filter
+        
+        # Apply classification filter if provided
+        if classification_filter:
+            query['classification'] = classification_filter
+        
+        # Role-based access control
+        if is_reviewer and not (is_admin or is_teacher):
+            # Reviewers can only see documents assigned to them
+            query['assigned_to'] = current_user_id
+        # Teachers and admins can see all documents (no additional filter)
+        
+        # Get pagination params
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 20))
+        skip = (page - 1) * per_page
+        
+        # Fetch documents from ocr_results collection
+        documents = list(mongo.db.ocr_results.find(query)
+                        .sort('created_at', -1)
+                        .skip(skip)
+                        .limit(per_page))
+        
+        # Convert ObjectId to string
+        for doc in documents:
+            doc['_id'] = str(doc['_id'])
+            if 'assigned_to' in doc:
+                doc['assigned_to'] = str(doc['assigned_to'])
+            if 'assigned_by' in doc:
+                doc['assigned_by'] = str(doc['assigned_by'])
+            if 'reviewed_by' in doc:
+                doc['reviewed_by'] = str(doc['reviewed_by'])
+        
+        # Get total count
+        total = mongo.db.ocr_results.count_documents(query)
+        
+        return jsonify({
+            'documents': documents,
+            'total': total,
+            'page': page,
+            'per_page': per_page,
+            'total_pages': (total + per_page - 1) // per_page
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ============================================================================
 # DOCUMENT CLASSIFICATION ENDPOINTS (ADMIN ONLY)
 # ============================================================================
 
@@ -86,6 +162,89 @@ def classify_document(current_user_id, doc_id):
 
 
 # ============================================================================
+# DOCUMENT ASSIGNMENT ENDPOINTS
+# ============================================================================
+
+@rbac_bp.route('/documents/<doc_id>/assign', methods=['POST'])
+@token_required
+def assign_document(current_user_id, doc_id):
+    """Assign document to reviewer (Admin/Teacher only)"""
+    try:
+        # Check user role
+        user = User.find_by_id(mongo, current_user_id)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        user_roles = user.get('roles', [])
+        if 'admin' not in user_roles and 'teacher' not in user_roles:
+            AuditLog.create(mongo, current_user_id, AuditLog.ACTION_UNAUTHORIZED_ACCESS,
+                           resource_type='document', resource_id=doc_id,
+                           details={'action': 'assign_document', 'reason': 'Insufficient permissions'})
+            return jsonify({'error': 'Only admins and teachers can assign documents'}), 403
+        
+        # Get request data
+        data = request.get_json()
+        reviewer_id = data.get('reviewer_id')
+        
+        if not reviewer_id:
+            return jsonify({'error': 'reviewer_id is required'}), 400
+        
+        # Verify reviewer exists and has reviewer role
+        reviewer = User.find_by_id(mongo, reviewer_id)
+        if not reviewer:
+            return jsonify({'error': 'Reviewer not found'}), 404
+        
+        if 'reviewer' not in reviewer.get('roles', []):
+            return jsonify({'error': 'User is not a reviewer'}), 400
+        
+        # Get document from ocr_results
+        document = mongo.db.ocr_results.find_one({'_id': ObjectId(doc_id)})
+        if not document:
+            return jsonify({'error': 'Document not found'}), 404
+        
+        # Check if already assigned
+        if document.get('review_status') == 'in_review' and document.get('assigned_to'):
+            return jsonify({
+                'error': 'Document already assigned',
+                'assigned_to': str(document.get('assigned_to'))
+            }), 409
+        
+        # Update document
+        mongo.db.ocr_results.update_one(
+            {'_id': ObjectId(doc_id)},
+            {'$set': {
+                'review_status': 'in_review',
+                'assigned_to': reviewer_id,
+                'assigned_by': current_user_id,
+                'assigned_at': datetime.utcnow()
+            }}
+        )
+        
+        # Create audit log
+        AuditLog.create(mongo, current_user_id, 'document_assigned',
+                       resource_type='document', resource_id=doc_id,
+                       details={
+                           'assigned_to': reviewer_id,
+                           'assigned_to_email': reviewer.get('email'),
+                           'assigned_to_name': reviewer.get('name')
+                       })
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Document assigned successfully',
+            'assigned_to': {
+                'id': reviewer_id,
+                'email': reviewer.get('email'),
+                'name': reviewer.get('name')
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': str(e)}), 500
+
+
+# ============================================================================
 # REVIEW QUEUE ENDPOINTS
 # ============================================================================
 
@@ -107,29 +266,37 @@ def get_review_queue(current_user_id):
         user_roles = user.get('roles', [])
 
         # Build query based on role
-        query = {'document_status': Image.STATUS_OCR_PROCESSED}
+        # Only show documents in review status
+        query = {'review_status': 'in_review'}
 
-        # Reviewer: only PUBLIC documents
+        # Reviewer: only see documents assigned to them
         if 'reviewer' in user_roles and 'admin' not in user_roles and 'teacher' not in user_roles:
-            query['classification'] = Image.CLASSIFICATION_PUBLIC
-        # Teacher: PUBLIC and PRIVATE documents
-        elif 'teacher' in user_roles:
-            query['classification'] = {'$in': [Image.CLASSIFICATION_PUBLIC, Image.CLASSIFICATION_PRIVATE]}
-        # Admin: all documents
-        elif 'admin' in user_roles:
-            pass  # No classification filter for admin
+            query['assigned_to'] = str(current_user_id)
+        # Teacher and Admin: see all in_review documents
+        elif 'teacher' in user_roles or 'admin' in user_roles:
+            pass  # No additional filter
         else:
             return jsonify({'error': 'User does not have review permissions'}), 403
 
         # Get total count
-        total_count = mongo.db.images.count_documents(query)
+        total_count = mongo.db.ocr_results.count_documents(query)
         total_pages = (total_count + per_page - 1) // per_page
 
         # Get documents
-        documents = list(mongo.db.images.find(query)
+        documents = list(mongo.db.ocr_results.find(query)
                         .sort('created_at', -1)
                         .skip(skip)
                         .limit(per_page))
+
+        # Convert ObjectId to string for documents
+        for doc in documents:
+            doc['_id'] = str(doc['_id'])
+            if 'assigned_to' in doc and doc['assigned_to']:
+                doc['assigned_to'] = str(doc['assigned_to'])
+            if 'assigned_by' in doc and doc['assigned_by']:
+                doc['assigned_by'] = str(doc['assigned_by'])
+            if 'reviewed_by' in doc and doc['reviewed_by']:
+                doc['reviewed_by'] = str(doc['reviewed_by'])
 
         # Create audit log
         AuditLog.create(mongo, current_user_id, AuditLog.ACTION_VIEW_DOCUMENT,
@@ -137,7 +304,7 @@ def get_review_queue(current_user_id):
 
         return jsonify({
             'status': 'success',
-            'queue': [Image.to_dict(doc) for doc in documents],
+            'queue': documents,
             'pagination': {
                 'page': page,
                 'per_page': per_page,
@@ -400,6 +567,46 @@ def reject_document(current_user_id, doc_id):
 # ============================================================================
 # USER ROLE MANAGEMENT ENDPOINTS (ADMIN ONLY)
 # ============================================================================
+
+@rbac_bp.route('/users', methods=['GET'])
+@token_required
+@require_admin
+def list_users(current_user_id):
+    """List all users"""
+    try:
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 50, type=int)
+        skip = (page - 1) * per_page
+
+        # Get total count
+        total_count = mongo.db.users.count_documents({})
+
+        # Get users
+        users = list(mongo.db.users.find({}).skip(skip).limit(per_page).sort('created_at', -1))
+
+        # Convert to dict
+        users_list = []
+        for user in users:
+            users_list.append({
+                'id': str(user['_id']),
+                'email': user.get('email'),
+                'name': user.get('name'),
+                'roles': user.get('roles', []),
+                'created_at': user.get('created_at').isoformat() if user.get('created_at') else None
+            })
+
+        return jsonify({
+            'status': 'success',
+            'users': users_list,
+            'total': total_count,
+            'page': page,
+            'per_page': per_page,
+            'total_pages': (total_count + per_page - 1) // per_page
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 @rbac_bp.route('/users/<user_id>/roles', methods=['GET'])
 @token_required

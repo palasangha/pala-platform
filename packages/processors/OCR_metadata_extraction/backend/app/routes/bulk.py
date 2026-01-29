@@ -899,7 +899,7 @@ def get_file_from_folder(current_user_id, filename):
         if not folder_path:
             return jsonify({'error': 'folder parameter is required'}), 400
 
-        # Resolve relative paths (e.g., ./Bhushanji/eng-typed -> /app/Bhushanji/eng-typed)
+        # Resolve relative paths (e.g., ./data/documents -> /app/data/documents)
         if folder_path.startswith('./'):
             # Remove './' prefix and prepend '/app/' (where volumes are mounted)
             folder_path = '/app/' + folder_path[2:]

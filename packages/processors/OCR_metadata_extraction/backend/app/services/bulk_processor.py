@@ -216,6 +216,14 @@ class BulkProcessor:
                     'retry_count': attempt
                 }
 
+                # Add structured data if available (from LMStudio or other structured providers)
+                if ocr_result.get('structured_data'):
+                    result['structured_data'] = ocr_result.get('structured_data')
+
+                # Add extraction mode if available
+                if ocr_result.get('extraction_mode'):
+                    result['extraction_mode'] = ocr_result.get('extraction_mode')
+
                 # Add page count for PDFs
                 if ocr_result.get('pages_processed'):
                     result['pages_processed'] = ocr_result.get('pages_processed')

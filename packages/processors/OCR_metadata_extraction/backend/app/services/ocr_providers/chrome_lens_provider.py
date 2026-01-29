@@ -60,7 +60,7 @@ class ChromeLensProvider(BaseOCRProvider):
 
     def _resize_image_if_needed(self, image_path, max_size_mb=5):
         """
-        Resize image if file size exceeds threshold and save to temporary file
+        Resize image if file size or dimensions exceed threshold and save to temporary file
 
         Args:
             image_path: Path to the image file
@@ -69,23 +69,36 @@ class ChromeLensProvider(BaseOCRProvider):
         Returns:
             str: Path to the image (original or resized temporary file)
         """
-        # Check file size
-        file_size_mb = os.path.getsize(image_path) / (1024 * 1024)
-
-        # If file size is under threshold, return original path
-        if file_size_mb <= max_size_mb:
-            return image_path
-
-        # File is too large, resize it
-        print(f"Image size ({file_size_mb:.2f}MB) exceeds {max_size_mb}MB threshold, resizing...")
-
         try:
-            # Increase PIL decompression bomb limit for large images
-            Image.MAX_IMAGE_PIXELS = None  # Disable limit temporarily
+            # Disable PIL decompression bomb limit to handle large scanned images
+            # This must be set BEFORE opening the image
+            Image.MAX_IMAGE_PIXELS = None
 
-            # Open image with PIL
+            # First check pixel dimensions to avoid decompression bomb errors
             img = Image.open(image_path)
+            width, height = img.size
+            total_pixels = width * height
 
+            # Check file size
+            file_size_mb = os.path.getsize(image_path) / (1024 * 1024)
+
+            # Resize if either:
+            # 1. File size exceeds threshold
+            # 2. Image dimensions are very large (>150 million pixels)
+            max_pixels = 150_000_000  # ~12,200 x 12,200 pixels
+            needs_resize = file_size_mb > max_size_mb or total_pixels > max_pixels
+
+            if not needs_resize:
+                img.close()
+                return image_path
+
+            # File is too large or has too many pixels, resize it
+            if file_size_mb > max_size_mb:
+                print(f"Image size ({file_size_mb:.2f}MB) exceeds {max_size_mb}MB threshold, resizing...")
+            elif total_pixels > max_pixels:
+                print(f"Image dimensions ({width}x{height} = {total_pixels:,} pixels) exceed limit, resizing...")
+
+            # Image is already opened above at line 78
             # Convert RGBA to RGB if necessary
             if img.mode == 'RGBA':
                 # Create white background

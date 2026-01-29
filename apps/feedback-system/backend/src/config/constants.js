@@ -6,9 +6,9 @@ const DEPARTMENTS = [
     description: 'Main meditation and spiritual center'
   },
   {
-    code: 'souvenir_store',
-    name: 'Souvenir Store',
-    description: 'Spiritual books and merchandise'
+    code: 'shop',
+    name: 'Shop',
+    description: 'Souvenir and merchandise shop'
   },
   {
     code: 'dpvc',
@@ -16,9 +16,9 @@ const DEPARTMENTS = [
     description: 'Vipassana meditation courses'
   },
   {
-    code: 'dhammalaya',
+    code: 'dhamma_lane',
     name: 'Dhammalaya',
-    description: 'Meditation and study facility'
+    description: 'Meditation walkway and peaceful environment'
   },
   {
     code: 'food_court',

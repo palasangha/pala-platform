@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Context Agent - Historical context and significance analysis using Claude Opus
+Context Agent - Historical context and significance analysis using Ollama
 
 Tools:
 - research_historical_context: Generate historical context for the document
 - assess_significance: Determine historical significance and impact
 - generate_biographies: Create biographies of key people mentioned
+- parse_ami_filename: Parse AMI Master naming convention filenames and extract metadata
 
-Model: Claude Opus 4.5 (highest quality for critical analysis)
+Model: Ollama (llama3.2 or configured model)
 """
 
 import asyncio
@@ -65,25 +66,39 @@ class ContextAgent:
         self.agent_id = os.getenv('MCP_AGENT_ID', 'context-agent')
         self.server_url = os.getenv('MCP_SERVER_URL', 'ws://mcp-server:3000')
         self.token = os.getenv('MCP_AGENT_TOKEN')
+        # API key not needed for Ollama, but keep for compatibility
         self.anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
 
         logger.info(f"Initialized {self.agent_id}")
         logger.info(f"Server: {self.server_url}")
 
-        # Import tool handlers
+        # Import tool handlers (now using Ollama)
         from tools.historical_researcher import HistoricalResearcher
         from tools.significance_assessor import SignificanceAssessor
         from tools.biography_generator import BiographyGenerator
+        from tools.ami_metadata_parser import AMIMetadataParser
+        from tools.metadata_writer import MetadataWriter
+        from tools.exif_metadata_handler import ExifMetadataHandler
 
         self.historian = HistoricalResearcher(self.anthropic_api_key)
         self.significance_assessor = SignificanceAssessor(self.anthropic_api_key)
         self.biographer = BiographyGenerator(self.anthropic_api_key)
+        self.ami_parser = AMIMetadataParser()
+        self.metadata_writer = MetadataWriter()
+        self.exif_handler = ExifMetadataHandler()
 
         # Tool registry
         self.tools = {
             'research_historical_context': self.research_historical_context,
             'assess_significance': self.assess_significance,
-            'generate_biographies': self.generate_biographies
+            'generate_biographies': self.generate_biographies,
+            'parse_ami_filename': self.parse_ami_filename,
+            'write_metadata': self.write_metadata,
+            'update_metadata': self.update_metadata,
+            'read_metadata': self.read_metadata,
+            'read_image_exif': self.read_image_exif,
+            'write_image_exif': self.write_image_exif,
+            'create_enriched_copy': self.create_enriched_copy
         }
 
     async def research_historical_context(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -143,6 +158,150 @@ class ContextAgent:
             logger.error(f"Error generating biographies: {e}")
             return {"biographies": {}, "_fallback": True}
 
+    async def parse_ami_filename(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse AMI filename and extract metadata"""
+        filename = params.get('filename', '')
+
+        logger.info(f"Parsing AMI filename: {filename}")
+
+        try:
+            result = self.ami_parser.parse(filename)
+
+            # Add formatted summary and archipelago fields
+            if result.get('parsed'):
+                result['summary'] = self.ami_parser.format_metadata_summary(result)
+                result['archipelago_fields'] = self.ami_parser.get_archipelago_fields(result)
+
+            logger.info(f"Parsed AMI filename successfully: {result.get('parsed', False)}")
+            return result
+        except Exception as e:
+            logger.error(f"Error parsing AMI filename: {e}")
+            return {
+                "filename": filename,
+                "parsed": False,
+                "error": str(e),
+                "_fallback": True
+            }
+
+    async def write_metadata(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Write metadata to a JSON file"""
+        file_path = params.get('file_path', '')
+        metadata = params.get('metadata', {})
+        output_filename = params.get('output_filename')
+
+        logger.info(f"Writing metadata for file: {file_path}")
+
+        try:
+            result = self.metadata_writer.write_metadata(file_path, metadata, output_filename)
+            logger.info(f"Metadata write result: {result.get('success', False)}")
+            return result
+        except Exception as e:
+            logger.error(f"Error writing metadata: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "file_path": file_path
+            }
+
+    async def update_metadata(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Update an existing metadata file"""
+        metadata_file_path = params.get('metadata_file_path', '')
+        updates = params.get('updates', {})
+        merge = params.get('merge', True)
+
+        logger.info(f"Updating metadata file: {metadata_file_path}")
+
+        try:
+            result = self.metadata_writer.update_metadata(metadata_file_path, updates, merge)
+            logger.info(f"Metadata update result: {result.get('success', False)}")
+            return result
+        except Exception as e:
+            logger.error(f"Error updating metadata: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "metadata_file_path": metadata_file_path
+            }
+
+    async def read_metadata(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Read metadata from a JSON file"""
+        metadata_file_path = params.get('metadata_file_path', '')
+
+        logger.info(f"Reading metadata from: {metadata_file_path}")
+
+        try:
+            result = self.metadata_writer.read_metadata(metadata_file_path)
+            logger.info(f"Metadata read result: {result.get('success', False)}")
+            return result
+        except Exception as e:
+            logger.error(f"Error reading metadata: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "metadata_file_path": metadata_file_path
+            }
+
+    async def read_image_exif(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Read EXIF metadata from an image file"""
+        image_path = params.get('image_path', '')
+
+        logger.info(f"Reading EXIF from image: {image_path}")
+
+        try:
+            result = self.exif_handler.read_exif(image_path)
+            logger.info(f"EXIF read result: {result.get('success', False)}")
+            return result
+        except Exception as e:
+            logger.error(f"Error reading EXIF: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "image_path": image_path
+            }
+
+    async def write_image_exif(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Write metadata to image EXIF tags"""
+        image_path = params.get('image_path', '')
+        metadata = params.get('metadata', {})
+        output_path = params.get('output_path')
+
+        logger.info(f"Writing EXIF to image: {image_path}")
+
+        try:
+            result = self.exif_handler.write_exif(image_path, metadata, output_path)
+            logger.info(f"EXIF write result: {result.get('success', False)}")
+            return result
+        except Exception as e:
+            logger.error(f"Error writing EXIF: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "image_path": image_path
+            }
+
+    async def create_enriched_copy(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a copy of image with embedded metadata"""
+        image_path = params.get('image_path', '')
+        metadata = params.get('metadata', {})
+        output_dir = params.get('output_dir')
+        suffix = params.get('suffix', '_enriched')
+
+        logger.info(f"Creating enriched copy of: {image_path}")
+
+        try:
+            result = self.exif_handler.create_copy_with_metadata(
+                image_path, metadata, output_dir, suffix
+            )
+            logger.info(f"Enriched copy result: {result.get('success', False)}")
+            return result
+        except Exception as e:
+            logger.error(f"Error creating enriched copy: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "image_path": image_path
+            }
+
     def get_tool_definitions(self) -> list:
         """Return tool definitions for registration"""
         return [
@@ -188,6 +347,154 @@ class ContextAgent:
                         "text": {"type": "string", "description": "Document context"}
                     },
                     "required": ["people"],
+                    "additionalProperties": False
+                }
+            },
+            {
+                "name": "parse_ami_filename",
+                "description": "Parse AMI Master naming convention filename and extract metadata including master identifier, document type, medium, date, sender, recipient, and Archipelago field mappings",
+                "agentId": self.agent_id,
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "filename": {
+                            "type": "string",
+                            "description": "The filename to parse (e.g., MSALTMEBA00100004.00_(01_02_0071)_LT_MIX_1990_BK MODI_TO_REVSNGOENKA.JPG)"
+                        }
+                    },
+                    "required": ["filename"],
+                    "additionalProperties": False
+                }
+            },
+            {
+                "name": "write_metadata",
+                "description": "Write enriched metadata to a JSON file alongside the original document. Creates a metadata JSON file in the same directory as the original file.",
+                "agentId": self.agent_id,
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Path to the original document file (e.g., /data/documents/letter001.jpg)"
+                        },
+                        "metadata": {
+                            "type": "object",
+                            "description": "Metadata dictionary to write (e.g., document_type, sender, recipient, date, subjects, summary, etc.)"
+                        },
+                        "output_filename": {
+                            "type": "string",
+                            "description": "Optional custom output filename (defaults to {original}_metadata.json)"
+                        }
+                    },
+                    "required": ["file_path", "metadata"],
+                    "additionalProperties": False
+                }
+            },
+            {
+                "name": "update_metadata",
+                "description": "Update an existing metadata JSON file by merging new fields or replacing entirely",
+                "agentId": self.agent_id,
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "metadata_file_path": {
+                            "type": "string",
+                            "description": "Path to the existing metadata JSON file"
+                        },
+                        "updates": {
+                            "type": "object",
+                            "description": "Dictionary of fields to update or add"
+                        },
+                        "merge": {
+                            "type": "boolean",
+                            "description": "If true, merge with existing data; if false, replace entirely (default: true)"
+                        }
+                    },
+                    "required": ["metadata_file_path", "updates"],
+                    "additionalProperties": False
+                }
+            },
+            {
+                "name": "read_metadata",
+                "description": "Read metadata from an existing JSON file",
+                "agentId": self.agent_id,
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "metadata_file_path": {
+                            "type": "string",
+                            "description": "Path to the metadata JSON file to read"
+                        }
+                    },
+                    "required": ["metadata_file_path"],
+                    "additionalProperties": False
+                }
+            },
+            {
+                "name": "read_image_exif",
+                "description": "Read EXIF/IPTC metadata from an image file (JPEG, TIFF, PNG). Returns camera info, timestamps, and embedded metadata.",
+                "agentId": self.agent_id,
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "image_path": {
+                            "type": "string",
+                            "description": "Path to the image file (e.g., /data/images/photo.jpg)"
+                        }
+                    },
+                    "required": ["image_path"],
+                    "additionalProperties": False
+                }
+            },
+            {
+                "name": "write_image_exif",
+                "description": "Write enriched metadata to image EXIF tags. Embeds title, author, date, copyright, and summary into the image file.",
+                "agentId": self.agent_id,
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "image_path": {
+                            "type": "string",
+                            "description": "Path to the source image file"
+                        },
+                        "metadata": {
+                            "type": "object",
+                            "description": "Metadata to embed (title, author, date, summary, etc.)"
+                        },
+                        "output_path": {
+                            "type": "string",
+                            "description": "Optional output path (defaults to overwrite original)"
+                        }
+                    },
+                    "required": ["image_path", "metadata"],
+                    "additionalProperties": False
+                }
+            },
+            {
+                "name": "create_enriched_copy",
+                "description": "Create a copy of an image with embedded EXIF metadata AND a companion JSON file. This creates both an enriched image file and a metadata.json sidecar file.",
+                "agentId": self.agent_id,
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "image_path": {
+                            "type": "string",
+                            "description": "Path to the original image file"
+                        },
+                        "metadata": {
+                            "type": "object",
+                            "description": "Enriched metadata to embed and save (document_type, sender, recipient, summary, etc.)"
+                        },
+                        "output_dir": {
+                            "type": "string",
+                            "description": "Optional output directory (defaults to same as original)"
+                        },
+                        "suffix": {
+                            "type": "string",
+                            "description": "Suffix for output filename (default: '_enriched')"
+                        }
+                    },
+                    "required": ["image_path", "metadata"],
                     "additionalProperties": False
                 }
             }

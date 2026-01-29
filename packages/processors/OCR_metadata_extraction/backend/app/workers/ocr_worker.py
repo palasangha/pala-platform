@@ -79,7 +79,7 @@ class OCRWorker:
             if not os.path.isabs(file_path):
                 # Handle Bhushanji/ prefixed paths
                 if file_path.startswith('Bhushanji/'):
-                    gvpocr_path = os.getenv('GVPOCR_PATH', '/data/Bhushanji')
+                    gvpocr_path = os.getenv('GVPOCR_PATH', '/app/Bhushanji')
                     relative_part = file_path.replace('Bhushanji/', '', 1)
                     file_path = os.path.join(gvpocr_path, relative_part)
                 # Handle newsletters/ prefixed paths
@@ -87,10 +87,9 @@ class OCRWorker:
                     newsletters_path = os.getenv('NEWSLETTERS_PATH', '/data/newsletters')
                     relative_part = file_path.replace('newsletters/', '', 1)
                     file_path = os.path.join(newsletters_path, relative_part)
-                # Default: prepend GVPOCR_PATH
+                # Default: prepend /app/ for generic paths
                 else:
-                    gvpocr_path = os.getenv('GVPOCR_PATH', '/data/Bhushanji')
-                    file_path = os.path.join(gvpocr_path, file_path)
+                    file_path = os.path.join('/app', file_path)
 
             # Normalize file path for consistent duplicate detection
             file_path = self._normalize_file_path(file_path)
@@ -223,7 +222,8 @@ class OCRWorker:
                     'worker_id': self.worker_id
                 },
                 'processed_at': datetime.utcnow().isoformat(),
-                'retry_count': attempt
+                'retry_count': attempt,
+                'raw_llm_response': result.get('raw_llm_response')
             }
 
             # Include intermediate images if available
@@ -354,12 +354,17 @@ class OCRWorker:
         Returns:
             True if directory is read-only, False if writable
         """
-        if not os.path.isdir(directory_path):
+        # Check if path exists - if not, check parent directory
+        check_dir = directory_path
+        while not os.path.exists(check_dir) and check_dir != '/':
+            check_dir = os.path.dirname(check_dir)
+        
+        if not os.path.isdir(check_dir):
             return False
 
         try:
             # Try to create a temporary test file
-            test_file = os.path.join(directory_path, '.write_test_delete_me')
+            test_file = os.path.join(check_dir, '.write_test_delete_me')
             with open(test_file, 'w') as f:
                 f.write('test')
             # If we got here, directory is writable - clean up test file

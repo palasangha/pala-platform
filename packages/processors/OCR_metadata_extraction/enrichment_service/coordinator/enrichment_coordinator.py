@@ -380,11 +380,64 @@ class EnrichmentCoordinator:
                 }}
             )
             logger.info(f"Enrichment job {enrichment_job_id} marked as completed")
+            
+            # Trigger ZIP regeneration with enrichment data
+            self._trigger_zip_regeneration(enrichment_job_id)
+            
             return result.matched_count > 0
 
         except Exception as e:
             logger.error(f"Error marking job completed: {e}")
             return False
+
+    def _trigger_zip_regeneration(self, enrichment_job_id: str):
+        """
+        Trigger ZIP file regeneration to include enrichment data
+        
+        Args:
+            enrichment_job_id: Enrichment job ID
+        """
+        try:
+            # Get enrichment job details
+            job = self.db.enrichment_jobs.find_one({'_id': enrichment_job_id})
+            if not job:
+                logger.error(f"Enrichment job {enrichment_job_id} not found")
+                return
+            
+            ocr_job_id = job.get('ocr_job_id')
+            if not ocr_job_id:
+                logger.error(f"No OCR job ID found for enrichment job {enrichment_job_id}")
+                return
+            
+            logger.info(f"Triggering ZIP regeneration for OCR job {ocr_job_id}")
+            
+            # Publish ZIP regeneration task to NSQ
+            zip_regen_task = {
+                'task_type': 'regenerate_zip',
+                'ocr_job_id': ocr_job_id,
+                'enrichment_job_id': enrichment_job_id,
+                'timestamp': datetime.utcnow().isoformat()
+            }
+            
+            # Publish to a separate topic or use the same enrichment topic
+            import requests
+            nsq_http_url = f"http://{self.nsq_host}:4151/pub"
+            params = {'topic': 'zip_regeneration'}
+            
+            response = requests.post(
+                nsq_http_url,
+                params=params,
+                data=json.dumps(zip_regen_task).encode('utf-8'),
+                timeout=5
+            )
+            
+            if response.status_code == 200:
+                logger.info(f"ZIP regeneration task published for job {ocr_job_id}")
+            else:
+                logger.error(f"Failed to publish ZIP regeneration task: {response.status_code}")
+                
+        except Exception as e:
+            logger.error(f"Error triggering ZIP regeneration: {e}", exc_info=True)
 
 
 # Integration function to be called from ResultAggregator

@@ -32,7 +32,7 @@ export const DocumentClassification: React.FC<DocumentClassificationProps> = ({
       setError(null);
 
       await axios.post(
-        `/api/rbac/documents/${documentId}/classify`,
+        `/api/documents/${documentId}/classify`,
         {
           classification,
           reason

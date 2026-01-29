@@ -37,7 +37,7 @@ export const AuditLogViewer: React.FC = () => {
       if (filterUserId) params.user_id = filterUserId;
 
       const response = await axios.get(
-        `/api/rbac/audit-logs`,
+        `/api/audit-logs`,
         {
           params,
           headers: {

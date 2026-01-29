@@ -32,7 +32,8 @@ from enrichment_service.utils.budget_manager import BudgetManager
 from enrichment_service.utils.cost_tracker import CostTracker
 from enrichment_service.errors.error_types import get_error_type, ErrorType
 from enrichment_service.errors.retry_strategy import get_retry_strategy
-from enrichment_service.config.timeouts import get_tool_timeout
+from enrichment_service.config_modules.timeouts import get_tool_timeout
+from enrichment_service.utils.metadata_enhancer import MetadataEnhancer
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ class AgentOrchestrator:
     CONTENT_AGENT = "content-agent"
     CONTEXT_AGENT = "context-agent"
 
-    def __init__(self, mcp_client: Optional[MCPClient] = None, schema_path: Optional[str] = None, db=None):
+    def __init__(self, mcp_client: Optional[MCPClient] = None, schema_path: Optional[str] = None, db=None, ami_parser=None):
         """
         Initialize orchestrator
 
@@ -55,6 +56,7 @@ class AgentOrchestrator:
             mcp_client: MCP client instance
             schema_path: Path to schema JSON
             db: MongoDB database instance for cost tracking
+            ami_parser: Optional AMI filename parser
         """
         self.mcp_client = mcp_client or MCPClient()
         self.schema_path = schema_path or config.SCHEMA_PATH
@@ -64,6 +66,9 @@ class AgentOrchestrator:
         self.db = db
         self.budget_manager = BudgetManager(db)
         self.cost_tracker = CostTracker(db)
+
+        # Metadata enhancer for searchability
+        self.metadata_enhancer = MetadataEnhancer(ami_parser=ami_parser)
 
         # Track enrichment per document
         self.enrichment_id = str(uuid.uuid4())
@@ -91,30 +96,41 @@ class AgentOrchestrator:
 
         logger.info(f"Starting enrichment for document {document_id}")
 
+        # Initialize raw agent responses tracker
+        raw_agent_responses = {}
+
         try:
             # Phase 1: Parallel extraction (free, fast)
+            logger.info(f"🚀 Phase 1 starting: Parallel extraction (metadata, entities, structure) - document {document_id}")
             phase1_start = datetime.utcnow()
-            phase1_results = await self._run_phase1(ocr_data)
+            phase1_results = await self._run_phase1(ocr_data, raw_agent_responses)
             phase1_duration = (datetime.utcnow() - phase1_start).total_seconds() * 1000
+            logger.info(f"✓ Phase 1 completed in {phase1_duration/1000:.2f}s - document {document_id}")
 
             # Phase 2: Content analysis (Claude Sonnet)
+            logger.info(f"🚀 Phase 2 starting: Content analysis (summary, keywords, subjects) - document {document_id}")
             phase2_start = datetime.utcnow()
-            phase2_results = await self._run_phase2(ocr_data, phase1_results)
+            phase2_results = await self._run_phase2(ocr_data, phase1_results, raw_agent_responses)
             phase2_duration = (datetime.utcnow() - phase2_start).total_seconds() * 1000
+            logger.info(f"✓ Phase 2 completed in {phase2_duration/1000:.2f}s - document {document_id}")
 
             # Check budget before expensive Phase 3
             enable_context_agent = self.budget_manager.should_enable_context_agent()
             if not enable_context_agent:
-                logger.info(f"Budget limit reached, skipping context agent for document {document_id}")
+                logger.info(f"💰 Budget limit reached, skipping context agent for document {document_id}")
 
             # Phase 3: Historical context (Claude Opus) - optional based on budget
             phase3_start = datetime.utcnow()
             if enable_context_agent:
-                phase3_results = await self._run_phase3(ocr_data, phase1_results, phase2_results)
+                logger.info(f"🚀 Phase 3 starting: Historical context (context, biographies, significance) - document {document_id}")
+                phase3_results = await self._run_phase3(ocr_data, phase1_results, phase2_results, raw_agent_responses)
             else:
                 # Skip context agent, use empty results
+                logger.info(f"⏩ Phase 3 skipped due to budget constraints - document {document_id}")
                 phase3_results = {'historical_context': '', 'significance': '', 'biographies': {}}
             phase3_duration = (datetime.utcnow() - phase3_start).total_seconds() * 1000
+            if enable_context_agent:
+                logger.info(f"✓ Phase 3 completed in {phase3_duration/1000:.2f}s - document {document_id}")
 
             # Detect if OCR data contains structured extraction
             has_structured_ocr = 'structured_data' in ocr_data
@@ -134,6 +150,22 @@ class AgentOrchestrator:
                 logger.info("OCR is text-only, using agent results only")
                 # Merge results into target schema
                 enriched_data = self._merge_results(phase1_results, phase2_results, phase3_results)
+
+            # Phase 4: Enhance metadata for searchability
+            logger.info(f"🚀 Phase 4 starting: Metadata enhancement for searchability - document {document_id}")
+            phase4_start = datetime.utcnow()
+            filename = ocr_data.get('filename', '') or ocr_data.get('file_path', '')
+            collection_id = collection_metadata.get('collection_id') if collection_metadata else None
+
+            enriched_data = self.metadata_enhancer.enhance_metadata(
+                enriched_data=enriched_data,
+                ocr_data=ocr_data,
+                filename=filename,
+                document_id=document_id,
+                collection_id=collection_id
+            )
+            phase4_duration = (datetime.utcnow() - phase4_start).total_seconds() * 1000
+            logger.info(f"✓ Phase 4 completed in {phase4_duration/1000:.2f}s - document {document_id}")
 
             # Validate and calculate completeness
             completeness = self.validator.calculate_completeness(enriched_data)
@@ -155,11 +187,13 @@ class AgentOrchestrator:
                     "phase_1_duration_ms": phase1_duration,
                     "phase_2_duration_ms": phase2_duration,
                     "phase_3_duration_ms": phase3_duration,
+                    "phase_4_duration_ms": phase4_duration,
                     "total_processing_time_ms": enrichment_duration,
                     "enrichment_id": self.enrichment_id,
                     "context_agent_enabled": enable_context_agent,
                     "budget_status": self.budget_manager.check_budget('daily') if self.budget_manager else None
                 },
+                "raw_agent_responses": raw_agent_responses,  # Include raw agent responses for auditing
                 "review_required": completeness["requires_review"],
                 "review_reason": completeness["review_reason"] if completeness["requires_review"] else None
             }
@@ -173,7 +207,7 @@ class AgentOrchestrator:
                 "enrichment_id": self.enrichment_id
             }
 
-    async def _run_phase1(self, ocr_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def _run_phase1(self, ocr_data: Dict[str, Any], raw_responses: Dict[str, Any]) -> Dict[str, Any]:
         """
         Phase 1: Parallel extraction using Ollama (free, fast)
 
@@ -211,6 +245,14 @@ class AgentOrchestrator:
         entity_result = results[1] if not isinstance(results[1], Exception) else None
         structure_result = results[2] if not isinstance(results[2], Exception) else None
 
+        # Store raw responses
+        if metadata_result:
+            raw_responses['metadata_agent'] = metadata_result
+        if entity_result:
+            raw_responses['entity_agent'] = entity_result
+        if structure_result:
+            raw_responses['structure_agent'] = structure_result
+
         # Log any agent failures
         for idx, result in enumerate(results):
             if isinstance(result, Exception):
@@ -230,7 +272,8 @@ class AgentOrchestrator:
     async def _run_phase2(
         self,
         ocr_data: Dict[str, Any],
-        phase1_results: Dict[str, Any]
+        phase1_results: Dict[str, Any],
+        raw_responses: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Phase 2: Content analysis using Claude (depends on Phase 1)
@@ -254,6 +297,8 @@ class AgentOrchestrator:
                 }
             )
             phase2_results["summary"] = summary or {}
+            if summary:
+                raw_responses['content_agent_summary'] = summary
         except Exception as e:
             logger.error(f"Phase 2 summary generation failed: {e}", exc_info=True)
             phase2_results["summary"] = self._get_fallback_result(self.CONTENT_AGENT, "generate_summary")
@@ -267,6 +312,8 @@ class AgentOrchestrator:
                 {"text": ocr_data.get("full_text", ocr_data.get("text", ""))}
             )
             phase2_results["keywords"] = keywords or {}
+            if keywords:
+                raw_responses['content_agent_keywords'] = keywords
         except Exception as e:
             logger.error(f"Phase 2 keyword extraction failed: {e}", exc_info=True)
             phase2_results["keywords"] = self._get_fallback_result(self.CONTENT_AGENT, "extract_keywords")
@@ -283,6 +330,8 @@ class AgentOrchestrator:
                 }
             )
             phase2_results["subjects"] = subjects or {}
+            if subjects:
+                raw_responses['content_agent_subjects'] = subjects
         except Exception as e:
             logger.error(f"Phase 2 subject classification failed: {e}", exc_info=True)
             phase2_results["subjects"] = self._get_fallback_result(self.CONTENT_AGENT, "classify_subjects")
@@ -294,7 +343,8 @@ class AgentOrchestrator:
         self,
         ocr_data: Dict[str, Any],
         phase1_results: Dict[str, Any],
-        phase2_results: Dict[str, Any]
+        phase2_results: Dict[str, Any],
+        raw_responses: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Phase 3: Historical context using Claude Opus (depends on all phases)
@@ -334,6 +384,8 @@ class AgentOrchestrator:
                 }
             )
             phase3_results["historical_context"] = context or {}
+            if context:
+                raw_responses['context_agent_historical'] = context
         except Exception as e:
             logger.error(f"Phase 3 historical context failed: {e}", exc_info=True)
             phase3_results["historical_context"] = self._get_fallback_result(self.CONTEXT_AGENT, "research_historical_context")
@@ -350,6 +402,8 @@ class AgentOrchestrator:
                 }
             )
             phase3_results["significance"] = significance or {}
+            if significance:
+                raw_responses['context_agent_significance'] = significance
         except Exception as e:
             logger.error(f"Phase 3 significance assessment failed: {e}", exc_info=True)
             phase3_results["significance"] = self._get_fallback_result(self.CONTEXT_AGENT, "assess_significance")
@@ -385,14 +439,16 @@ class AgentOrchestrator:
 
         while True:
             try:
-                logger.debug(f"Invoking {agent_id}/{tool_name} (attempt {attempt + 1}, timeout: {timeout_seconds}s)")
+                start_time = datetime.utcnow()
+                logger.info(f"⏳ Waiting on model: {agent_id}/{tool_name} (attempt {attempt + 1}, timeout: {timeout_seconds}s)")
                 result = await self.mcp_client.invoke_tool(
                     agent_id=agent_id,
                     tool_name=tool_name,
                     arguments=params,
                     timeout=timeout_seconds
                 )
-                logger.debug(f"Agent {agent_id} tool {tool_name} succeeded on attempt {attempt + 1}")
+                duration = (datetime.utcnow() - start_time).total_seconds()
+                logger.info(f"✓ Model responded: {agent_id}/{tool_name} completed in {duration:.2f}s (attempt {attempt + 1})")
                 result["_source"] = "actual"
                 return result
 
@@ -402,14 +458,14 @@ class AgentOrchestrator:
                 retry_strategy = get_retry_strategy(error_type)
 
                 logger.warning(
-                    f"Agent {agent_id} tool {tool_name} failed with {error_type.value}: {e} "
+                    f"⚠️ Agent failed: {agent_id}/{tool_name} with {error_type.value}: {e} "
                     f"(attempt {attempt + 1}/{retry_strategy.max_retries + 1})"
                 )
 
                 # Check if we should retry
                 if not retry_strategy.is_retryable or attempt >= retry_strategy.max_retries:
                     logger.error(
-                        f"Agent {agent_id} tool {tool_name} failed after {attempt + 1} attempts "
+                        f"❌ Agent exhausted retries: {agent_id}/{tool_name} failed after {attempt + 1} attempts "
                         f"({error_type.value}): {e}"
                     )
                     return self._get_fallback_result(agent_id, tool_name)
@@ -417,7 +473,7 @@ class AgentOrchestrator:
                 # Calculate backoff and retry
                 attempt += 1
                 wait_time = retry_strategy.get_wait_time(attempt - 1)
-                logger.info(f"Retrying in {wait_time}s (strategy: {retry_strategy.description})")
+                logger.info(f"⏳ Retrying {agent_id}/{tool_name} in {wait_time}s (strategy: {retry_strategy.description})")
                 await asyncio.sleep(wait_time)
 
     def _get_fallback_result(self, agent_id: str, tool_name: str) -> Dict[str, Any]:

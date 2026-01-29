@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { FolderOpen, Zap, Database, Activity, Layers, LogOut, Settings, Home, Link2, BarChart, CheckSquare, FileText, Boxes, Edit, ChevronDown } from 'lucide-react';
+import { FolderOpen, Zap, Database, Activity, Layers, LogOut, Settings, Home, Link2, BarChart, CheckSquare, FileText, Boxes, Edit, ChevronDown, Users } from 'lucide-react';
 
 export const PageNavigation: React.FC<{ onLogout?: () => void }> = ({ onLogout }) => {
   const navigate = useNavigate();
@@ -21,6 +21,7 @@ export const PageNavigation: React.FC<{ onLogout?: () => void }> = ({ onLogout }
     { path: '/rbac/admin-dashboard', label: 'Dashboard', icon: BarChart },
     { path: '/rbac/review-queue', label: 'Review Queue', icon: CheckSquare },
     { path: '/rbac/audit-logs', label: 'Audit Logs', icon: FileText },
+    { path: '/rbac/user-roles', label: 'User Roles', icon: Users },
     { path: '/archipelago-metadata-updater', label: 'Metadata Update', icon: Edit },
   ];
 

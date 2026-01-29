@@ -66,9 +66,13 @@ class EnrichmentConfig:
     AGENT_RETRY_BACKOFF_BASE = int(os.getenv("AGENT_RETRY_BACKOFF_BASE", "2"))
 
     # Schema Configuration
+    _default_schema_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "schema/historical_letters_schema.json"
+    )
     SCHEMA_PATH = os.getenv(
         "SCHEMA_PATH",
-        "/app/enrichment_service/schema/historical_letters_schema.json"
+        _default_schema_path if os.path.exists(_default_schema_path) else "/app/enrichment_service/schema/historical_letters_schema.json"
     )
     SCHEMA_VALIDATION_ENABLED = os.getenv("SCHEMA_VALIDATION_ENABLED", "true").lower() == "true"
 

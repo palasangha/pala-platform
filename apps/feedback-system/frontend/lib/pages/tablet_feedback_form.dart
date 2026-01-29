@@ -61,7 +61,9 @@ class _TabletFeedbackFormState extends State<TabletFeedbackForm> {
 
     // Check if all questions are answered
     final unansweredQuestions = questions
-        .where((q) => q['required'] == true && !ratings.containsKey(q['key']))
+        .where((q) => 
+          q['required'] == true && 
+          (!ratings.containsKey(q['key']) || ratings[q['key']] == null || ratings[q['key']] == 0 || ratings[q['key']]! < 1))
         .toList();
 
     if (unansweredQuestions.isNotEmpty) {
@@ -81,8 +83,8 @@ class _TabletFeedbackFormState extends State<TabletFeedbackForm> {
       
       await apiService.submitFeedback({
         'department_code': widget.departmentCode,
-        'user_name': isAnonymous ? null : _nameController.text.trim(),
-        'user_email': isAnonymous ? null : _emailController.text.trim(),
+        'user_name': isAnonymous ? 'Anonymous' : _nameController.text.trim(),
+        'user_email': isAnonymous ? 'anonymous@feedback.local' : _emailController.text.trim(),
         'is_anonymous': isAnonymous,
         'access_mode': 'tablet',
         'ratings': ratings,
@@ -192,7 +194,7 @@ class _TabletFeedbackFormState extends State<TabletFeedbackForm> {
             label: label,
             icon: icon,
             initialRating: ratings[key],
-            maxRating: 10,
+            maxRating: 5,
             activeColor: primaryColor,
             onRatingSelected: (rating) {
               setState(() {

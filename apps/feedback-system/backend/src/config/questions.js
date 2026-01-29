@@ -234,7 +234,7 @@ const validateRating = (questionType, rating) => {
     case QUESTION_TYPES.NUMERIC:
     case 'numeric':
     case 'rating_10':
-      return rating >= 0 && rating <= 10;
+      return rating >= 1 && rating <= 5;  // Changed from 0-10 to 1-5
     case 'binary_yes_no':
       return rating === 0 || rating === 1;
     default:

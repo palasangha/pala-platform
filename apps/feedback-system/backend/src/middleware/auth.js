@@ -67,7 +67,7 @@ const requireDeptAdmin = (departmentCode) => {
 // Filter departments based on user role
 const filterDepartmentAccess = (req, res, next) => {
   if (req.user.role === ROLES.DEPT_ADMIN) {
-    req.departmentFilter = { code: req.user.department_code };
+    req.departmentFilter = { department_code: req.user.department_code };
   } else {
     req.departmentFilter = {};
   }

@@ -1,36 +1,30 @@
 """
-Biography Generator - Uses Claude Opus to generate enhanced biographies
+Biography Generator - Uses Ollama to generate enhanced biographies
 """
 
 import logging
+import os
+import requests
 from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
 class BiographyGenerator:
-    """Generates enhanced biographies using Claude Opus"""
+    """Generates enhanced biographies using Ollama"""
 
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key
-        self.enabled = bool(api_key)
+        # Ollama doesn't need API key, but keep parameter for compatibility
+        self.ollama_host = os.getenv('OLLAMA_HOST', 'http://ollama:11434')
+        self.ollama_model = os.getenv('OLLAMA_MODEL', 'llama3.2')
+        self.enabled = True
 
-        if self.enabled:
-            try:
-                from anthropic import Anthropic
-                self.client = Anthropic(api_key=api_key)
-                logger.info("BiographyGenerator initialized with Claude Opus")
-            except Exception as e:
-                logger.warning(f"Could not initialize Claude client: {e}")
-                self.enabled = False
-        else:
-            logger.info("BiographyGenerator running in fallback mode")
+        # Don't test connection at startup - will test on first use
+        logger.info(f"BiographyGenerator initialized with Ollama ({self.ollama_model})")
 
     async def generate(self, people: List[Dict[str, Any]], context: str = "") -> Dict[str, Dict[str, str]]:
         """
-        Generate enhanced biographies for key people
-
-        Returns dictionary of person name -> biography
+        Generate enhanced biographies for key people using Ollama
         """
         if not people:
             return {"biographies": {}}
@@ -41,30 +35,37 @@ class BiographyGenerator:
         biographies = {}
 
         try:
-            for person in people[:5]:  # Limit to 5 people for cost control
+            for person in people[:5]:  # Limit to 5 people
                 name = person.get('name', '')
                 if not name:
                     continue
 
                 prompt = self._build_biography_prompt(name, person, context)
 
-                response = self.client.messages.create(
-                    model="claude-opus-4-20250805",
-                    max_tokens=400,
-                    messages=[{
-                        "role": "user",
-                        "content": prompt
-                    }]
+                response = requests.post(
+                    f"{self.ollama_host}/api/generate",
+                    json={
+                        "model": self.ollama_model,
+                        "prompt": prompt,
+                        "stream": False,
+                        "options": {
+                            "temperature": 0.6,
+                            "num_predict": 300
+                        }
+                    },
+                    timeout=90
                 )
+                response.raise_for_status()
 
-                biography = response.content[0].text.strip()
+                result = response.json()
+                biography = result.get('response', '').strip()
                 biographies[name] = biography
                 logger.info(f"Generated biography for {name}")
 
             return {"biographies": biographies}
 
         except Exception as e:
-            logger.error(f"Claude Opus error: {e}")
+            logger.error(f"Ollama error: {e}")
             return self._fallback_generate(people)
 
     def _build_biography_prompt(self, name: str, person_data: Dict[str, Any], context: str) -> str:

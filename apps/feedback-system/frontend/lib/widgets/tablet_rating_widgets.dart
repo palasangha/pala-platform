@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// Tablet-optimized rating bar (1-10 scale)
+/// Tablet-optimized rating bar (1-5 scale)
 /// Large touch targets with visual feedback
 class TabletRatingBar extends StatefulWidget {
   final String label;
@@ -17,7 +17,7 @@ class TabletRatingBar extends StatefulWidget {
     this.initialRating,
     required this.onRatingSelected,
     this.activeColor,
-    this.maxRating = 10,
+    this.maxRating = 5,
   });
 
   @override

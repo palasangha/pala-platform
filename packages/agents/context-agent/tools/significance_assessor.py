@@ -1,36 +1,30 @@
 """
-Significance Assessor - Uses Claude Opus to assess historical significance
+Significance Assessor - Uses Ollama to assess historical significance
 """
 
 import logging
+import os
+import requests
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
 
 class SignificanceAssessor:
-    """Assesses historical significance using Claude Opus"""
+    """Assesses historical significance using Ollama"""
 
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key
-        self.enabled = bool(api_key)
+        # Ollama doesn't need API key, but keep parameter for compatibility
+        self.ollama_host = os.getenv('OLLAMA_HOST', 'http://ollama:11434')
+        self.ollama_model = os.getenv('OLLAMA_MODEL', 'llama3.2')
+        self.enabled = True
 
-        if self.enabled:
-            try:
-                from anthropic import Anthropic
-                self.client = Anthropic(api_key=api_key)
-                logger.info("SignificanceAssessor initialized with Claude Opus")
-            except Exception as e:
-                logger.warning(f"Could not initialize Claude client: {e}")
-                self.enabled = False
-        else:
-            logger.info("SignificanceAssessor running in fallback mode")
+        # Don't test connection at startup - will test on first use
+        logger.info(f"SignificanceAssessor initialized with Ollama ({self.ollama_model})")
 
     async def assess(self, text: str, context: str = "") -> Dict[str, Any]:
         """
-        Assess the historical significance of a document
-
-        Returns significance level and detailed assessment
+        Assess the historical significance of a document using Ollama
         """
         if not text:
             return {
@@ -45,16 +39,23 @@ class SignificanceAssessor:
         try:
             prompt = self._build_assessment_prompt(text, context)
 
-            response = self.client.messages.create(
-                model="claude-opus-4-20250805",
-                max_tokens=800,
-                messages=[{
-                    "role": "user",
-                    "content": prompt
-                }]
+            response = requests.post(
+                f"{self.ollama_host}/api/generate",
+                json={
+                    "model": self.ollama_model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.5,
+                        "num_predict": 500
+                    }
+                },
+                timeout=120
             )
+            response.raise_for_status()
 
-            assessment_text = response.content[0].text.strip()
+            result = response.json()
+            assessment_text = result.get('response', '').strip()
 
             # Parse assessment
             significance_level = self._extract_significance_level(assessment_text)
@@ -64,12 +65,12 @@ class SignificanceAssessor:
             return {
                 "significance_level": significance_level,
                 "assessment": assessment_text,
-                "confidence": 0.9,
-                "model": "claude-opus"
+                "confidence": 0.8,
+                "model": f"ollama-{self.ollama_model}"
             }
 
         except Exception as e:
-            logger.error(f"Claude Opus error: {e}")
+            logger.error(f"Ollama error: {e}")
             return self._fallback_assess(text)
 
     def _build_assessment_prompt(self, text: str, context: str) -> str:

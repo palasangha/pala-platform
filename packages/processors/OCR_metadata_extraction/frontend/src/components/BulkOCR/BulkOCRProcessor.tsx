@@ -26,6 +26,7 @@ interface BulkProcessingState {
   handwriting: boolean;
   recursive: boolean;
   exportFormats: string[];
+  prompt: string;
   isProcessing: boolean;
   isCreatingProject: boolean;
   progress: {
@@ -186,6 +187,7 @@ const BulkOCRProcessor: React.FC = () => {
     handwriting: false,
     recursive: true,
     exportFormats: ['json', 'csv', 'text'],
+    prompt: '',
     isProcessing: false,
     isCreatingProject: false,
     progress: {
@@ -235,12 +237,75 @@ const BulkOCRProcessor: React.FC = () => {
     loadAvailableProviders();
   }, []);
 
+  // Restore job state on mount (handles page refresh)
+  useEffect(() => {
+    const restoreJobState = async () => {
+      const savedJobId = localStorage.getItem('current_bulk_job_id');
+      if (!savedJobId) return;
+
+      console.log('[JOB_RESTORE] Found saved job:', savedJobId);
+      
+      try {
+        const response = await authenticatedFetch(`/api/bulk/progress/${savedJobId}`);
+        if (!response.ok) {
+          console.log('[JOB_RESTORE] Job not found, clearing saved state');
+          localStorage.removeItem('current_bulk_job_id');
+          return;
+        }
+
+        const data = await response.json();
+        console.log('[JOB_RESTORE] Job status:', data.status);
+
+        // Only restore if job is still processing
+        if (data.status === 'processing' || data.status === 'pending') {
+          console.log('[JOB_RESTORE] Restoring active job');
+          setCurrentJobId(savedJobId);
+          setState((prevState) => ({
+            ...prevState,
+            isProcessing: true,
+            progress: data.progress,
+          }));
+          pollProgress(savedJobId);
+        } else if (data.status === 'completed') {
+          console.log('[JOB_RESTORE] Job completed, showing results');
+          setCurrentJobId(savedJobId);
+          setState((prevState) => ({
+            ...prevState,
+            isProcessing: false,
+            results: data.results,
+            progress: {
+              current: data.progress.total,
+              total: data.progress.total,
+              percentage: 100,
+              filename: 'Completed',
+            },
+          }));
+          localStorage.removeItem('current_bulk_job_id');
+        } else {
+          console.log('[JOB_RESTORE] Job in terminal state, clearing');
+          localStorage.removeItem('current_bulk_job_id');
+        }
+      } catch (error) {
+        console.error('[JOB_RESTORE] Error restoring job:', error);
+        localStorage.removeItem('current_bulk_job_id');
+      }
+    };
+
+    restoreJobState();
+  }, []);
+
   const handleFolderPathChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setState({ ...state, folderPath: e.target.value, error: null });
   };
 
   const handleProviderChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setState({ ...state, provider: e.target.value });
+  };
+
+  // Check if provider supports prompts (LLM-based providers)
+  const supportsPrompt = (provider: string): boolean => {
+    const promptProviders = ['ollama', 'vllm', 'llamacpp', 'claude', 'lmstudio', 'openai', 'gpt4'];
+    return promptProviders.includes(provider.toLowerCase());
   };
 
   const handleLanguageToggle = (lang: string) => {
@@ -294,6 +359,41 @@ const BulkOCRProcessor: React.FC = () => {
       setBrowserState({
         ...browserState,
         isOpen: true,
+        isLoading: false,
+        error: err instanceof Error ? err.message : 'Failed to load folders',
+      });
+    }
+  };
+
+  const handleNavigateFolder = async (path: string) => {
+    setBrowserState({ ...browserState, isLoading: true, error: null });
+
+    try {
+      const response = await authenticatedFetch('/api/bulk/browse-folders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ path }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to load folders');
+      }
+
+      const data = await response.json();
+      setBrowserState({
+        ...browserState,
+        isLoading: false,
+        currentPath: data.current_path,
+        folders: data.folders || [],
+        files: data.files || [],
+        parentPath: data.parent_path,
+        error: null,
+      });
+    } catch (err) {
+      setBrowserState({
+        ...browserState,
         isLoading: false,
         error: err instanceof Error ? err.message : 'Failed to load folders',
       });
@@ -358,6 +458,7 @@ const BulkOCRProcessor: React.FC = () => {
         // Check if completed
         if (data.status === 'completed') {
           clearInterval(pollInterval);
+          localStorage.removeItem('current_bulk_job_id');
           setState((prevState) => ({
             ...prevState,
             isProcessing: false,
@@ -374,10 +475,22 @@ const BulkOCRProcessor: React.FC = () => {
         // Check if error
         if (data.status === 'error') {
           clearInterval(pollInterval);
+          localStorage.removeItem('current_bulk_job_id');
           setState((prevState) => ({
             ...prevState,
             isProcessing: false,
             error: data.error || 'Processing failed',
+          }));
+        }
+
+        // Check if cancelled
+        if (data.status === 'cancelled') {
+          clearInterval(pollInterval);
+          localStorage.removeItem('current_bulk_job_id');
+          setState((prevState) => ({
+            ...prevState,
+            isProcessing: false,
+            error: 'Job was cancelled',
           }));
         }
       } catch (err) {
@@ -410,19 +523,26 @@ const BulkOCRProcessor: React.FC = () => {
     });
 
     try {
+      const requestBody: any = {
+        folder_path: state.folderPath,
+        recursive: state.recursive,
+        provider: state.provider,
+        languages: state.languages,
+        handwriting: state.handwriting,
+        export_formats: state.exportFormats,
+      };
+
+      // Add prompt if provider supports it and prompt is provided
+      if (supportsPrompt(state.provider) && state.prompt.trim()) {
+        requestBody.prompt = state.prompt;
+      }
+
       const response = await authenticatedFetch('/api/bulk/process', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          folder_path: state.folderPath,
-          recursive: state.recursive,
-          provider: state.provider,
-          languages: state.languages,
-          handwriting: state.handwriting,
-          export_formats: state.exportFormats,
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
@@ -445,6 +565,7 @@ const BulkOCRProcessor: React.FC = () => {
       // Start polling for progress
       if (data.job_id) {
         setCurrentJobId(data.job_id);
+        localStorage.setItem('current_bulk_job_id', data.job_id);
         pollProgress(data.job_id);
       } else {
         throw new Error('No job ID received from server');
@@ -953,7 +1074,7 @@ const BulkOCRProcessor: React.FC = () => {
                     </button>
                   </div>
                   <p className="text-xs text-gray-500 mt-2">
-                    💡 <strong>Note:</strong> Paths are from the server machine/Docker container. Use the "Browse" button to select folders, or enter paths like <code className="bg-gray-100 px-1 rounded">/data/Bhushanji/eng-typed</code>
+                    💡 <strong>Note:</strong> Paths are from the server machine/Docker container. Use the "Browse" button to select folders, or enter paths like <code className="bg-gray-100 px-1 rounded">/data/documents</code> or <code className="bg-gray-100 px-1 rounded">./data</code>
                   </p>
                 </div>
 
@@ -986,6 +1107,27 @@ const BulkOCRProcessor: React.FC = () => {
                     )}
                   </select>
                 </div>
+
+                {/* Prompt Text Box (for LLM providers) */}
+                {supportsPrompt(state.provider) && (
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Custom Prompt (Optional)
+                      <span className="ml-2 text-xs text-blue-600">✨ LLM Provider</span>
+                    </label>
+                    <textarea
+                      value={state.prompt}
+                      onChange={(e) => setState({ ...state, prompt: e.target.value })}
+                      disabled={state.isProcessing}
+                      placeholder="Enter custom instructions for the LLM (e.g., 'Extract text in Hindi and translate to English' or 'Focus on extracting dates and numbers')"
+                      rows={4}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      💡 Provide specific instructions to guide the LLM's text extraction behavior
+                    </p>
+                  </div>
+                )}
 
                 {/* Recursive Processing */}
                 <div className="mb-4">
@@ -1185,6 +1327,71 @@ const BulkOCRProcessor: React.FC = () => {
           </div>
         )}
       </main>
+
+      {/* Folder Browser Modal */}
+      {browserState.isOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
+            <div className="p-4 border-b border-gray-200 flex justify-between items-center">
+              <h3 className="text-lg font-semibold">Browse Server Folders</h3>
+              <button
+                onClick={() => setBrowserState({ ...browserState, isOpen: false })}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                ✕
+              </button>
+            </div>
+            
+            {/* Current Path Display with Back Button */}
+            <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex items-center gap-2">
+              {browserState.parentPath !== null && (
+                <button
+                  onClick={() => handleNavigateFolder(browserState.parentPath || '')}
+                  className="px-3 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition-colors text-sm"
+                  disabled={browserState.isLoading}
+                >
+                  ← Back
+                </button>
+              )}
+              <span className="text-sm text-gray-600 flex-1">
+                {browserState.currentPath || 'Server Root'}
+              </span>
+            </div>
+
+            <div className="p-4 overflow-y-auto max-h-[60vh]">
+              {browserState.isLoading ? (
+                <p className="text-center text-gray-500">Loading...</p>
+              ) : browserState.error ? (
+                <p className="text-center text-red-500">{browserState.error}</p>
+              ) : (
+                <div className="space-y-2">
+                  {browserState.folders.map((folder: any) => (
+                    <div key={folder.path} className="flex gap-2">
+                      <button
+                        onClick={() => handleNavigateFolder(folder.path)}
+                        className="flex-1 text-left p-3 border border-gray-200 rounded hover:bg-gray-50 hover:border-gray-300 transition-colors"
+                      >
+                        <div className="font-medium">📁 {folder.name}</div>
+                        <div className="text-sm text-gray-500">{folder.path}</div>
+                        <div className="text-xs text-gray-400">{folder.file_count} files</div>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setState({ ...state, folderPath: folder.path });
+                          setBrowserState({ ...browserState, isOpen: false });
+                        }}
+                        className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors text-sm"
+                      >
+                        Select
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

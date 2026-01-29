@@ -69,7 +69,8 @@ class _FeedbackFormPageState extends State<FeedbackFormPage> {
     // Validate all ratings are filled
     final questions = departmentData!['questions'] as List;
     for (var q in questions) {
-      if (q['required'] == true && ratings[q['key']] == 0.0) {
+      final rating = ratings[q['key']];
+      if (q['required'] == true && (rating == null || rating == 0.0 || rating < 1)) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Please answer: ${q['label']}'),
@@ -90,8 +91,8 @@ class _FeedbackFormPageState extends State<FeedbackFormPage> {
 
       final feedbackData = {
         'department_code': widget.departmentCode,
-        'user_name': isAnonymous ? null : _nameController.text.trim(),
-        'user_email': isAnonymous ? null : _emailController.text.trim(),
+        'user_name': isAnonymous ? 'Anonymous' : _nameController.text.trim(),
+        'user_email': isAnonymous ? 'anonymous@feedback.local' : _emailController.text.trim(),
         'is_anonymous': isAnonymous,
         'access_mode': 'web',
         'ratings': ratingsMap,
@@ -123,34 +124,69 @@ class _FeedbackFormPageState extends State<FeedbackFormPage> {
     final currentRating = ratings[questionId] ?? 0.0;
 
     if (type == 'rating_10' || type == 'numeric') {
+      // Changed from slider to number buttons (1-5)
       return Column(
         children: [
-          Slider(
-            value: currentRating,
-            min: 0,
-            max: 10,
-            divisions: 10,
-            label: currentRating.toInt().toString(),
-            onChanged: (value) {
-              setState(() {
-                ratings[questionId] = value;
-              });
-            },
-          ),
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('0', style: TextStyle(color: Colors.grey[600])),
-              Text(
-                currentRating.toInt().toString(),
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: Theme.of(context).colorScheme.primary,
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: List.generate(5, (index) {
+              final rating = index + 1;
+              final isSelected = currentRating.toInt() == rating;
+              return Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                  child: Material(
+                    color: isSelected
+                        ? Theme.of(context).colorScheme.primary
+                        : Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    elevation: isSelected ? 4 : 1,
+                    child: InkWell(
+                      onTap: () {
+                        setState(() {
+                          ratings[questionId] = rating.toDouble();
+                        });
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        height: 60,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: isSelected
+                                ? Theme.of(context).colorScheme.primary
+                                : Colors.grey[300]!,
+                            width: isSelected ? 3 : 2,
+                          ),
+                        ),
+                        child: Center(
+                          child: Text(
+                            '$rating',
+                            style: TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              color: isSelected
+                                  ? Colors.white
+                                  : Colors.grey[700],
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
-              ),
-              Text('10', style: TextStyle(color: Colors.grey[600])),
-            ],
+                  ),
+                ),
+              );
+            }),
           ),
+          const SizedBox(height: 8),
+          if (currentRating > 0)
+            Text(
+              'Rating: ${currentRating.toInt()}/5',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
         ],
       );
     } else if (type == 'smiley_5' || type == 'emoji') {

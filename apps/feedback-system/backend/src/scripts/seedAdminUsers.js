@@ -24,7 +24,7 @@ const admins = [
   {
     email: 'dhammalane@globalpagoda.org',
     password: 'DhammaLane@2026!',
-    full_name: 'Dhamma Lane Administrator',
+    full_name: 'Dhammalaya Administrator',
     role: 'dept_admin',
     department_code: 'dhamma_lane',
     active: true

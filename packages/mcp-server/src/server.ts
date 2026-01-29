@@ -12,7 +12,7 @@ import { ServerHandlers } from './handlers';
 import { Logger } from './logging/logger';
 import { WebSocket } from 'ws';
 
-const logger = new Logger({ name: 'MCPServer' });
+const logger = new Logger({ name: 'MCPServer', level: (process.env.LOG_LEVEL as any) || 'info' });
 
 export class MCPServer {
   private config: ServerConfig;
@@ -94,10 +94,21 @@ export class MCPServer {
     });
 
     this.protocolHandler.registerHandler('tools/invoke', async (method, params: any) => {
+      logger.info('🔍 TRACE: Received tools/invoke request', { 
+        toolName: params?.toolName, 
+        hasArguments: !!params?.arguments,
+        params: JSON.stringify(params).substring(0, 200)
+      });
       const { toolName, arguments: args } = params;
+      logger.info('🔍 TRACE: Invoking tool via invoker', { toolName });
       const result = await this.invoker!.invoke({
         toolName,
         arguments: args || {},
+      });
+      logger.info('🔍 TRACE: Tool invocation completed', { 
+        toolName, 
+        success: !!result,
+        resultKeys: result ? Object.keys(result) : []
       });
       return result;
     });

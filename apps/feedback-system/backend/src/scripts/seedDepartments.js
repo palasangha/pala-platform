@@ -59,7 +59,7 @@ const departments = [
   },
   {
     code: 'dhamma_lane',
-    name: 'Dhamma Lane',
+    name: 'Dhammalaya',
     description: 'Meditation walkway and peaceful environment',
     email_recipients: ['dhammalane@globalpagoda.org'],
     questions: [
@@ -106,7 +106,7 @@ const departments = [
     ],
     tablet_config: {
       primary_color: '#27ae60',
-      welcome_message: 'Welcome to Dhamma Lane!'
+      welcome_message: 'Welcome to Dhammalaya!'
     }
   },
   {
