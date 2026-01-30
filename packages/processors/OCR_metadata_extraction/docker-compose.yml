@@ -144,6 +144,8 @@ services:
     - backend
     networks:
     - gvpocr-network
+    logging:
+      driver: none
   ollama:
     image: ollama/ollama:latest
     container_name: gvpocr-ollama
@@ -780,81 +782,81 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-  enrichment-coordinator:
-    image: ocr_metadata_extraction-enrichment-coordinator
-    container_name: gvpocr-enrichment-coordinator
-    command: python -u -m enrichment_service.coordinator.enrichment_coordinator
-    restart: unless-stopped
-    ports:
-    - 8011:8001
-    volumes:
-    - ./enrichment_service:/app/enrichment_service
-    - enrichment_logs:/app/logs
-    environment:
-    - FLASK_ENV=production
-    - PORT=8001
-    - LOG_LEVEL=INFO
-    - LOG_DIR=/app/logs
-    - MONGO_URI=mongodb://mongodb:27017/gvpocr
-    - MONGO_USERNAME=${MONGO_ROOT_USERNAME:-gvpocr_admin}
-    - MONGO_PASSWORD=${MONGO_ROOT_PASSWORD}
-    - MONGO_HOST=mongodb
-    - MONGO_PORT=27017
-    - DB_NAME=gvpocr
-    - NSQD_ADDRESS=nsqd:4150
-    - NSQLOOKUPD_ADDRESSES=nsqlookupd:4161
-    - ENRICHMENT_ENABLED=true
-    - ENRICHMENT_BATCH_SIZE=50
-    - ENRICHMENT_REVIEW_THRESHOLD=0.95
-    - MCP_SERVER_URL=ws://mcp-server:3003
-    - COORDINATOR_LOG_LEVEL=INFO
-    healthcheck:
-      test:
-      - CMD
-      - python
-      - -c
-      - "import pymongo; pymongo.MongoClient('mongodb://mongodb:27017/gvpocr').server_info(); print('healthy')"
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    networks:
-    - gvpocr-network
-    depends_on:
-    - mcp-server
-    - mongodb
-    - nsqd
-  enrichment-worker:
-    image: ocr_metadata_extraction-enrichment-worker
-    command: python -u -m enrichment_service.workers.enrichment_worker
-    restart: unless-stopped
-    volumes:
-    - ./enrichment_service:/app/enrichment_service
-    - enrichment_logs:/app/logs
-    environment:
-    - FLASK_ENV=production
-    - LOG_LEVEL=INFO
-    - LOG_DIR=/app/logs
-    - WORKER_LOG_LEVEL=INFO
-    - MONGO_USERNAME=${MONGO_ROOT_USERNAME:-gvpocr_admin}
-    - MONGO_PASSWORD=${MONGO_ROOT_PASSWORD}
-    - MONGO_HOST=mongodb
-    - MONGO_PORT=27017
-    - NSQD_ADDRESS=nsqd:4150
-    - NSQLOOKUPD_ADDRESSES=nsqlookupd:4161
-    - MCP_SERVER_URL=ws://mcp-server:3003
-    - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-    - ENRICHMENT_ENABLED=true
-    - MAX_CLAUDE_TOKENS_PER_DOC=50000
-    - COST_ALERT_THRESHOLD_USD=100.00
-    networks:
-    - gvpocr-network
-    depends_on:
-    - mcp-server
-    - mongodb
-    - nsqd
-    deploy:
-      replicas: 2
+  # enrichment-coordinator:
+  #   image: ocr_metadata_extraction-enrichment-coordinator
+  #   container_name: gvpocr-enrichment-coordinator
+  #   command: python -u -m enrichment_service.coordinator.enrichment_coordinator
+  #   restart: unless-stopped
+  #   ports:
+  #   - 8011:8001
+  #   volumes:
+  #   - ./enrichment_service:/app/enrichment_service
+  #   - enrichment_logs:/app/logs
+  #   environment:
+  #   - FLASK_ENV=production
+  #   - PORT=8001
+  #   - LOG_LEVEL=INFO
+  #   - LOG_DIR=/app/logs
+  #   - MONGO_URI=mongodb://mongodb:27017/gvpocr
+  #   - MONGO_USERNAME=${MONGO_ROOT_USERNAME:-gvpocr_admin}
+  #   - MONGO_PASSWORD=${MONGO_ROOT_PASSWORD}
+  #   - MONGO_HOST=mongodb
+  #   - MONGO_PORT=27017
+  #   - DB_NAME=gvpocr
+  #   - NSQD_ADDRESS=nsqd:4150
+  #   - NSQLOOKUPD_ADDRESSES=nsqlookupd:4161
+  #   - ENRICHMENT_ENABLED=true
+  #   - ENRICHMENT_BATCH_SIZE=50
+  #   - ENRICHMENT_REVIEW_THRESHOLD=0.95
+  #   - MCP_SERVER_URL=ws://mcp-server:3003
+  #   - COORDINATOR_LOG_LEVEL=INFO
+  #   healthcheck:
+  #     test:
+  #     - CMD
+  #     - python
+  #     - -c
+  #     - "import pymongo; pymongo.MongoClient('mongodb://mongodb:27017/gvpocr').server_info(); print('healthy')"
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 30s
+  #   networks:
+  #   - gvpocr-network
+  #   depends_on:
+  #   - mcp-server
+  #   - mongodb
+  #   - nsqd
+  # enrichment-worker:
+  #   image: ocr_metadata_extraction-enrichment-worker
+  #   command: python -u -m enrichment_service.workers.enrichment_worker
+  #   restart: unless-stopped
+  #   volumes:
+  #   - ./enrichment_service:/app/enrichment_service
+  #   - enrichment_logs:/app/logs
+  #   environment:
+  #   - FLASK_ENV=production
+  #   - LOG_LEVEL=INFO
+  #   - LOG_DIR=/app/logs
+  #   - WORKER_LOG_LEVEL=INFO
+  #   - MONGO_USERNAME=${MONGO_ROOT_USERNAME:-gvpocr_admin}
+  #   - MONGO_PASSWORD=${MONGO_ROOT_PASSWORD}
+  #   - MONGO_HOST=mongodb
+  #   - MONGO_PORT=27017
+  #   - NSQD_ADDRESS=nsqd:4150
+  #   - NSQLOOKUPD_ADDRESSES=nsqlookupd:4161
+  #   - MCP_SERVER_URL=ws://mcp-server:3003
+  #   - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+  #   - ENRICHMENT_ENABLED=true
+  #   - MAX_CLAUDE_TOKENS_PER_DOC=50000
+  #   - COST_ALERT_THRESHOLD_USD=100.00
+  #   networks:
+  #   - gvpocr-network
+  #   depends_on:
+  #   - mcp-server
+  #   - mongodb
+  #   - nsqd
+  #   deploy:
+  #     replicas: 2
   zip-regeneration-worker:
     image: ocr_metadata_extraction-backend
     container_name: gvpocr-zip-worker

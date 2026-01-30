@@ -773,7 +773,7 @@ class BulkProcessor:
 
     def generate_sample_results(self, output_folder: str, sample_size: Optional[int] = None) -> str:
         """
-        Generate a zip file with sample results from processed files
+        Generate a zip file with sample results from processed files, including enrichment data
         
         Args:
             output_folder: Folder where to save the zip file
@@ -804,6 +804,10 @@ class BulkProcessor:
         samples_folder = os.path.join(output_folder, 'samples')
         os.makedirs(samples_folder, exist_ok=True)
         
+        # Create enriched results subfolder
+        enriched_folder = os.path.join(samples_folder, 'enriched_results')
+        os.makedirs(enriched_folder, exist_ok=True)
+        
         # Get sample results
         sample_results = self.results[:sample_size]
         
@@ -812,6 +816,7 @@ class BulkProcessor:
             'total_results': len(self.results),
             'sample_size': sample_size,
             'timestamp': str(datetime.now()),
+            'enrichment_included': bool(self.enriched_results),
             'results': sample_results
         }
         
@@ -819,18 +824,42 @@ class BulkProcessor:
         with open(summary_path, 'w', encoding='utf-8') as f:
             json.dump(summary, f, indent=2, ensure_ascii=False)
         
-        # Create CSV with samples
+        # Create individual enriched result files
+        for result in sample_results:
+            filename = result.get('file', 'unknown')
+            if filename in self.enriched_results:
+                # Create a detailed result file including both OCR and enrichment
+                detailed_result = {
+                    'file': filename,
+                    'ocr_data': {k: v for k, v in result.items() if k != 'enrichment'},
+                    'enrichment_data': self.enriched_results[filename],
+                    'processed_at': result.get('enriched_at', datetime.now().isoformat())
+                }
+                
+                # Save as JSON with safe filename
+                safe_filename = filename.replace('/', '_').replace('\\', '_')
+                if not safe_filename.endswith('.json'):
+                    safe_filename = safe_filename.rsplit('.', 1)[0] + '.json'
+                
+                result_path = os.path.join(enriched_folder, safe_filename)
+                with open(result_path, 'w', encoding='utf-8') as f:
+                    json.dump(detailed_result, f, indent=2, ensure_ascii=False)
+        
+        # Create CSV with samples (enhanced to show enrichment status)
         if sample_results:
             csv_path = os.path.join(samples_folder, 'samples.csv')
             with open(csv_path, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=['file', 'confidence', 'text_length', 'language'])
+                fieldnames = ['file', 'confidence', 'text_length', 'language', 'has_enrichment']
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
                 for result in sample_results:
+                    filename = result.get('file', '')
                     writer.writerow({
-                        'file': result.get('file', ''),
+                        'file': filename,
                         'confidence': result.get('confidence', 0),
                         'text_length': len(result.get('text', '')),
-                        'language': result.get('language', '')
+                        'language': result.get('language', ''),
+                        'has_enrichment': 'yes' if filename in self.enriched_results else 'no'
                     })
         
         # Create error report if there are errors

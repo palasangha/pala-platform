@@ -35,7 +35,7 @@ export interface ToolInvokerEvents {
  */
 export class ToolInvoker extends EventEmitter {
   private pendingInvocations: Map<string, (result: any) => void> = new Map();
-  private invocationTimeout: number = 30000; // 30 seconds default
+  private invocationTimeout: number = 300000; // 300 seconds (5 minutes) timeout for enrichment tools
 
   constructor(
     private registry: ToolRegistry,

@@ -27,14 +27,14 @@ class MCPEnrichmentClient:
         self.request_id_counter += 1
         return f"req-{self.request_id_counter}"
 
-    async def invoke_tool(self, tool_name: str, arguments: Dict[str, Any], timeout: int = 30) -> Dict[str, Any]:
+    async def invoke_tool(self, tool_name: str, arguments: Dict[str, Any], timeout: int = 300) -> Dict[str, Any]:
         """
         Invoke a tool via MCP server
-        
+
         Args:
             tool_name: Name of the tool to invoke
             arguments: Arguments to pass to the tool
-            timeout: Request timeout in seconds (default: 30)
+            timeout: Request timeout in seconds (default: 300 = 5 minutes)
             
         Returns:
             Tool response or error dict
@@ -119,7 +119,7 @@ class MCPEnrichmentClient:
         doc_type_result = await self.invoke_tool(
             "extract_document_type",
             {"text": ocr_text[:5000]},
-            timeout=30
+            timeout=300
         )
         enriched_data["raw_mcp_responses"]["extract_document_type"] = doc_type_result
         logger.info(f"extract_document_type result: {doc_type_result.get('success')}")
@@ -128,7 +128,7 @@ class MCPEnrichmentClient:
         storage_info_result = await self.invoke_tool(
             "extract_storage_info",
             {"text": ocr_text[:3000]},
-            timeout=30
+            timeout=300
         )
         enriched_data["raw_mcp_responses"]["extract_storage_info"] = storage_info_result
         logger.info(f"extract_storage_info result: {storage_info_result.get('success')}")
@@ -137,7 +137,7 @@ class MCPEnrichmentClient:
         digitization_result = await self.invoke_tool(
             "extract_digitization_metadata",
             {"text": ocr_text[:3000]},
-            timeout=30
+            timeout=300
         )
         enriched_data["raw_mcp_responses"]["extract_digitization_metadata"] = digitization_result
         logger.info(f"extract_digitization_metadata result: {digitization_result.get('success')}")
@@ -146,7 +146,7 @@ class MCPEnrichmentClient:
         access_level_result = await self.invoke_tool(
             "determine_access_level",
             {"text": ocr_text[:5000]},
-            timeout=30
+            timeout=300
         )
         enriched_data["raw_mcp_responses"]["determine_access_level"] = access_level_result
         logger.info(f"determine_access_level result: {access_level_result.get('success')}")
@@ -160,7 +160,7 @@ class MCPEnrichmentClient:
         people_result = await self.invoke_tool(
             "extract_people",
             {"text": ocr_text[:10000]},
-            timeout=120
+            timeout=300
         )
         enriched_data["raw_mcp_responses"]["extract_people"] = people_result
         logger.info(f"extract_people result: {people_result.get('success')}")
@@ -169,7 +169,7 @@ class MCPEnrichmentClient:
         organizations_result = await self.invoke_tool(
             "extract_organizations",
             {"text": ocr_text[:10000]},
-            timeout=90
+            timeout=300
         )
         enriched_data["raw_mcp_responses"]["extract_organizations"] = organizations_result
         logger.info(f"extract_organizations result: {organizations_result.get('success')}")
@@ -178,7 +178,7 @@ class MCPEnrichmentClient:
         locations_result = await self.invoke_tool(
             "extract_locations",
             {"text": ocr_text[:10000]},
-            timeout=90
+            timeout=300
         )
         enriched_data["raw_mcp_responses"]["extract_locations"] = locations_result
         logger.info(f"extract_locations result: {locations_result.get('success')}")
@@ -187,7 +187,7 @@ class MCPEnrichmentClient:
         events_result = await self.invoke_tool(
             "extract_events",
             {"text": ocr_text[:10000]},
-            timeout=90
+            timeout=300
         )
         enriched_data["raw_mcp_responses"]["extract_events"] = events_result
         logger.info(f"extract_events result: {events_result.get('success')}")
@@ -207,7 +207,7 @@ class MCPEnrichmentClient:
                 "text": ocr_text[:10000],
                 "entities": all_entities
             },
-            timeout=120
+            timeout=300
         )
         enriched_data["raw_mcp_responses"]["generate_relationships"] = relationships_result
         logger.info(f"generate_relationships result: {relationships_result.get('success')}")
@@ -221,7 +221,7 @@ class MCPEnrichmentClient:
         salutation_result = await self.invoke_tool(
             "extract_salutation",
             {"text": ocr_text[:2000]},
-            timeout=60
+            timeout=300
         )
         enriched_data["raw_mcp_responses"]["extract_salutation"] = salutation_result
         logger.info(f"extract_salutation result: {salutation_result.get('success')}")
@@ -230,7 +230,7 @@ class MCPEnrichmentClient:
         body_result = await self.invoke_tool(
             "parse_letter_body",
             {"text": ocr_text},
-            timeout=180
+            timeout=300
         )
         enriched_data["raw_mcp_responses"]["parse_letter_body"] = body_result
         logger.info(f"parse_letter_body result: {body_result.get('success')}")
@@ -239,7 +239,7 @@ class MCPEnrichmentClient:
         closing_result = await self.invoke_tool(
             "extract_closing",
             {"text": ocr_text[-2000:] if len(ocr_text) > 2000 else ocr_text},
-            timeout=60
+            timeout=300
         )
         enriched_data["raw_mcp_responses"]["extract_closing"] = closing_result
         logger.info(f"extract_closing result: {closing_result.get('success')}")
@@ -248,7 +248,7 @@ class MCPEnrichmentClient:
         signature_result = await self.invoke_tool(
             "extract_signature",
             {"text": ocr_text[-1000:] if len(ocr_text) > 1000 else ocr_text},
-            timeout=60
+            timeout=300
         )
         enriched_data["raw_mcp_responses"]["extract_signature"] = signature_result
         logger.info(f"extract_signature result: {signature_result.get('success')}")
@@ -257,7 +257,7 @@ class MCPEnrichmentClient:
         attachments_result = await self.invoke_tool(
             "identify_attachments",
             {"text": ocr_text},
-            timeout=60
+            timeout=300
         )
         enriched_data["raw_mcp_responses"]["identify_attachments"] = attachments_result
         logger.info(f"identify_attachments result: {attachments_result.get('success')}")
@@ -266,7 +266,7 @@ class MCPEnrichmentClient:
         correspondence_result = await self.invoke_tool(
             "parse_correspondence",
             {"text": ocr_text[:3000]},
-            timeout=90
+            timeout=300
         )
         enriched_data["raw_mcp_responses"]["parse_correspondence"] = correspondence_result
         logger.info(f"parse_correspondence result: {correspondence_result.get('success')}")
@@ -283,7 +283,7 @@ class MCPEnrichmentClient:
                 "text": ocr_text[:15000],
                 "entities": all_entities
             },
-            timeout=120
+            timeout=300
         )
         enriched_data["raw_mcp_responses"]["generate_summary"] = summary_result
         logger.info(f"generate_summary result: {summary_result.get('success')}")
@@ -292,7 +292,7 @@ class MCPEnrichmentClient:
         keywords_result = await self.invoke_tool(
             "extract_keywords",
             {"text": ocr_text},
-            timeout=90
+            timeout=300
         )
         enriched_data["raw_mcp_responses"]["extract_keywords"] = keywords_result
         logger.info(f"extract_keywords result: {keywords_result.get('success')}")
@@ -304,7 +304,7 @@ class MCPEnrichmentClient:
                 "text": ocr_text,
                 "entities": all_entities
             },
-            timeout=90
+            timeout=300
         )
         enriched_data["raw_mcp_responses"]["classify_subjects"] = subjects_result
         logger.info(f"classify_subjects result: {subjects_result.get('success')}")
@@ -318,7 +318,7 @@ class MCPEnrichmentClient:
         context_result = await self.invoke_tool(
             "research_historical_context",
             {"text": ocr_text},
-            timeout=120
+            timeout=300
         )
         enriched_data["raw_mcp_responses"]["research_historical_context"] = context_result
         logger.info(f"research_historical_context result: {context_result.get('success')}")
@@ -327,7 +327,7 @@ class MCPEnrichmentClient:
         significance_result = await self.invoke_tool(
             "assess_significance",
             {"text": ocr_text},
-            timeout=90
+            timeout=300
         )
         enriched_data["raw_mcp_responses"]["assess_significance"] = significance_result
         logger.info(f"assess_significance result: {significance_result.get('success')}")
@@ -342,7 +342,7 @@ class MCPEnrichmentClient:
                 "people": people_list,
                 "text": ocr_text
             },
-            timeout=180
+            timeout=300
         )
         enriched_data["raw_mcp_responses"]["generate_biographies"] = biographies_result
         logger.info(f"generate_biographies result: {biographies_result.get('success')}")

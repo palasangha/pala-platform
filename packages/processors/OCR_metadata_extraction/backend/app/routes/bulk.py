@@ -300,7 +300,8 @@ def _process_in_background(app, job_id, folder_path, recursive, provider, langua
                 progress_callback,
                 max_workers=max_workers,
                 job_id=job_id,
-                checkpoint_callback=checkpoint_callback
+                checkpoint_callback=checkpoint_callback,
+                enable_enrichment=True
             )
 
             # Check if there's a checkpoint to restore from
@@ -1254,7 +1255,8 @@ def get_sample_results(current_user_id, job_id):
                 from app.services.ocr_service import OCRService
                 temp_processor = BulkProcessor(
                     OCRService(),
-                    job_id=job_id
+                    job_id=job_id,
+                    enable_enrichment=True
                 )
 
                 # Restore results from checkpoint

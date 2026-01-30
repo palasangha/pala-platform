@@ -101,7 +101,10 @@ class BulkJob:
     @staticmethod
     def update_progress(mongo, job_id, progress_data):
         """Update job progress"""
-        return mongo.db.bulk_jobs.update_one(
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"BulkJob.update_progress called for job {job_id} with data: {progress_data}")
+        result = mongo.db.bulk_jobs.update_one(
             {'job_id': job_id},
             {
                 '$set': {
@@ -110,6 +113,8 @@ class BulkJob:
                 }
             }
         )
+        logger.debug(f"BulkJob.update_progress result for job {job_id}: matched={result.matched_count}, modified={result.modified_count}")
+        return result
 
     @staticmethod
     def update_status(mongo, job_id, status, results=None, error=None):

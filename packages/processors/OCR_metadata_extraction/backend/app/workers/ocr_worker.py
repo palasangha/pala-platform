@@ -10,6 +10,7 @@ from datetime import datetime
 from app import create_app
 from app.services.ocr_service import OCRService
 from app.models.bulk_job import BulkJob
+from app.services.inline_enrichment_service import get_inline_enrichment_service
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,14 @@ class OCRWorker:
         # Get MongoDB connection directly from models
         from app.models import mongo
         self.mongo = mongo
+
+        # Initialize enrichment service (ALWAYS enabled)
+        try:
+            self.enrichment_service = get_inline_enrichment_service()
+            logger.info(f"Worker {worker_id}: Enrichment service initialized and ENABLED (mandatory)")
+        except Exception as e:
+            logger.error(f"Worker {worker_id}: Failed to initialize enrichment service: {e}", exc_info=True)
+            self.enrichment_service = None
 
         logger.info(f"Worker {worker_id} initialized")
         logger.info(f"NSQ lookupd addresses (raw): {nsqlookupd_addresses}")
@@ -229,6 +238,40 @@ class OCRWorker:
             # Include intermediate images if available
             if result.get('intermediate_images'):
                 file_result['intermediate_images'] = result.get('intermediate_images')
+
+            # MANDATORY ENRICHMENT: Always enrich after successful OCR
+            if self.enrichment_service and file_result.get('text'):
+                try:
+                    logger.info(f"[ENRICHMENT] Starting mandatory enrichment for {os.path.basename(file_path)}")
+                    enrichment_start = time.time()
+
+                    # Enrich the OCR result
+                    enrichment_result = self.enrichment_service.enrich_ocr_results(
+                        [file_result],
+                        timeout=900
+                    )
+
+                    enrichment_time = time.time() - enrichment_start
+
+                    # Extract enriched data
+                    enriched_data = enrichment_result.get('enriched_results', {})
+                    filename = os.path.basename(file_path)
+
+                    if filename in enriched_data:
+                        # Add enrichment to file result
+                        file_result['enrichment'] = enriched_data[filename]
+                        logger.info(f"[ENRICHMENT] Successfully enriched {filename} in {enrichment_time:.2f}s")
+                    else:
+                        logger.warning(f"[ENRICHMENT] No enrichment data returned for {filename}")
+
+                except Exception as enrich_error:
+                    logger.error(f"[ENRICHMENT] Failed to enrich {os.path.basename(file_path)}: {enrich_error}", exc_info=True)
+                    # Continue with OCR result even if enrichment fails
+            else:
+                if not self.enrichment_service:
+                    logger.warning(f"[ENRICHMENT] Enrichment service not available for {os.path.basename(file_path)}")
+                elif not file_result.get('text'):
+                    logger.warning(f"[ENRICHMENT] No OCR text to enrich for {os.path.basename(file_path)}")
 
             # CRITICAL: Double-check idempotency right before save (closes race window)
             # This prevents duplicates when multiple workers pass the initial check simultaneously

@@ -17,9 +17,9 @@ logger = logging.getLogger(__name__)
 try:
     from app.services.inline_enrichment_service import get_inline_enrichment_service
     ENRICHMENT_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     ENRICHMENT_AVAILABLE = False
-    logger.warning("Inline enrichment service not available")
+    logger.error(f"Failed to import inline_enrichment_service: {e}", exc_info=True)
 
 
 class ResultAggregator:
@@ -197,6 +197,7 @@ class ResultAggregator:
             unenriched_results = []
             
             for result in results:
+                logger.error(f"DEBUG: Processing result keys: {result.keys()}")
                 if 'enrichment' in result:
                     pre_enriched_results[result.get('file')] = result.get('enrichment')
                 else:
@@ -205,8 +206,8 @@ class ResultAggregator:
             if pre_enriched_results:
                 logger.info(f"[ENRICHMENT] Found {len(pre_enriched_results)} pre-enriched results from file processing")
             
-            # Trigger inline enrichment for unenriched results (BEFORE ZIP creation)
-            if unenriched_results and ENRICHMENT_AVAILABLE and os.getenv('ENRICHMENT_ENABLED', 'true').lower() == 'true':
+            # Trigger inline enrichment for unenriched results (BEFORE ZIP creation) - ALWAYS ENABLED
+            if unenriched_results and ENRICHMENT_AVAILABLE:
                 try:
                     logger.info(f"[ENRICHMENT] Step 1: Starting batch enrichment for remaining {len(unenriched_results)} OCR results")
                     
