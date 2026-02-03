@@ -20,7 +20,8 @@ import AppLayout from '@/components/Layout/AppLayout';
 
 // RBAC Components
 import { AdminDashboard } from '@/components/RBAC/AdminDashboard';
-import { ReviewQueue } from '@/components/RBAC/ReviewQueue';
+import { ReviewerDashboard } from '@/components/RBAC/ReviewerDashboard';
+import { TeacherDashboard } from '@/components/RBAC/TeacherDashboard';
 import { AuditLogViewer } from '@/components/RBAC/AuditLogViewer';
 import { UserRoleManagement } from '@/components/RBAC/UserRoleManagement';
 
@@ -182,10 +183,18 @@ function App() {
             }
           />
           <Route
-            path="/rbac/review-queue"
+            path="/rbac/reviewer-dashboard"
             element={
               <ProtectedRoute>
-                <ReviewQueue />
+                <ReviewerDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/rbac/teacher-dashboard"
+            element={
+              <ProtectedRoute>
+                <TeacherDashboard />
               </ProtectedRoute>
             }
           />

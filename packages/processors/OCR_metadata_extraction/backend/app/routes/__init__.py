@@ -22,7 +22,7 @@ def register_blueprints(app):
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(projects_bp, url_prefix='/api/projects')
     app.register_blueprint(ocr_bp, url_prefix='/api/ocr')
-    app.register_blueprint(rbac_bp, url_prefix='/api')
+    app.register_blueprint(rbac_bp, url_prefix='/api/rbac')
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
     app.register_blueprint(bulk_bp)
     app.register_blueprint(archipelago_bp)
