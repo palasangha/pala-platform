@@ -5,7 +5,7 @@ class Project:
     """Project model for database operations"""
 
     @staticmethod
-    def create(mongo, user_id, name, description=''):
+    def create(mongo, user_id, name, description='', metadata=None):
         """Create a new project"""
         project_data = {
             'user_id': ObjectId(user_id),
@@ -15,6 +15,9 @@ class Project:
             'updated_at': datetime.utcnow(),
             'image_count': 0
         }
+        
+        if metadata:
+            project_data['metadata'] = metadata
 
         result = mongo.db.projects.insert_one(project_data)
         project_data['_id'] = result.inserted_id
@@ -80,7 +83,7 @@ class Project:
         if not project:
             return None
 
-        return {
+        result = {
             'id': str(project['_id']),
             'user_id': str(project['user_id']),
             'name': project['name'],
@@ -89,3 +92,8 @@ class Project:
             'created_at': project['created_at'].isoformat() if project.get('created_at') else None,
             'updated_at': project['updated_at'].isoformat() if project.get('updated_at') else None
         }
+        
+        if project.get('metadata'):
+            result['metadata'] = project['metadata']
+        
+        return result

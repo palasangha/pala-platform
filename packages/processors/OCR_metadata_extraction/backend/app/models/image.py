@@ -62,6 +62,12 @@ class Image:
             'manual_edits': [],
             'review_notes': None,
             'rejection_reason': None,
+            # Enrichment fields
+            'enrichment_data': None,
+            'enrichment_status': 'pending',  # pending, completed, failed, manually_edited
+            'enriched_at': None,
+            'enrichment_edited_at': None,
+            'enrichment_edited_by': None,
             # Audit fields
             'created_at': datetime.utcnow(),
             'updated_at': datetime.utcnow()
@@ -109,6 +115,25 @@ class Image:
                     'updated_at': datetime.utcnow()
                 }
             }
+        )
+
+    @staticmethod
+    def update_enrichment(mongo, image_id, enrichment_data, edited_by=None):
+        """Update enrichment data for an image"""
+        update_data = {
+            'enrichment_data': enrichment_data,
+            'enrichment_status': 'manually_edited' if edited_by else 'completed',
+            'enriched_at': datetime.utcnow(),
+            'enrichment_edited_at': datetime.utcnow() if edited_by else None,
+            'updated_at': datetime.utcnow()
+        }
+
+        if edited_by:
+            update_data['enrichment_edited_by'] = ObjectId(edited_by)
+
+        return mongo.db.images.update_one(
+            {'_id': ObjectId(image_id)},
+            {'$set': update_data}
         )
 
     @staticmethod
@@ -241,6 +266,12 @@ class Image:
             'manual_edits': image.get('manual_edits', []),
             'review_notes': image.get('review_notes'),
             'rejection_reason': image.get('rejection_reason'),
+            # Enrichment fields
+            'enrichment_data': image.get('enrichment_data'),
+            'enrichment_status': image.get('enrichment_status', 'pending'),
+            'enriched_at': image['enriched_at'].isoformat() if image.get('enriched_at') else None,
+            'enrichment_edited_at': image['enrichment_edited_at'].isoformat() if image.get('enrichment_edited_at') else None,
+            'enrichment_edited_by': str(image['enrichment_edited_by']) if image.get('enrichment_edited_by') else None,
             # Timestamps
             'created_at': image['created_at'].isoformat() if image.get('created_at') else None,
             'updated_at': image['updated_at'].isoformat() if image.get('updated_at') else None

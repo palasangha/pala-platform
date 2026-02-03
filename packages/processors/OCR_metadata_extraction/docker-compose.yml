@@ -15,6 +15,9 @@ services:
     networks:
     - gvpocr-network
   backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: ocr_metadata_extraction-backend
     container_name: gvpocr-backend
     restart: unless-stopped
@@ -387,6 +390,9 @@ services:
     networks:
     - gvpocr-network
   result-aggregator:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: ocr_metadata_extraction-backend
     container_name: gvpocr-result-aggregator
     command: python run_aggregator.py
@@ -858,6 +864,9 @@ services:
   #   deploy:
   #     replicas: 2
   zip-regeneration-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: ocr_metadata_extraction-backend
     container_name: gvpocr-zip-worker
     command: python -u /app/app/workers/zip_regeneration_worker.py

@@ -45,12 +45,13 @@ def create_project(current_user_id):
         data = request.get_json()
         name = data.get('name')
         description = data.get('description', '')
+        metadata = data.get('metadata')
 
         if not name:
             return jsonify({'error': 'Project name is required'}), 400
 
-        # Create project
-        project = Project.create(mongo, current_user_id, name, description)
+        # Create project with optional metadata
+        project = Project.create(mongo, current_user_id, name, description, metadata=metadata)
 
         return jsonify({
             'message': 'Project created successfully',

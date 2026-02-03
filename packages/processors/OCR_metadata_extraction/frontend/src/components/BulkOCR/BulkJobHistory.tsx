@@ -400,11 +400,24 @@ const BulkJobHistory: React.FC = () => {
     const zipFileName = job.folder_path ? job.folder_path.split('/').pop() || 'Unknown' : 'Unknown';
     const projectDescription = `Project created from bulk OCR job\nZip File: ${zipFileName}\nFolder: ${job.folder_path}\nProvider: ${job.provider}\nProcessed: ${job.results.summary.successful} files`;
 
+    // Prepare metadata from job results
+    const metadata = {
+      source_type: 'bulk_ocr_job',
+      job_id: job.job_id,
+      folder_path: job.folder_path,
+      provider: job.provider,
+      languages: job.languages,
+      handwriting: job.handwriting,
+      recursive: job.recursive,
+      summary: job.results.summary,
+      created_from_job_at: now.toISOString()
+    };
+
     try {
       setIsCreatingProject(true);
       const token = localStorage.getItem('access_token');
 
-      // Step 1: Create project
+      // Step 1: Create project with metadata
       const projectResponse = await fetch('/api/projects', {
         method: 'POST',
         headers: {
@@ -414,6 +427,7 @@ const BulkJobHistory: React.FC = () => {
         body: JSON.stringify({
           name: projectName,
           description: projectDescription,
+          metadata: metadata,
         }),
       });
 

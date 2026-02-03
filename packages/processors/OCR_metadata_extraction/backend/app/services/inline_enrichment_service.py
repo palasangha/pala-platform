@@ -318,7 +318,7 @@ class MCPEnrichmentClient:
         context_result = await self.invoke_tool(
             "research_historical_context",
             {"text": ocr_text},
-            timeout=300
+            timeout=1800
         )
         enriched_data["raw_mcp_responses"]["research_historical_context"] = context_result
         logger.info(f"research_historical_context result: {context_result.get('success')}")

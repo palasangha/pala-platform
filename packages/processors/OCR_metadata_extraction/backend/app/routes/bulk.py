@@ -444,7 +444,9 @@ def _process_in_background(app, job_id, folder_path, recursive, provider, langua
                             'text': r['text'],  # Include full OCR text
                             'text_length': len(r['text']),
                             'language': r['detected_language'],
-                            'provider': r['provider']
+                            'provider': r['provider'],
+                            'enrichment': r.get('enrichment'),  # Include enrichment data if available
+                            'enriched_at': r.get('enriched_at')
                         }
                         for r in results['results']  # All successful files
                     ],
@@ -455,6 +457,12 @@ def _process_in_background(app, job_id, folder_path, recursive, provider, langua
                         }
                         for e in results['errors']  # All failed files
                     ]
+                },
+                'enrichment_stats': {
+                    'enabled': processor.enable_enrichment,
+                    'total_enriched': sum(1 for r in results['results'] if r.get('enrichment')),
+                    'total_attempted': len(results['results']),
+                    'enrichment_rate': f"{(sum(1 for r in results['results'] if r.get('enrichment')) / len(results['results']) * 100) if results['results'] else 0:.1f}%"
                 },
                 'archipelago_collection': collection_metadata  # Auto-generated collection metadata
             }
@@ -1367,4 +1375,124 @@ def restore_job(current_user_id, job_id):
 
     except Exception as e:
         logger.error(f"Error restoring job {job_id}: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@bulk_bp.route('/job/<job_id>/result/<int:result_index>/enrichment', methods=['GET'])
+@token_required
+def get_bulk_result_enrichment(current_user_id, job_id, result_index):
+    """
+    Get enrichment data for a specific result in a bulk job
+
+    Args:
+        current_user_id: User ID from token
+        job_id: Bulk job ID
+        result_index: Index of the result in the results array
+
+    Returns:
+        Enrichment data with edit history
+    """
+    try:
+        # Get job and verify ownership
+        job = BulkJob.find_by_job_id(mongo, job_id, current_user_id)
+        if not job:
+            return jsonify({'error': 'Job not found or unauthorized'}), 404
+
+        # Get results from checkpoint
+        checkpoint = job.get('checkpoint', {})
+        results = checkpoint.get('results', [])
+
+        # Validate result_index
+        if result_index < 0 or result_index >= len(results):
+            return jsonify({'error': 'Invalid result index'}), 400
+
+        result = results[result_index]
+
+        return jsonify({
+            'success': True,
+            'enrichment': result.get('enrichment'),
+            'file': result.get('file'),
+            'enriched_at': result.get('enriched_at'),
+            'enrichment_edited_at': result.get('enrichment_edited_at'),
+            'enrichment_edited_by': result.get('enrichment_edited_by')
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting bulk result enrichment: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@bulk_bp.route('/job/<job_id>/result/<int:result_index>/enrichment', methods=['PUT'])
+@token_required
+def update_bulk_result_enrichment(current_user_id, job_id, result_index):
+    """
+    Update enrichment data for a specific result in a bulk job
+
+    Request Body:
+    {
+        "enrichment": {
+            "filename": "doc.pdf",
+            "ocr_text": "...",
+            "raw_mcp_responses": {...},
+            "merged_result": {...}
+        }
+    }
+
+    Args:
+        current_user_id: User ID from token
+        job_id: Bulk job ID
+        result_index: Index of the result in the results array
+
+    Returns:
+        Success response with updated result info
+    """
+    try:
+        # Get job and verify ownership
+        job = BulkJob.find_by_job_id(mongo, job_id, current_user_id)
+        if not job:
+            return jsonify({'error': 'Job not found or unauthorized'}), 404
+
+        # Get enrichment data from request
+        data = request.get_json()
+        enrichment_data = data.get('enrichment')
+
+        if not enrichment_data:
+            return jsonify({'error': 'enrichment data is required'}), 400
+
+        # Get results from checkpoint
+        checkpoint = job.get('checkpoint', {})
+        results = checkpoint.get('results', [])
+
+        # Validate result_index
+        if result_index < 0 or result_index >= len(results):
+            return jsonify({'error': 'Invalid result index'}), 400
+
+        # Update the specific result's enrichment data
+        update_path = f'checkpoint.results.{result_index}.enrichment'
+        edited_at_path = f'checkpoint.results.{result_index}.enrichment_edited_at'
+        edited_by_path = f'checkpoint.results.{result_index}.enrichment_edited_by'
+
+        from datetime import datetime
+        mongo.db.bulk_jobs.update_one(
+            {'job_id': job_id, 'user_id': mongo.ObjectId(current_user_id)},
+            {
+                '$set': {
+                    update_path: enrichment_data,
+                    edited_at_path: datetime.utcnow().isoformat(),
+                    edited_by_path: str(current_user_id),
+                    'updated_at': datetime.utcnow()
+                }
+            }
+        )
+
+        logger.info(f"Updated enrichment for job {job_id} result {result_index}")
+
+        return jsonify({
+            'success': True,
+            'message': 'Enrichment data updated successfully',
+            'result_index': result_index
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error updating bulk result enrichment: {str(e)}")
         return jsonify({'error': str(e)}), 500

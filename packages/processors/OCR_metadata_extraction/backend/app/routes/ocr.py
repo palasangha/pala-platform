@@ -304,13 +304,14 @@ def batch_process_images(current_user_id):
 @ocr_bp.route('/add-to-project', methods=['POST'])
 @token_required
 def add_image_to_project(current_user_id):
-    """Add an image with OCR text to a project from bulk job results"""
+    """Add an image with OCR text and enrichment to a project from bulk job results"""
     try:
         data = request.get_json()
         project_id = data.get('project_id')
         filename = data.get('filename')
         file_path = data.get('file_path')
         ocr_text = data.get('ocr_text')
+        enrichment = data.get('enrichment')  # NEW: Accept enrichment data
         confidence = data.get('confidence', 0)
         language = data.get('language', 'en')
         provider = data.get('provider', 'bulk')
@@ -325,15 +326,97 @@ def add_image_to_project(current_user_id):
 
         # Create image record
         image = Image.create(mongo, project_id, filename, file_path, filename)
-        
+
         # Update with OCR text
         if ocr_text:
             Image.update_ocr_text(mongo, image['_id'], ocr_text, 'completed')
+
+        # Update with enrichment data (NEW)
+        if enrichment:
+            Image.update_enrichment(mongo, image['_id'], enrichment)
 
         return jsonify({
             'message': 'Image added to project',
             'image': Image.to_dict(image)
         }), 201
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@ocr_bp.route('/image/<image_id>/enrichment', methods=['GET'])
+@token_required
+def get_image_enrichment(current_user_id, image_id):
+    """Get enrichment data for a project image"""
+    try:
+        # Get image
+        image = Image.find_by_id(mongo, image_id)
+        if not image:
+            return jsonify({'error': 'Image not found'}), 404
+
+        # Verify user owns the project
+        project = Project.find_by_id(mongo, str(image['project_id']), user_id=current_user_id)
+        if not project:
+            return jsonify({'error': 'Unauthorized'}), 403
+
+        return jsonify({
+            'success': True,
+            'enrichment': image.get('enrichment_data'),
+            'enrichment_status': image.get('enrichment_status', 'pending'),
+            'enriched_at': image['enriched_at'].isoformat() if image.get('enriched_at') else None,
+            'enrichment_edited_at': image['enrichment_edited_at'].isoformat() if image.get('enrichment_edited_at') else None,
+            'enrichment_edited_by': str(image['enrichment_edited_by']) if image.get('enrichment_edited_by') else None
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@ocr_bp.route('/image/<image_id>/enrichment', methods=['PUT'])
+@token_required
+def update_image_enrichment(current_user_id, image_id):
+    """
+    Update enrichment data for a project image
+
+    Request Body:
+    {
+        "enrichment": {
+            "filename": "doc.pdf",
+            "ocr_text": "...",
+            "raw_mcp_responses": {...},
+            "merged_result": {...}
+        }
+    }
+    """
+    try:
+        # Get image
+        image = Image.find_by_id(mongo, image_id)
+        if not image:
+            return jsonify({'error': 'Image not found'}), 404
+
+        # Verify user owns the project
+        project = Project.find_by_id(mongo, str(image['project_id']), user_id=current_user_id)
+        if not project:
+            return jsonify({'error': 'Unauthorized'}), 403
+
+        # Get enrichment data from request
+        data = request.get_json()
+        enrichment_data = data.get('enrichment')
+
+        if not enrichment_data:
+            return jsonify({'error': 'enrichment data is required'}), 400
+
+        # Update enrichment
+        Image.update_enrichment(mongo, image_id, enrichment_data, edited_by=current_user_id)
+
+        # Get updated image
+        updated_image = Image.find_by_id(mongo, image_id)
+
+        return jsonify({
+            'success': True,
+            'message': 'Enrichment data updated successfully',
+            'image': Image.to_dict(updated_image)
+        }), 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500

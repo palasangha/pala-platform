@@ -81,8 +81,37 @@ def get_dashboard_overview(current_user_id):
         if total_documents > 0:
             progress_percentage = round((reviewed + exported) / total_documents * 100, 2)
 
+        # Count rejected documents (by review_status, not document_status)
+        rejected_count = mongo.db.images.count_documents({**query, 'review_status': 'rejected'})
+
+        # Pending = documents not yet classified or uploaded
+        pending_count = status_counts.get(Image.STATUS_UPLOADED, 0) + pending_classification
+
+        # Calculate average review time
+        average_review_time = 0
+        reviewed_docs = list(mongo.db.images.find({
+            **query,
+            'review_status': 'approved',
+            'claimed_at': {'$exists': True},
+            'reviewed_at': {'$exists': True}
+        }, {'claimed_at': 1, 'reviewed_at': 1}))
+
+        if reviewed_docs:
+            total_review_time = 0
+            for doc in reviewed_docs:
+                if doc.get('claimed_at') and doc.get('reviewed_at'):
+                    time_diff = (doc['reviewed_at'] - doc['claimed_at']).total_seconds() / 60
+                    total_review_time += time_diff
+            average_review_time = round(total_review_time / len(reviewed_docs), 2)
+
         return jsonify({
             'status': 'success',
+            'total_documents': total_documents,
+            'in_review': in_review,
+            'approved': reviewed,
+            'rejected': rejected_count,
+            'pending': pending_count,
+            'average_review_time': average_review_time,
             'overview': {
                 'total_documents': total_documents,
                 'classification_pending': status_counts.get(Image.STATUS_CLASSIFICATION_PENDING, 0),
@@ -91,7 +120,10 @@ def get_dashboard_overview(current_user_id):
                 'ocr_processed': ocr_processed,
                 'in_review': in_review,
                 'approved': reviewed,
+                'rejected': rejected_count,
                 'exported': exported,
+                'pending': pending_count,
+                'average_review_time': average_review_time,
                 'progress_percentage': progress_percentage
             },
             'status_breakdown': status_counts,
@@ -103,7 +135,7 @@ def get_dashboard_overview(current_user_id):
         }), 200
 
     except Exception as e:
-        AuditLog.create(mongo, current_user_id, 'DASHBOARD_ERROR',
+        AuditLog.create(mongo, current_user_id, AuditLog.ACTION_DASHBOARD_ERROR,
                        details={'error': str(e), 'error_type': type(e).__name__,
                                'endpoint': '/dashboard/overview'})
         return jsonify({'error': 'Failed to load dashboard', 'details': str(e)}), 500
@@ -225,7 +257,7 @@ def get_user_metrics(current_user_id):
         }), 200
 
     except Exception as e:
-        AuditLog.create(mongo, current_user_id, 'DASHBOARD_ERROR',
+        AuditLog.create(mongo, current_user_id, AuditLog.ACTION_DASHBOARD_ERROR,
                        details={'error': str(e), 'error_type': type(e).__name__,
                                'endpoint': '/dashboard/user-metrics'})
         return jsonify({'error': 'Failed to load user metrics', 'details': str(e)}), 500
@@ -326,7 +358,7 @@ def get_quality_metrics(current_user_id):
         }), 200
 
     except Exception as e:
-        AuditLog.create(mongo, current_user_id, 'DASHBOARD_ERROR',
+        AuditLog.create(mongo, current_user_id, AuditLog.ACTION_DASHBOARD_ERROR,
                        details={'error': str(e), 'error_type': type(e).__name__,
                                'endpoint': '/dashboard/quality-metrics'})
         return jsonify({'error': 'Failed to load quality metrics', 'details': str(e)}), 500
@@ -420,7 +452,7 @@ def get_sla_metrics(current_user_id):
         }), 200
 
     except Exception as e:
-        AuditLog.create(mongo, current_user_id, 'DASHBOARD_ERROR',
+        AuditLog.create(mongo, current_user_id, AuditLog.ACTION_DASHBOARD_ERROR,
                        details={'error': str(e), 'error_type': type(e).__name__,
                                'endpoint': '/dashboard/sla-metrics'})
         return jsonify({'error': 'Failed to load SLA metrics', 'details': str(e)}), 500

@@ -623,7 +623,27 @@ class BulkProcessor:
                 # Metadata
                 'Processing Time': metadata.get('processing_time', ''),
                 'OCR Text': result.get('text', ''),  # Full OCR text in CSV
-                'Error': ''
+                'Error': '',
+                # Enrichment fields
+                'Enrichment Status': 'completed' if result.get('enrichment') else 'none',
+                'Document Type': result.get('enrichment', {}).get('merged_result', {}).get('document_type', ''),
+                'Title': result.get('enrichment', {}).get('merged_result', {}).get('title', ''),
+                'Date Created': result.get('enrichment', {}).get('merged_result', {}).get('date_created', ''),
+                'Author': result.get('enrichment', {}).get('merged_result', {}).get('author', ''),
+                'Recipients': ', '.join(result.get('enrichment', {}).get('merged_result', {}).get('recipients', [])) if result.get('enrichment', {}).get('merged_result', {}).get('recipients') else '',
+                'Organizations': ', '.join(result.get('enrichment', {}).get('merged_result', {}).get('organizations', [])) if result.get('enrichment', {}).get('merged_result', {}).get('organizations') else '',
+                'Locations': ', '.join(result.get('enrichment', {}).get('merged_result', {}).get('locations', [])) if result.get('enrichment', {}).get('merged_result', {}).get('locations') else '',
+                'Keywords': ', '.join(result.get('enrichment', {}).get('merged_result', {}).get('keywords', [])) if result.get('enrichment', {}).get('merged_result', {}).get('keywords') else '',
+                'Subject': result.get('enrichment', {}).get('merged_result', {}).get('subject', ''),
+                'Summary': result.get('enrichment', {}).get('merged_result', {}).get('summary', ''),
+                'Language': result.get('enrichment', {}).get('merged_result', {}).get('language', ''),
+                'Access Level': result.get('enrichment', {}).get('merged_result', {}).get('access_level', ''),
+                'Archive Location': result.get('enrichment', {}).get('merged_result', {}).get('archive_location', ''),
+                'Collection': result.get('enrichment', {}).get('merged_result', {}).get('collection', ''),
+                'Box Number': result.get('enrichment', {}).get('merged_result', {}).get('box_number', ''),
+                'Folder Number': result.get('enrichment', {}).get('merged_result', {}).get('folder_number', ''),
+                'Enriched At': result.get('enriched_at', ''),
+                'Enrichment Edited': 'yes' if result.get('enrichment_edited_at') else 'no'
             }
             all_results.append(row)
 
@@ -651,7 +671,27 @@ class BulkProcessor:
                 'Image Height': '',
                 'Processing Time': '',
                 'OCR Text': '',
-                'Error': error.get('error', '')
+                'Error': error.get('error', ''),
+                # Enrichment columns (empty for errors)
+                'Enrichment Status': '',
+                'Document Type': '',
+                'Title': '',
+                'Date Created': '',
+                'Author': '',
+                'Recipients': '',
+                'Organizations': '',
+                'Locations': '',
+                'Keywords': '',
+                'Subject': '',
+                'Summary': '',
+                'Language': '',
+                'Access Level': '',
+                'Archive Location': '',
+                'Collection': '',
+                'Box Number': '',
+                'Folder Number': '',
+                'Enriched At': '',
+                'Enrichment Edited': ''
             }
             all_results.append(row)
 
@@ -726,10 +766,47 @@ class BulkProcessor:
                     f.write(f"Words: {result.get('words_count', 0)}\n")
                     if result.get('pages_processed'):
                         f.write(f"Pages: {result.get('pages_processed')}\n")
-                    f.write(f"Processed At: {result.get('processed_at', '')}\n\n")
-                    
-                    # Write extracted text
-                    f.write("EXTRACTED TEXT:\n")
+                    f.write(f"Processed At: {result.get('processed_at', '')}\n")
+
+                    # Write enrichment data
+                    enrichment = result.get('enrichment', {})
+                    if enrichment:
+                        f.write("\nENRICHMENT DATA:\n")
+                        merged = enrichment.get('merged_result', {})
+
+                        if merged.get('document_type'):
+                            f.write(f"  Document Type: {merged.get('document_type')}\n")
+                        if merged.get('title'):
+                            f.write(f"  Title: {merged.get('title')}\n")
+                        if merged.get('date_created'):
+                            f.write(f"  Date: {merged.get('date_created')}\n")
+                        if merged.get('author'):
+                            f.write(f"  Author: {merged.get('author')}\n")
+                        if merged.get('recipients'):
+                            f.write(f"  Recipients: {', '.join(merged.get('recipients', []))}\n")
+                        if merged.get('organizations'):
+                            f.write(f"  Organizations: {', '.join(merged.get('organizations', []))}\n")
+                        if merged.get('locations'):
+                            f.write(f"  Locations: {', '.join(merged.get('locations', []))}\n")
+                        if merged.get('subject'):
+                            f.write(f"  Subject: {merged.get('subject')}\n")
+                        if merged.get('summary'):
+                            f.write(f"  Summary: {merged.get('summary')}\n")
+                        if merged.get('keywords'):
+                            f.write(f"  Keywords: {', '.join(merged.get('keywords', []))}\n")
+                        if merged.get('language'):
+                            f.write(f"  Language: {merged.get('language')}\n")
+                        if merged.get('access_level'):
+                            f.write(f"  Access Level: {merged.get('access_level')}\n")
+                        if merged.get('archive_location'):
+                            f.write(f"  Archive Location: {merged.get('archive_location')}\n")
+
+                        if result.get('enriched_at'):
+                            f.write(f"  Enriched At: {result.get('enriched_at')}\n")
+                        if result.get('enrichment_edited_at'):
+                            f.write(f"  Manually Edited At: {result.get('enrichment_edited_at')}\n")
+
+                    f.write("\nEXTRACTED TEXT:\n")
                     f.write(result.get('text', '[No text extracted]'))
                     f.write("\n\n")
             
