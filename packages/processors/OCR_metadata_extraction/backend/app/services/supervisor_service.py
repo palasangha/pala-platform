@@ -258,8 +258,24 @@ class SupervisorService:
             ssh = paramiko.SSHClient()
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-            # Load private key
-            private_key = paramiko.RSAKey.from_private_key_file(key_path)
+            # Load private key - auto-detect key type (RSA, Ed25519, ECDSA, etc.)
+            private_key = None
+            try:
+                # Try Ed25519 first (newer, more secure format)
+                private_key = paramiko.Ed25519Key.from_private_key_file(key_path)
+                self.logger.info(f"Loaded Ed25519 SSH key: {key_path}")
+            except (paramiko.SSHException, ValueError):
+                try:
+                    # Try RSA key format
+                    private_key = paramiko.RSAKey.from_private_key_file(key_path)
+                    self.logger.info(f"Loaded RSA SSH key: {key_path}")
+                except (paramiko.SSHException, ValueError):
+                    try:
+                        # Try ECDSA key format
+                        private_key = paramiko.ECDSAKey.from_private_key_file(key_path)
+                        self.logger.info(f"Loaded ECDSA SSH key: {key_path}")
+                    except (paramiko.SSHException, ValueError) as e:
+                        raise Exception(f"Unable to load SSH key {key_path}. Supported formats: RSA, Ed25519, ECDSA. Error: {str(e)}")
 
             # Connect
             ssh.connect(

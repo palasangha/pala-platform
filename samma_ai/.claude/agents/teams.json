@@ -1,0 +1,300 @@
+{
+  "version": "1.0",
+  "project": "samma_ai",
+  "description": "Agent teams for Samma AI - Tipitaka Chatbot",
+
+  "teams": {
+    "engineering": {
+      "name": "Engineering Team",
+      "description": "Core development team for Flutter, Flask, and database work",
+      "lead": "engineering-lead",
+      "agents": {
+        "engineering-lead": {
+          "name": "Engineering Lead",
+          "description": "Architecture decisions, design documentation, team coordination",
+          "skills": ["/arch-review", "/design-doc"],
+          "tools": ["Read", "Glob", "Grep", "Edit", "Write", "Bash"]
+        },
+        "flutter-web": {
+          "name": "Flutter Web Developer",
+          "description": "Flutter web frontend development, UI components, state management",
+          "skills": ["/widget-create", "/state-manage", "/theme-apply"],
+          "tools": ["Read", "Glob", "Grep", "Edit", "Write", "Bash"],
+          "context": ["frontend/"]
+        },
+        "flask-api": {
+          "name": "Flask API Developer",
+          "description": "REST API design, endpoint implementation, middleware",
+          "skills": ["/endpoint-create", "/middleware-add", "/route-document"],
+          "tools": ["Read", "Glob", "Grep", "Edit", "Write", "Bash"],
+          "context": ["backend/"]
+        },
+        "database-architect": {
+          "name": "Database Architect",
+          "description": "SQLite + MongoDB schema design, query optimization, migrations",
+          "skills": ["/schema-design", "/query-optimize", "/migrate"],
+          "tools": ["Read", "Glob", "Grep", "Edit", "Write", "Bash"],
+          "context": ["database/"]
+        },
+        "integration": {
+          "name": "Integration Specialist",
+          "description": "Connect frontend, backend, database, and AI services",
+          "skills": ["/connect-services", "/test-integration", "/api-client"],
+          "tools": ["Read", "Glob", "Grep", "Edit", "Write", "Bash"]
+        }
+      }
+    },
+
+    "tipitaka-mastery": {
+      "name": "Tipitaka Mastery Team",
+      "description": "Domain experts for Buddhist canonical texts and Pali language",
+      "lead": "tipitaka-lead",
+      "agents": {
+        "tipitaka-lead": {
+          "name": "Tipitaka Lead",
+          "description": "Navigate Tipitaka structure, plan teaching responses, coordinate experts",
+          "skills": ["/canonical-navigate", "/teaching-plan"],
+          "tools": ["Read", "Glob", "Grep"],
+          "context": ["docs/SOUL.md", "database/"]
+        },
+        "sutta-pitaka-expert": {
+          "name": "Sutta Pitaka Expert",
+          "description": "Expert on the 5 Nikayas: DN (34), MN (152), SN, AN, KN suttas",
+          "skills": ["/sutta-lookup", "/sutta-context", "/sutta-cross-ref"],
+          "tools": ["Read", "Glob", "Grep"],
+          "expertise": ["Digha Nikaya", "Majjhima Nikaya", "Samyutta Nikaya", "Anguttara Nikaya", "Khuddaka Nikaya"]
+        },
+        "vinaya-pitaka-expert": {
+          "name": "Vinaya Pitaka Expert",
+          "description": "Expert on monastic discipline, Patimokkha, Khandhaka, Parivara",
+          "skills": ["/vinaya-lookup", "/rule-explanation", "/vinaya-context"],
+          "tools": ["Read", "Glob", "Grep"],
+          "expertise": ["Sutta Vibhanga", "Khandhaka", "Parivara", "Patimokkha rules"]
+        },
+        "abhidhamma-expert": {
+          "name": "Abhidhamma Expert",
+          "description": "Expert on the 7 Abhidhamma texts, mind-matter analysis, Patthana",
+          "skills": ["/abhidhamma-lookup", "/dhamma-analysis", "/matrix-query"],
+          "tools": ["Read", "Glob", "Grep"],
+          "expertise": ["Dhammasangani", "Vibhanga", "Dhatukatha", "Puggalapannatti", "Kathavatthu", "Yamaka", "Patthana"]
+        },
+        "pali-linguist": {
+          "name": "Pali Linguist",
+          "description": "Pali grammar, diacritics, transliteration, 15+ scripts support",
+          "skills": ["/transliterate", "/parse-word", "/conjugate", "/script-convert"],
+          "tools": ["Read", "Glob", "Grep"],
+          "expertise": ["Pali grammar", "Diacritics", "Multi-script support", "Etymology"]
+        },
+        "reference-formatter": {
+          "name": "Reference Formatter",
+          "description": "4-part response protocol, citations, TPR/PTS/VRI references",
+          "skills": ["/format-response", "/cite", "/reference-convert"],
+          "tools": ["Read", "Glob", "Grep"],
+          "context": ["docs/SOUL.md"]
+        },
+        "commentary-expert": {
+          "name": "Commentary Expert",
+          "description": "Atthakatha, Tika, Buddhaghosa, Dhammapala works",
+          "skills": ["/commentary-lookup", "/explain-term", "/tradition-note"],
+          "tools": ["Read", "Glob", "Grep"],
+          "expertise": ["Atthakatha", "Tika", "Buddhaghosa", "Dhammapala"]
+        }
+      }
+    },
+
+    "quality-assurance": {
+      "name": "Quality Assurance Team",
+      "description": "Testing, code review, security, and performance",
+      "lead": "qa-lead",
+      "agents": {
+        "qa-lead": {
+          "name": "QA Lead",
+          "description": "QA planning, release readiness checks, team coordination",
+          "skills": ["/qa-plan", "/release-check"],
+          "tools": ["Read", "Glob", "Grep", "Bash"]
+        },
+        "code-reviewer": {
+          "name": "Code Reviewer",
+          "description": "Code quality, patterns, best practices enforcement",
+          "skills": ["/review", "/lint-fix", "/pattern-check"],
+          "tools": ["Read", "Glob", "Grep", "Edit"]
+        },
+        "test-runner": {
+          "name": "Test Runner",
+          "description": "Unit, integration, E2E testing across the stack",
+          "skills": ["/test", "/coverage", "/test-generate"],
+          "tools": ["Read", "Glob", "Grep", "Edit", "Write", "Bash"]
+        },
+        "security-auditor": {
+          "name": "Security Auditor",
+          "description": "Security scanning, auth review, vulnerability checks",
+          "skills": ["/security-scan", "/auth-review", "/vuln-check"],
+          "tools": ["Read", "Glob", "Grep", "Bash"]
+        },
+        "performance": {
+          "name": "Performance Engineer",
+          "description": "Profiling, load testing, query optimization",
+          "skills": ["/profile", "/load-test", "/optimize-query"],
+          "tools": ["Read", "Glob", "Grep", "Bash"]
+        }
+      }
+    },
+
+    "ai-ml": {
+      "name": "AI/ML Team",
+      "description": "Claude integration, embeddings, RAG pipeline, response validation",
+      "lead": "ai-lead",
+      "agents": {
+        "ai-lead": {
+          "name": "AI Lead",
+          "description": "AI strategy decisions, prompt engineering review",
+          "skills": ["/ai-strategy", "/prompt-review"],
+          "tools": ["Read", "Glob", "Grep", "Edit", "Write"]
+        },
+        "claude-integrator": {
+          "name": "Claude Integrator",
+          "description": "Claude API integration, prompt templates, response handling",
+          "skills": ["/claude-query", "/prompt-template", "/response-parse"],
+          "tools": ["Read", "Glob", "Grep", "Edit", "Write", "Bash"],
+          "context": ["backend/app/services/claude_service.py"]
+        },
+        "embeddings-trainer": {
+          "name": "Embeddings Trainer",
+          "description": "Vector embeddings for Tipitaka passages, semantic search",
+          "skills": ["/embed", "/vector-index", "/similarity-search"],
+          "tools": ["Read", "Glob", "Grep", "Edit", "Write", "Bash"]
+        },
+        "rag-pipeline": {
+          "name": "RAG Pipeline Engineer",
+          "description": "Retrieval-Augmented Generation, context assembly",
+          "skills": ["/context-assemble", "/retrieve", "/augment"],
+          "tools": ["Read", "Glob", "Grep", "Edit", "Write"]
+        },
+        "output-validator": {
+          "name": "Output Validator",
+          "description": "Validate AI responses against SOUL.md protocol",
+          "skills": ["/validate-response", "/protocol-check", "/source-verify"],
+          "tools": ["Read", "Glob", "Grep"],
+          "context": ["docs/SOUL.md"]
+        }
+      }
+    },
+
+    "devops": {
+      "name": "DevOps Team",
+      "description": "Docker, CI/CD, infrastructure, monitoring",
+      "lead": "devops-lead",
+      "agents": {
+        "devops-lead": {
+          "name": "DevOps Lead",
+          "description": "Infrastructure planning, environment setup",
+          "skills": ["/infra-plan", "/env-setup"],
+          "tools": ["Read", "Glob", "Grep", "Edit", "Write", "Bash"]
+        },
+        "docker-builder": {
+          "name": "Docker Builder",
+          "description": "Containerization, Docker Compose orchestration",
+          "skills": ["/dockerize", "/compose-up", "/container-debug"],
+          "tools": ["Read", "Glob", "Grep", "Edit", "Write", "Bash"]
+        },
+        "ci-cd": {
+          "name": "CI/CD Engineer",
+          "description": "GitHub Actions, automated testing, deployment pipelines",
+          "skills": ["/pipeline-create", "/deploy-stage", "/deploy-prod"],
+          "tools": ["Read", "Glob", "Grep", "Edit", "Write", "Bash"]
+        },
+        "infra": {
+          "name": "Infrastructure Engineer",
+          "description": "Cloud provisioning, scaling, backups",
+          "skills": ["/provision", "/scale", "/backup"],
+          "tools": ["Read", "Glob", "Grep", "Edit", "Write", "Bash"]
+        },
+        "monitoring": {
+          "name": "Monitoring Engineer",
+          "description": "Logging, metrics collection, alerting",
+          "skills": ["/logs", "/metrics", "/alert-setup"],
+          "tools": ["Read", "Glob", "Grep", "Edit", "Write", "Bash"]
+        }
+      }
+    },
+
+    "optimization": {
+      "name": "Optimization Team",
+      "description": "Token efficiency, model selection, cost management, context optimization",
+      "lead": "optimization-lead",
+      "agents": {
+        "optimization-lead": {
+          "name": "Optimization Lead",
+          "description": "Strategy for token/cost optimization, model selection decisions, team coordination",
+          "skills": ["/optimize-strategy", "/cost-report", "/model-recommend"],
+          "tools": ["Read", "Glob", "Grep", "Edit", "Write"],
+          "responsibilities": [
+            "Define optimization strategy",
+            "Review token usage patterns",
+            "Recommend model switches",
+            "Coordinate sub-agents"
+          ]
+        },
+        "token-optimizer": {
+          "name": "Token Optimizer",
+          "description": "Minimize token usage, compress context, prune unnecessary content",
+          "skills": ["/compress-context", "/prune-content", "/token-count"],
+          "tools": ["Read", "Glob", "Grep", "Edit"],
+          "rules": {
+            "max_context_tokens": 50000,
+            "compression_threshold": 0.7,
+            "prune_duplicates": true
+          }
+        },
+        "model-selector": {
+          "name": "Model Selector",
+          "description": "Auto-select best model for task based on complexity and requirements",
+          "skills": ["/select-model", "/model-compare", "/complexity-assess"],
+          "tools": ["Read", "Glob", "Grep"],
+          "model_rules": {
+            "haiku": {
+              "use_for": ["simple lookups", "formatting", "quick answers", "file listing"],
+              "max_complexity": "low",
+              "cost_priority": "high"
+            },
+            "sonnet": {
+              "use_for": ["code generation", "standard development", "moderate analysis"],
+              "max_complexity": "medium",
+              "cost_priority": "balanced"
+            },
+            "opus": {
+              "use_for": ["complex architecture", "deep analysis", "planning", "Dhamma responses"],
+              "max_complexity": "high",
+              "cost_priority": "quality"
+            }
+          }
+        },
+        "context-manager": {
+          "name": "Context Manager",
+          "description": "Manage what context is loaded, prioritize relevant files, manage memory",
+          "skills": ["/context-load", "/context-prune", "/context-prioritize"],
+          "tools": ["Read", "Glob", "Grep"],
+          "context_rules": {
+            "always_load": ["INIT.md", "CONTEXT.md", "MEMORY.md"],
+            "load_on_demand": ["daily logs", "insight files", "code files"],
+            "max_files_in_context": 20
+          }
+        },
+        "cost-tracker": {
+          "name": "Cost Tracker",
+          "description": "Track token usage, report costs, suggest optimizations, monitor budgets",
+          "skills": ["/track-usage", "/cost-report", "/budget-alert"],
+          "tools": ["Read", "Glob", "Grep", "Edit", "Write"],
+          "tracking": {
+            "log_file": ".claude/memory/usage_log.json",
+            "report_frequency": "daily",
+            "alert_thresholds": {
+              "daily_tokens": 500000,
+              "session_tokens": 100000
+            }
+          }
+        }
+      }
+    }
+  }
+}

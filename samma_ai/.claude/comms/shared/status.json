@@ -1,0 +1,65 @@
+{
+  "last_updated": "2026-02-09T10:00:00Z",
+  "agents": {
+    "engineering-lead": {
+      "status": "idle",
+      "current_task": null,
+      "last_active": "2026-02-09T10:00:00Z"
+    },
+    "flutter-web": {
+      "status": "idle",
+      "current_task": null,
+      "last_active": "2026-02-09T10:00:00Z"
+    },
+    "flask-api": {
+      "status": "idle",
+      "current_task": null,
+      "last_active": "2026-02-09T10:00:00Z"
+    },
+    "database-architect": {
+      "status": "idle",
+      "current_task": null,
+      "last_active": "2026-02-09T10:00:00Z"
+    },
+    "tipitaka-lead": {
+      "status": "idle",
+      "current_task": null,
+      "last_active": "2026-02-09T10:00:00Z"
+    },
+    "sutta-pitaka-expert": {
+      "status": "idle",
+      "current_task": null,
+      "last_active": "2026-02-09T10:00:00Z"
+    },
+    "vinaya-pitaka-expert": {
+      "status": "idle",
+      "current_task": null,
+      "last_active": "2026-02-09T10:00:00Z"
+    },
+    "abhidhamma-expert": {
+      "status": "idle",
+      "current_task": null,
+      "last_active": "2026-02-09T10:00:00Z"
+    },
+    "qa-lead": {
+      "status": "idle",
+      "current_task": null,
+      "last_active": "2026-02-09T10:00:00Z"
+    },
+    "ai-lead": {
+      "status": "idle",
+      "current_task": null,
+      "last_active": "2026-02-09T10:00:00Z"
+    },
+    "devops-lead": {
+      "status": "idle",
+      "current_task": null,
+      "last_active": "2026-02-09T10:00:00Z"
+    },
+    "optimization-lead": {
+      "status": "idle",
+      "current_task": null,
+      "last_active": "2026-02-09T10:00:00Z"
+    }
+  }
+}

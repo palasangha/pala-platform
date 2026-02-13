@@ -1,0 +1,16 @@
+{
+  "last_updated": "2026-02-09T10:00:00Z",
+  "announcements": [
+    {
+      "id": "ann-001",
+      "type": "announcement",
+      "from": "system",
+      "created_at": "2026-02-09T10:00:00Z",
+      "expires_at": null,
+      "priority": "medium",
+      "subject": "Agent Communication Protocol Active",
+      "content": "The agent communication protocol is now active. All agents should check their inbox at session start and update status when working on tasks. See PROTOCOL.md for details.",
+      "acknowledged_by": []
+    }
+  ]
+}

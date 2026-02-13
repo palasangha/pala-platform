@@ -1,0 +1,289 @@
+{
+  "version": "1.0",
+  "project": "samma_ai",
+  "description": "User-invocable skills for Samma AI",
+
+  "skills": {
+    "response": {
+      "name": "/response",
+      "description": "Generate a 4-part Dhamma response following SOUL.md protocol",
+      "team": "tipitaka-mastery",
+      "agents": ["tipitaka-lead", "reference-formatter"],
+      "usage": "/response <question>",
+      "example": "/response What is the nature of suffering?",
+      "protocol": {
+        "parts": [
+          "DATABASE SUMMARY - Query tipitaka_ultimate.db",
+          "INTERPRETIVE SUMMARY - Wisdom interpretation",
+          "TEACHINGS WITH REFERENCES - 3-7 canonical passages",
+          "FINAL CONSOLIDATED SUMMARY - Integration"
+        ]
+      }
+    },
+
+    "lookup": {
+      "name": "/lookup",
+      "description": "Quick Pali word lookup with etymology and meaning",
+      "team": "tipitaka-mastery",
+      "agents": ["pali-linguist"],
+      "usage": "/lookup <pali_word>",
+      "example": "/lookup dukkha"
+    },
+
+    "sutta": {
+      "name": "/sutta",
+      "description": "Fetch sutta by reference (DN, MN, SN, AN, or name)",
+      "team": "tipitaka-mastery",
+      "agents": ["sutta-pitaka-expert"],
+      "usage": "/sutta <reference>",
+      "examples": [
+        "/sutta MN 10",
+        "/sutta Satipatthana Sutta",
+        "/sutta DN 22"
+      ]
+    },
+
+    "vinaya": {
+      "name": "/vinaya",
+      "description": "Explain a Vinaya rule or monastic procedure",
+      "team": "tipitaka-mastery",
+      "agents": ["vinaya-pitaka-expert"],
+      "usage": "/vinaya <rule_or_topic>",
+      "example": "/vinaya Parajika 1"
+    },
+
+    "abhidhamma": {
+      "name": "/abhidhamma",
+      "description": "Explain an Abhidhamma concept or analysis",
+      "team": "tipitaka-mastery",
+      "agents": ["abhidhamma-expert"],
+      "usage": "/abhidhamma <concept>",
+      "example": "/abhidhamma cetasika"
+    },
+
+    "test": {
+      "name": "/test",
+      "description": "Run test suites (unit, integration, E2E)",
+      "team": "quality-assurance",
+      "agents": ["test-runner"],
+      "usage": "/test [type] [path]",
+      "examples": [
+        "/test",
+        "/test unit backend/",
+        "/test integration"
+      ]
+    },
+
+    "review": {
+      "name": "/review",
+      "description": "Code review current changes or specific files",
+      "team": "quality-assurance",
+      "agents": ["code-reviewer"],
+      "usage": "/review [path]",
+      "examples": [
+        "/review",
+        "/review backend/app/services/"
+      ]
+    },
+
+    "deploy": {
+      "name": "/deploy",
+      "description": "Deploy to staging or production environment",
+      "team": "devops",
+      "agents": ["ci-cd"],
+      "usage": "/deploy <environment>",
+      "examples": [
+        "/deploy staging",
+        "/deploy prod"
+      ]
+    },
+
+    "embed": {
+      "name": "/embed",
+      "description": "Generate embeddings for text or passages",
+      "team": "ai-ml",
+      "agents": ["embeddings-trainer"],
+      "usage": "/embed <text_or_file>",
+      "example": "/embed 'Sabbe sankhara anicca'"
+    },
+
+    "transliterate": {
+      "name": "/transliterate",
+      "description": "Convert Pali text between scripts",
+      "team": "tipitaka-mastery",
+      "agents": ["pali-linguist"],
+      "usage": "/transliterate <text> <from_script> <to_script>",
+      "scripts": ["roman", "devanagari", "sinhala", "thai", "myanmar", "khmer"],
+      "example": "/transliterate 'dhamma' roman devanagari"
+    },
+
+    "cite": {
+      "name": "/cite",
+      "description": "Generate proper citation for a passage",
+      "team": "tipitaka-mastery",
+      "agents": ["reference-formatter"],
+      "usage": "/cite <passage_id_or_text>",
+      "formats": ["XML", "TPR", "PTS", "VRI"]
+    },
+
+    "validate": {
+      "name": "/validate",
+      "description": "Validate AI response against SOUL.md protocol",
+      "team": "ai-ml",
+      "agents": ["output-validator"],
+      "usage": "/validate <response_text>",
+      "checks": [
+        "4-part structure present",
+        "Database references valid",
+        "Pali text accurate",
+        "Citations correct"
+      ]
+    },
+
+    "memory-update": {
+      "name": "/memory-update",
+      "description": "Update memory at session end - creates daily log, updates CONTEXT.md, flags insights",
+      "team": "optimization",
+      "agents": ["context-manager"],
+      "usage": "/memory-update",
+      "actions": [
+        "Create/update daily log in memory/daily/YYYY-MM-DD.md",
+        "Update CONTEXT.md with current state",
+        "Flag insights for weekly consolidation",
+        "Update agent status"
+      ],
+      "prompts": [
+        "What was accomplished this session?",
+        "Any key decisions made?",
+        "Any insights to remember?",
+        "What's the current state?",
+        "What's next priority?"
+      ]
+    },
+
+    "context": {
+      "name": "/context",
+      "description": "Show current project context and state",
+      "team": "optimization",
+      "agents": ["context-manager"],
+      "usage": "/context",
+      "reads": ["INIT.md", "CONTEXT.md", "MEMORY.md", "latest daily log"]
+    },
+
+    "team": {
+      "name": "/team",
+      "description": "Send message to a team (goes to team lead)",
+      "usage": "/team <team-name> <message>",
+      "examples": [
+        "/team engineering Create new endpoint for bookmarks",
+        "/team tipitaka What does MN 10 teach about mindfulness?",
+        "/team qa Run full test suite"
+      ],
+      "teams": ["engineering", "tipitaka-mastery", "quality-assurance", "ai-ml", "devops", "optimization"]
+    },
+
+    "agent": {
+      "name": "/agent",
+      "description": "Send direct message to a specific agent",
+      "usage": "/agent <agent-name> <message>",
+      "examples": [
+        "/agent flutter-web Create responsive chat widget",
+        "/agent sutta-pitaka-expert Find teachings on impermanence",
+        "/agent token-optimizer Analyze current context size"
+      ]
+    },
+
+    "status": {
+      "name": "/status",
+      "description": "Check agent/team status and current tasks",
+      "team": "optimization",
+      "agents": ["optimization-lead"],
+      "usage": "/status [team|agent-name]",
+      "examples": [
+        "/status",
+        "/status engineering",
+        "/status flutter-web"
+      ],
+      "reads": [".claude/comms/shared/status.json"]
+    },
+
+    "inbox": {
+      "name": "/inbox",
+      "description": "Check messages in inbox",
+      "usage": "/inbox [agent-name]",
+      "examples": [
+        "/inbox",
+        "/inbox engineering-lead"
+      ],
+      "reads": [".claude/comms/inbox/"]
+    },
+
+    "broadcast": {
+      "name": "/broadcast",
+      "description": "Send announcement to all agents",
+      "team": "optimization",
+      "agents": ["optimization-lead"],
+      "usage": "/broadcast <message>",
+      "example": "/broadcast New model selection rules in effect",
+      "writes": [".claude/comms/shared/announcements.json"]
+    },
+
+    "optimize": {
+      "name": "/optimize",
+      "description": "Analyze and optimize current context/token usage",
+      "team": "optimization",
+      "agents": ["token-optimizer", "context-manager"],
+      "usage": "/optimize",
+      "actions": [
+        "Analyze current context size",
+        "Identify redundant content",
+        "Suggest files to unload",
+        "Recommend model for current task"
+      ]
+    },
+
+    "cost": {
+      "name": "/cost",
+      "description": "Show token usage and cost report",
+      "team": "optimization",
+      "agents": ["cost-tracker"],
+      "usage": "/cost [period]",
+      "examples": [
+        "/cost",
+        "/cost today",
+        "/cost week"
+      ]
+    },
+
+    "model": {
+      "name": "/model",
+      "description": "Get model recommendation for a task",
+      "team": "optimization",
+      "agents": ["model-selector"],
+      "usage": "/model <task-description>",
+      "examples": [
+        "/model simple file lookup",
+        "/model complex architecture planning",
+        "/model code review"
+      ],
+      "models": {
+        "haiku": "Simple tasks, lookups, formatting",
+        "sonnet": "Standard development, moderate analysis",
+        "opus": "Complex planning, deep analysis, Dhamma responses"
+      }
+    }
+  },
+
+  "shortcuts": {
+    "/r": "/response",
+    "/l": "/lookup",
+    "/s": "/sutta",
+    "/v": "/vinaya",
+    "/a": "/abhidhamma",
+    "/t": "/test",
+    "/d": "/deploy",
+    "/m": "/memory-update",
+    "/c": "/context",
+    "/st": "/status"
+  }
+}
