@@ -22,6 +22,15 @@ Pala is a comprehensive digital preservation platform designed for the Vipassana
 ### **Key Objectives**
 
 * **Digitization**: Convert physical and analog content to digital formats  
+
+## **Architecture Goals**
+
+- **Future-Proof & Extensible:** Easily add new AI models, data types, and workflows as technology evolves—without core rewrites.
+- **Open, Parallel Collaboration:** Multiple teams can contribute new agents or features independently, accelerating innovation and delivery.
+- **Single, Trusted Source:** All content and metadata are generated and served from one intelligent, auditable engine—ensuring consistency, traceability, and compliance.
+
+---
+
 ## **High-Level Architecture**
 
 ![Pala High Level Architecture](Pala%20Arch%20v2.jpg)
