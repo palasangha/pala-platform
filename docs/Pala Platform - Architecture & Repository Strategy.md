@@ -24,7 +24,7 @@ Pala is a comprehensive digital preservation platform designed for the Vipassana
 * **Digitization**: Convert physical and analog content to digital formats  
 ## **High-Level Architecture**
 
-![Pala High Level Architecture](docs/Pala%20Arch%20v2.jpg)
+![Pala High Level Architecture](Pala%20Arch%20v2.jpg)
 
 ---
 
