@@ -5,13 +5,13 @@
 ## **Table of Contents**
 
 1. [Executive Summary](https://claude.ai/chat/98cb4f99-f261-4b71-af32-b56e6abbced6#executive-summary)  
-2. [High-Level Architecture](https://claude.ai/chat/98cb4f99-f261-4b71-af32-b56e6abbced6#high-level-architecture)  
-3. [Architecture Components](https://claude.ai/chat/98cb4f99-f261-4b71-af32-b56e6abbced6#architecture-components)  
-4. [Data Flow](https://claude.ai/chat/98cb4f99-f261-4b71-af32-b56e6abbced6#data-flow)  
-5. [Repository Strategy](https://claude.ai/chat/98cb4f99-f261-4b71-af32-b56e6abbced6#repository-strategy)  
-6. [Implementation Plan](https://claude.ai/chat/98cb4f99-f261-4b71-af32-b56e6abbced6#implementation-plan)  
-7. [Technology Stack](https://claude.ai/chat/98cb4f99-f261-4b71-af32-b56e6abbced6#technology-stack)  
-8. [Next Steps](https://claude.ai/chat/98cb4f99-f261-4b71-af32-b56e6abbced6#next-steps)
+2. [High-Level Architecture](#high-level-architecture)
+3. [Architecture Layers & Roles](#architecture-layers--roles)
+4. [End-to-End Flow Example](#end-to-end-flow-example)
+5. [Repository Strategy](#repository-strategy)
+6. [Implementation Plan](#implementation-plan)
+7. [Technology Stack](#technology-stack)
+8. [Next Steps](#next-steps)
 
 ---
 
@@ -22,174 +22,64 @@ Pala is a comprehensive digital preservation platform designed for the Vipassana
 ### **Key Objectives**
 
 * **Digitization**: Convert physical and analog content to digital formats  
-* **Authentication**: Ensure data integrity through digital signing  
-* **Enrichment**: Add comprehensive metadata for discoverability  
-* **Intelligence**: Provide AI-powered access through multiple agents  
-* **Accessibility**: Enable various consumer applications to access content
-
-
----
-
-
-## **Architecture Goals**
-
-- **Future-Proof & Extensible:** Easily add new AI models, data types, and workflows as technology evolves—without core rewrites.
-- **Open, Parallel Collaboration:** Multiple teams can contribute new agents or features independently, accelerating innovation and delivery.
-- **Single, Trusted Source:** All content and metadata are generated and served from one intelligent, auditable engine—ensuring consistency, traceability, and compliance.
-
----
-
 ## **High-Level Architecture**
 
-<img width="2052" height="1128" alt="Pala Architecture" src="https://github.com/user-attachments/assets/e4821231-6534-4e0c-89d9-45366ff8601d" />
-
-
----
-
-## **Architecture Components**
-
-### **1\. Data Sources Layer**
-
-**Purpose**: Entry point for all content into the system
-
-**Components:**
-
-* **Physical Letters**: Scanned documents, handwritten materials  
-* **Audio/Video Files**: Recorded discourses, talks, interviews  
-* **Digital Content**: Existing digital documents, emails, text files  
-* **Others**: Additional source types (images, manuscripts, etc.)
-
-**Data Format**: Raw, unstructured data in various formats (images, audio, video, text)
+![Pala High Level Architecture](https://github.com/user-attachments/assets/e4821231-6534-4e0c-89d9-45366ff8601d)
 
 ---
 
-### **2\. Processors Layer**
+## **Architecture Layers & Roles**
 
-**Purpose**: Convert raw data into structured digital text with basic metadata
+### **Clients**
+- Web Portal, External APIs, Archipelago, AI Chatbots, Mobile Apps, Third-Party Tools
+- All interact with the platform via MCP (for agents) or Storage API (for direct content access)
 
-**Components:**
+### **Data Sources**
+- Physical Letters, Audio/Video Files, Digital Content, Others
+- Raw data is ingested and made available for processing
 
-#### **a) OCR Engine**
+### **Processor / Enrichment Layer**
+- **Processors:** OCR Engine, PalaScribe, others (deterministic logic)
+- **Enrichment:** Metadata Enricher, Schema Manager, Digital Signing (called by agents)
+- Provides deterministic and rule-based processing, called by agents for heavy lifting
 
-* Converts scanned text and images to digital text  
-* Supports multiple languages and scripts  
-* Handles handwritten and typed content
+### **MCP Server & Agent Layer**
+- **MCP Orchestrator:** Routes requests to agents, manages protocol
+- **Agents:** OCR Agent, Metadata Agent, Scribe Agent, Verification Agent, Formatter, Search Agent, Analysis Agent, Custom Agents
+- Agents receive requests via MCP, call processors/enrichers as needed, and orchestrate processing and storage
 
-#### **b) PalaScribe**
+### **Storage Layer**
+- **Storage API:** Unified access for all storage operations
+- **Backends:** Cloud Storage (S3, GCS), Local Storage, Metadata DB (Postgres)
+- Agents and clients read/write via Storage API; direct access for some clients
 
-* Transcribes audio and video content to text  
-* Speaker identification and timestamps  
-* Supports multiple audio formats  
-* Language detection and translation capabilities
-
-#### **c) Custom Processors**
-
-* Specialized processors for unique content types  
-* Extensible architecture for community contributions
-
-#### **d) Others**
-
-* Additional processing capabilities as needed
-
-**Output**: Digital text \+ basic metadata (source, date, format, language)
+### **Shared Services**
+- Observability & Monitoring, Security & Infrastructure, Other Services (cache, search, DevOps)
 
 ---
 
-### **3\. Enrichment Layer**
+## **End-to-End Flow Example**
 
-**Purpose**: Add rich metadata and ensure content authenticity
-
-**Components:**
-
-#### **a) Metadata Enricher**
-
-* Extracts contextual information from content  
-* Identifies actors, locations, dates, topics  
-* Categorizes and tags content  
-* Generates searchable metadata
-
-#### **b) Schema Manager**
-
-* Defines and maintains metadata schemas  
-* Ensures consistency across content types  
-* Validates metadata completeness  
-* Version control for schemas
-
-#### **c) Digital Signing**
-
-* Creates cryptographic signatures for content  
-* Ensures authenticity and integrity  
-* Timestamp verification  
-* Chain of custody tracking
-
-#### **d) Others**
-
-* Custom enrichment workflows  
-* Integration with external reference data
-
-**Output**: Digitized content \+ rich metadata \+ digital signatures
+1. **User Uploads Scanned Document**
+   - Uploaded via Web Portal
+2. **OCR Agent Processes Image**
+   - Client sends request to OCR Agent via MCP
+   - Agent calls OCR processor to extract text
+   - Returns extracted text + confidence scores
+3. **Metadata Agent Enriches Content**
+   - Client sends text to Metadata Agent via MCP
+   - Agent calls enrichment processors (e.g., language detection, NER, schema mapping)
+   - Returns structured metadata
+4. **Signing & Storage**
+   - Signing Agent adds digital signature
+   - Content + metadata stored via Storage API
+   - Searchable in database, versioned in storage
+5. **Access & Use**
+   - Clients query via Search Agent or Storage API
+   - Export to Archipelago or other systems
+   - AI Chatbots provide insights via Query Agent
 
 ---
-
-### **4\. Storage Layer**
-
-**Purpose**: Persist data securely and efficiently with cost optimization
-
-**Components:**
-
-#### **a) Cloud Storage**
-
-* Primary storage in cloud infrastructure (AWS S3, Google Cloud Storage)  
-* Geographic redundancy  
-* Scalable and durable
-
-#### **b) Local Storage**
-
-* On-premises storage for sensitive content  
-* Faster access for frequently used data  
-* Compliance with data sovereignty requirements
-
-#### **c) Storage API**
-
-* Unified interface for all storage operations  
-* Abstraction over different storage backends  
-* Access control and permissions  
-* Query and retrieval operations
-
-#### **d) Cost Optimizer**
-
-* Intelligent tiering (hot/warm/cold storage)  
-* Compression and deduplication  
-* Lifecycle policies  
-* Usage analytics
-
-**Features:**
-
-* Bidirectional communication with MCP Server  
-* Version control and history  
-* Backup and disaster recovery  
-* Audit logging
-
----
-
-### **5\. MCP Server & AI Agents Layer**
-
-**Purpose**: Central orchestration hub for intelligent operations via Model Context Protocol
-
-#### **MCP Orchestrator (Core)**
-
-* **Central coordination and routing layer**  
-* Agent registry and discovery  
-* Request routing and load balancing  
-* Protocol implementation (MCP)  
-* Error handling and retry logic  
-* Logging and observability
-
-#### **AI Agents**
-
-The platform includes multiple specialized agents that communicate via MCP protocol:
-
-**Currently Planned:**
 
 1. **Verification Agent** ✅
 
