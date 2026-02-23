@@ -341,3 +341,232 @@ Based on Archipelago Digital Objects (ADO) format used by `data_mapper.py`.
 ```
 
 ---
+
+## (7) Implementation Plan
+
+**Status**: Ready for development  
+**Target**: Build as new `metadata-extraction-agent` (separate from existing `metadata-agent`)  
+**Approach**: Follow design spec exactly; create fresh implementation without modifying existing code
+
+### Directory Structure
+
+```
+packages/agents/metadata-extraction-agent/
+├── providers/
+│   ├── __init__.py
+│   ├── base_provider.py              # Abstract base class for all providers
+│   └── claude_provider.py            # Claude implementation
+├── mappers/
+│   ├── __init__.py
+│   ├── pala_mapper.py                # Maps to Pala schema v1.0.0
+│   └── archipelago_mapper.py         # Maps to Archipelago Commons schema
+├── tests/
+│   ├── __init__.py
+│   ├── test_claude_provider.py
+│   ├── test_pala_mapper.py
+│   ├── test_archipelago_mapper.py
+│   └── test_metadata_extraction_agent.py
+├── main.py                           # MetadataExtractionAgent class
+├── requirements.txt
+├── README.md
+└── .env.example
+```
+
+### Implementation Phases
+
+#### Phase 1: Core Implementation (7 files)
+
+**providers/base_provider.py**
+- Abstract `BaseMetadataProvider` class
+- Define interface: `async extract_metadata(ocr_text, language, document_context, custom_prompt) -> Dict`
+- All providers must implement this interface
+
+**providers/claude_provider.py**
+- `ClaudeMetadataProvider(BaseMetadataProvider)`
+- Initialize Claude client with `ANTHROPIC_API_KEY` env var
+- Call Claude API with extraction prompt
+- Parse JSON response
+- Return raw extracted data with confidence scores (0.0-1.0) for all fields
+- Handle errors gracefully
+
+**mappers/pala_mapper.py**
+- `PalaMapper` class with static method `map_extracted_data(extracted_data) -> Dict`
+- Map extracted fields to Pala schema v1.0.0 (section 5 of this doc)
+- Structure: `document_metadata`, `parties`, `places`, `storage`, `access`, `content`, `quality_metrics`, `metadata`
+- Preserve all confidence scores
+- Calculate overall confidence average
+
+**mappers/archipelago_mapper.py**
+- `ArchipelagoMapper` class with static method `map_extracted_data(extracted_data) -> Dict`
+- Map extracted fields to Archipelago Commons schema (section 6 of this doc)
+- Include confidence metadata with high/low confidence field tracking
+- Map access levels to COAR access rights URIs
+- Support museum/archive integration
+
+**main.py - MetadataExtractionAgent**
+- `MetadataExtractionAgent` class
+- `__init__()`: Initialize Claude client, set up MCP connection
+- `async extract_metadata(ocr_text, model, output_type, language, document_context, custom_prompt, schema_version) -> Dict`
+  - Route to appropriate provider based on `model` parameter
+  - Call provider's `extract_metadata()`
+  - Apply appropriate mapper(s) based on `output_type`:
+    - "pala": Use PalaMapper
+    - "archipelago": Use ArchipelagoMapper
+    - "combined": Use both mappers, include raw extracted_fields
+  - Return structured response per section 3 output schema
+- `get_provider(model)`: Route to provider by name (supports future extensibility)
+- `get_tool_definitions()`: Return MCP tool definition for `extract_metadata`
+- `async handle_tool_invocation()`: Parse MCP requests and route to extract_metadata
+- `async run()`: Main agent loop - connect to MCP server, register tool, listen for invocations
+
+#### Phase 2: Configuration (2 files)
+
+**requirements.txt**
+```
+anthropic>=0.39.0
+websockets>=11.0
+python-dotenv>=0.19.0
+```
+
+**README.md**
+- Setup instructions (install dependencies, set ANTHROPIC_API_KEY)
+- Usage examples (MCP JSON-RPC calls)
+- Output schema examples
+- Troubleshooting guide
+
+#### Phase 3: Unit Tests (5 test files, >80% coverage)
+
+**tests/test_claude_provider.py**
+- Test Claude client initialization with/without API key
+- Test `extract_metadata()` with valid OCR text
+- Test JSON parsing of Claude response
+- Test confidence score generation (all fields 0.0-1.0)
+- Test error handling (API errors, malformed responses, empty input)
+- Mock Claude API for deterministic testing
+
+**tests/test_pala_mapper.py**
+- Test `map_extracted_data()` with sample extracted data
+- Verify all required Pala schema fields present
+- Test confidence score preservation
+- Test overall confidence calculation
+- Test edge cases (missing fields, null values, empty arrays)
+
+**tests/test_archipelago_mapper.py**
+- Test `map_extracted_data()` with sample extracted data
+- Verify Archipelago Commons schema compliance
+- Test COAR access rights URI mapping
+- Test high/low confidence field categorization
+- Test provenance metadata
+
+**tests/test_metadata_extraction_agent.py**
+- Test agent initialization with MCP connection
+- Test `get_provider()` routing (Claude, extensible for others)
+- Test `extract_metadata()` with different output_type values
+- Test tool registration and invocation
+- Test error handling and edge cases
+
+**Integration Test**
+- End-to-end test with real Claude API (or mocked)
+- Test full flow: OCR text → Claude extraction → mapping → response
+
+#### Phase 4: Dashboard Updates (1 file)
+
+**apps/web/components/Dashboard.tsx**
+- Add tool-specific placeholders for `extract_metadata`:
+  ```json
+  {
+    "ocr_text": "Dear Sir,\n\nI write to you from the archives of the Pala Sangha monastery, dated 15th March 1892. This letter concerns...",
+    "model": "claude",
+    "output_type": "combined",
+    "language": "en",
+    "document_context": "historical_letter"
+  }
+  ```
+- Add parameter hints:
+  - Required: `ocr_text`, `model`, `output_type`
+  - Optional: `language`, `document_context`, `custom_prompt`, `schema_version`
+  - Model options: "claude" (+ future: "ollama", "gemini", "openai")
+  - Output_type options: "pala", "archipelago", "combined"
+- Show realistic historical document examples
+- Display response structure with confidence scores
+
+#### Phase 5: MCP Server Integration (updates to existing)
+
+**packages/mcp-server/src/handlers.ts** (if needed)
+- Register new agent: `metadata-extraction-agent`
+- Ensure tool routing works for `extract_metadata`
+- May not need changes if using same MCP protocol
+
+### Client Usage
+
+**WebSocket JSON-RPC Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/invoke",
+  "params": {
+    "toolName": "extract_metadata",
+    "agentId": "metadata-extraction-agent",
+    "arguments": {
+      "ocr_text": "Dear Sir,\n\nI write to you from...",
+      "model": "claude",
+      "output_type": "combined",
+      "language": "en",
+      "document_context": "historical_letter"
+    }
+  },
+  "id": "request-123"
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "schema_version": "1.0.0",
+    "extraction_metadata": {
+      "model_used": "claude",
+      "timestamp": "2026-02-23T10:30:00Z",
+      "processing_time_ms": 2340,
+      "input_length": 5420
+    },
+    "confidence_scores": {
+      "overall": 0.92,
+      "sender": 0.95,
+      "recipient": 0.88,
+      "date": 0.85,
+      "document_type": 0.90
+    },
+    "pala_metadata": { /* ... */ },
+    "archipelago_metadata": { /* ... */ },
+    "extracted_fields": { /* raw extracted data */ }
+  },
+  "id": "request-123"
+}
+```
+
+### Key Design Decisions
+
+1. **Separate agent**: New `metadata-extraction-agent` keeps it distinct from existing `metadata-agent` (untouched)
+2. **Pluggable providers**: Design with `BaseMetadataProvider` interface for easy addition of Ollama, Gemini, OpenAI later
+3. **Schema-agnostic**: Single agent supports multiple output schemas via `output_type` parameter
+4. **Confidence scores**: All extracted fields include 0.0-1.0 confidence for quality assessment
+5. **No side effects**: Stateless implementation, safe for parallel execution
+6. **Clean separation**: Providers handle extraction, mappers handle schema transformation
+
+### Testing Strategy
+
+- Unit tests for each component with >80% coverage
+- Mock Claude API for deterministic testing
+- Integration tests with real historical documents
+- Manual testing via Dashboard
+
+### Future Extensions
+
+- Add OllamaMetadataProvider for local/cost-free extraction
+- Add GeminiMetadataProvider for multi-modal support
+- Add OpenAIMetadataProvider as alternative
+- Support custom extraction prompts per document context
+- Add confidence threshold filtering
+- Implement caching for repeated extractions
