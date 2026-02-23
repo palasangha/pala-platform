@@ -4,7 +4,35 @@ Centralized orchestration platform for AI agents using the Model Context Protoco
 
 ## Quick Start
 
-To get the MCP server, sample agent, and web dashboard running in minutes:
+### One-Command Startup (Recommended)
+
+```bash
+# Set your Anthropic API key (required for metadata-extraction-agent)
+export ANTHROPIC_API_KEY="sk-ant-api03-your-key-here"
+
+# Start everything: MCP server, agents, and dashboard
+./start-dev.sh
+```
+
+**That's it!** This will start:
+- ✅ MCP Server (ws://localhost:3000)
+- ✅ Sample Agent (echo, sum tools)
+- ✅ Metadata Extraction Agent (extract_metadata tool)
+- ✅ Web Dashboard (http://localhost:3001)
+
+**Stop everything:**
+```bash
+./stop-dev.sh
+```
+
+**View logs:**
+```bash
+tail -f logs/*.log
+```
+
+See [QUICKSTART.md](QUICKSTART.md) for details.
+
+### Manual Startup (Alternative)
 
 ```bash
 # 1. Install dependencies
@@ -16,11 +44,12 @@ cd packages/mcp-server && npm run dev
 # 3. Terminal 2 - Connect sample agent
 cd packages/agents/sample-agent && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python main.py
 
-# 4. Terminal 3 - Start web dashboard
+# 4. Terminal 3 - Connect metadata extraction agent
+cd packages/agents/metadata-extraction-agent && source venv/bin/activate && export ANTHROPIC_API_KEY="sk-ant-..." && python main.py
+
+# 5. Terminal 4 - Start web dashboard
 cd apps/web && npm run dev
 ```
-
-Then open your browser to `http://localhost:3000` and start invoking tools!
 
 **[→ Full Getting Started Guide](docs/Getting%20Started%20-%20Setup%20and%20Usage%20Guide.md)**
 
@@ -67,7 +96,8 @@ pala-platform/
 │   └── web/        (React dashboard - start here)
 ├── packages/
 │   ├── agents/
-│   │   ├── sample-agent/  (Python reference implementation)
+│   │   ├── sample-agent/              (Python reference - echo, sum tools)
+│   │   ├── metadata-extraction-agent/ (Claude AI metadata extraction)
 │   │   └── ...other agents
 │   ├── mcp-server/        (core MCP server)
 │   ├── processors/        (data processing pipeline)
@@ -77,7 +107,9 @@ pala-platform/
 ├── docs/           (architecture, guides)
 ├── scripts/        (build, deploy scripts)
 ├── tests/          (integration tests)
-├── GETTING_STARTED.md
+├── start-dev.sh    (one-command startup script)
+├── stop-dev.sh     (stop all services)
+├── QUICKSTART.md   (quick start guide)
 └── turbo.json      (monorepo config)
 ```
 
@@ -135,13 +167,15 @@ npm run clean     # Clean dist/coverage
 
 ## Documentation
 
+- **[QUICKSTART.md](QUICKSTART.md)** - One-command startup guide
 - **[Getting Started - Setup and Usage Guide](docs/Getting%20Started%20-%20Setup%20and%20Usage%20Guide.md)** - Complete setup, troubleshooting, and usage
 - **[Quick Reference - Developer Cheat Sheet](docs/Quick%20Reference%20-%20Developer%20Cheat%20Sheet.md)** - TL;DR commands and API reference
 - **[Slice 01 - MVP Foundation Completion Summary](docs/Slice%2001%20-%20MVP%20Foundation%20Completion%20Summary.md)** - Implementation details and test coverage
 - **[Pala Platform - Architecture & Repository Strategy](docs/Pala%20Platform%20-%20Architecture%20%26%20Repository%20Strategy.md)** - Overall architecture
 - **[Pala Platform - Project Management Guide](docs/Pala%20Platform%20-%20Project%20Management%20Guide.md)** - Development workflow
 - **[packages/mcp-server/README.md](packages/mcp-server/README.md)** - Server details
-- **[packages/agents/sample-agent/README.md](packages/agents/sample-agent/README.md)** - Agent guide
+- **[packages/agents/sample-agent/README.md](packages/agents/sample-agent/README.md)** - Sample agent guide
+- **[packages/agents/metadata-extraction-agent/README.md](packages/agents/metadata-extraction-agent/README.md)** - Metadata extraction agent guide
 - **[apps/web/README.md](apps/web/README.md)** - Dashboard details
 
 ## Contributing
