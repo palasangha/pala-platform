@@ -5,7 +5,6 @@ Simplified documentation structure for the Pala Platform.
 ## Main Docs (In Root Directory)
 
 - **[README.md](../README.md)** - Main overview, architecture, features, and development guide
-- **[QUICKSTART.md](../QUICKSTART.md)** - One-command startup guide
 - **[Getting Started - Setup and Usage Guide.md](Getting%20Started%20-%20Setup%20and%20Usage%20Guide.md)** - Complete setup, troubleshooting, and usage
 
 ## Package-Specific Docs
@@ -23,4 +22,4 @@ Legacy documentation and brainstorming materials:
 - `ARCHIVED/Slice 01 - MVP Foundation Completion Summary.md`
 - `ARCHIVED/MetadataAgent_brainstorming.md`
 
-Start with the main README.md or QUICKSTART.md for getting started.
+Start with the main README.md for getting started.
