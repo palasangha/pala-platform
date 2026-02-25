@@ -27,11 +27,44 @@ pnpm install
 This installs dependencies for the entire monorepo including:
 - `packages/mcp-server` - Core MCP server
 - `packages/agents/sample-agent` - Python reference agent
+- `packages/agents/metadata-extraction-agent` - Metadata extraction agent
 - `apps/web` - Next.js web dashboard
 
-## 2. Start the MCP Server
+## 2. Start All Services (Recommended)
 
-In one terminal:
+The easiest way to get everything running is with the startup script:
+
+```bash
+# Set your Anthropic API key first (required for metadata extraction agent)
+export ANTHROPIC_API_KEY="sk-ant-api03-your-key-here"
+
+# Start everything
+./start-dev.sh
+```
+
+This will automatically start:
+- ✓ MCP Server (WebSocket: ws://localhost:3000)
+- ✓ Sample Agent (tools: echo, sum)
+- ✓ Metadata Extraction Agent (tool: extract_metadata)
+- ✓ Web Dashboard (http://localhost:3001)
+
+**Logs** are written to `logs/` directory. To view:
+```bash
+tail -f logs/*.log
+```
+
+**Stop everything:**
+```bash
+./stop-dev.sh
+```
+
+---
+
+## 3. Start Services Manually (Alternative)
+
+If you prefer to start services individually in separate terminals:
+
+### 3a. Terminal 1 - Start the MCP Server
 
 ```bash
 cd packages/mcp-server
@@ -46,9 +79,7 @@ Output:
 {"level":30,"msg":"MCP Server started successfully","port":3000}
 ```
 
-## 3. Connect the Sample Agent
-
-In another terminal:
+### 3b. Terminal 2 - Connect the Sample Agent
 
 ```bash
 cd packages/agents/sample-agent
@@ -69,9 +100,28 @@ The agent will:
 2. Self-register its tools (`echo`, `sum`)
 3. Wait for invocations
 
-## 4. Start the Web Dashboard
+### 3c. Terminal 3 - Connect Metadata Extraction Agent (Optional)
 
-In a third terminal:
+```bash
+cd packages/agents/metadata-extraction-agent
+
+# Create and activate virtual environment (first time only)
+python3 -m venv venv
+source venv/bin/activate
+
+# Set your Anthropic API key
+export ANTHROPIC_API_KEY="sk-ant-api03-your-key-here"
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the agent
+python main.py
+```
+
+This agent provides the `extract_metadata` tool for extracting metadata from OCR text using Claude.
+
+### 3d. Terminal 4 - Start the Web Dashboard
 
 ```bash
 cd apps/web
@@ -81,7 +131,9 @@ npm run dev
 
 The dashboard will start on `http://localhost:3000` (Next.js uses port 3000 by default; if port 3000 is taken, it will use 3001, 3002, etc.)
 
-Open your browser to the displayed URL (usually `http://localhost:3000`).
+Open your browser to the displayed URL (usually `http://localhost:3001`).
+
+---
 
 ## Using the Dashboard
 
