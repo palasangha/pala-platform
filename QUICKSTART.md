@@ -1,18 +1,23 @@
 # Pala Platform - Quick Start
 
-## One-Command Startup
+## Prerequisites
 
-### Prerequisites
-1. Set your Anthropic API key:
+1. Clone the repository:
+```bash
+git clone https://github.com/palasangha/pala-platform.git
+cd pala-platform
+```
+
+2. Set your Anthropic API key:
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-api03-your-key-here"
 ```
 
-2. Install Node.js and Python 3.10+ if not already installed
+3. Install Node.js and Python 3.10+ if not already installed
 
-### Start Everything
+## One-Command Startup
+
 ```bash
-cd /Users/vijayaraghavanvedantham/Documents/GitHub/pala-platform
 ./start-dev.sh
 ```
 

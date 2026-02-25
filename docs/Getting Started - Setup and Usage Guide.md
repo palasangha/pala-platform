@@ -7,13 +7,20 @@ Complete guide to running the MCP server, sample agent, and web dashboard.
 - Node.js 18+ (for MCP server and web app)
 - Python 3.10+ (for sample agent)
 - pnpm (for monorepo package management)
+- Git
+
+## 0. Clone the Repository
+
+```bash
+git clone https://github.com/palasangha/pala-platform.git
+cd pala-platform
+```
 
 ## 1. Install Dependencies
 
 From the workspace root (`pala-platform` directory):
 
 ```bash
-cd /path/to/pala-platform  # Navigate to the cloned repository
 pnpm install
 ```
 
