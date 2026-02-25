@@ -1,80 +1,35 @@
-# Pala Platform - Quick Start
+# Quick Start
 
-## Prerequisites
-
-1. Clone the repository:
-```bash
-git clone https://github.com/palasangha/pala-platform.git
-cd pala-platform
-```
-
-2. Set your Anthropic API key:
-```bash
-export ANTHROPIC_API_KEY="sk-ant-api03-your-key-here"
-```
-
-3. Install Node.js and Python 3.10+ if not already installed
+**→ [See Full Getting Started Guide](docs/Getting%20Started%20-%20Setup%20and%20Usage%20Guide.md)**
 
 ## One-Command Startup
 
 ```bash
-./start-dev.sh
-```
+# Clone the repository (first time only)
+git clone https://github.com/palasangha/pala-platform.git
+cd pala-platform
 
-This will:
-- ✓ Start MCP Server (port 3000)
-- ✓ Start Sample Agent (echo, sum tools)
-- ✓ Start Metadata Extraction Agent (extract_metadata tool)
-- ✓ Start Web Dashboard (port 3001)
-
-### Stop Everything
-```bash
-./stop-dev.sh
-```
-
-### View Logs
-All logs are stored in `logs/` directory:
-```bash
-# Watch all logs in real-time
-tail -f logs/*.log
-
-# Or individually:
-tail -f logs/mcp-server.log
-tail -f logs/sample-agent.log
-tail -f logs/metadata-agent.log
-tail -f logs/web-dashboard.log
-```
-
-### Access Dashboard
-Open: http://localhost:3001
-
-You should see:
-- **Agents**: sample-agent, metadata-extraction-agent
-- **Tools**: echo, sum, extract_metadata
-
-### Troubleshooting
-
-**API Key Error?**
-```bash
+# Set your Anthropic API key
 export ANTHROPIC_API_KEY="sk-ant-api03-your-key-here"
+
+# Start everything
 ./start-dev.sh
 ```
 
-**Port Conflict?**
+This will start:
+- ✓ MCP Server (ws://localhost:3000)
+- ✓ Sample Agent (echo, sum tools)
+- ✓ Metadata Extraction Agent (extract_metadata tool)
+- ✓ Web Dashboard (http://localhost:3001)
+
+**View logs:**
 ```bash
-./stop-dev.sh  # Kill all services
-./start-dev.sh  # Restart
+tail -f logs/*.log
 ```
 
-**Service Failed?**
-```bash
-# Check logs
-cat logs/metadata-agent.log  # or other service log
-```
-
-**Clean Restart?**
+**Stop everything:**
 ```bash
 ./stop-dev.sh
-rm -rf logs/*.log
-./start-dev.sh
 ```
+
+For detailed setup, manual startup, troubleshooting, and usage, see [Getting Started Guide](docs/Getting%20Started%20-%20Setup%20and%20Usage%20Guide.md).

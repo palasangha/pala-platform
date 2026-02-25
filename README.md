@@ -30,28 +30,7 @@ export ANTHROPIC_API_KEY="sk-ant-api03-your-key-here"
 tail -f logs/*.log
 ```
 
-See [QUICKSTART.md](QUICKSTART.md) for details.
-
-### Manual Startup (Alternative)
-
-```bash
-# 1. Install dependencies
-pnpm install
-
-# 2. Terminal 1 - Start MCP server
-cd packages/mcp-server && npm run dev
-
-# 3. Terminal 2 - Connect sample agent
-cd packages/agents/sample-agent && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python main.py
-
-# 4. Terminal 3 - Connect metadata extraction agent
-cd packages/agents/metadata-extraction-agent && source venv/bin/activate && export ANTHROPIC_API_KEY="sk-ant-..." && python main.py
-
-# 5. Terminal 4 - Start web dashboard
-cd apps/web && npm run dev
-```
-
-**[→ Full Getting Started Guide](docs/Getting%20Started%20-%20Setup%20and%20Usage%20Guide.md)**
+**[→ Full Getting Started Guide](docs/Getting%20Started%20-%20Setup%20and%20Usage%20Guide.md)** for detailed setup, manual startup, and troubleshooting.
 
 ## Features
 
@@ -109,7 +88,6 @@ pala-platform/
 ├── tests/          (integration tests)
 ├── start-dev.sh    (one-command startup script)
 ├── stop-dev.sh     (stop all services)
-├── QUICKSTART.md   (quick start guide)
 └── turbo.json      (monorepo config)
 ```
 
@@ -263,7 +241,6 @@ Tool automatically appears in web dashboard and is callable via `tools/invoke`.
 
 ## Documentation
 
-- **[QUICKSTART.md](QUICKSTART.md)** - One-command startup guide
 - **[Getting Started - Setup and Usage Guide](docs/Getting%20Started%20-%20Setup%20and%20Usage%20Guide.md)** - Complete setup, troubleshooting, and usage
 - **[packages/mcp-server/README.md](packages/mcp-server/README.md)** - Server implementation details
 - **[packages/agents/sample-agent/README.md](packages/agents/sample-agent/README.md)** - Sample agent guide
