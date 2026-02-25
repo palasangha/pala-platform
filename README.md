@@ -153,38 +153,129 @@ npm run test:watch # Watch mode
 npm run test:coverage # Coverage report
 ```
 
-### Development Mode
+### Development Commands
 ```bash
-cd packages/mcp-server
-npm run dev       # Auto-reload on changes
+# Watch mode for development
+npm run dev          # in each package directory
+
+# Build production
+npm run build        # from root
+
+# Clean build artifacts
+npm run clean
 ```
 
-### Building
-```bash
-npm run build     # Build all packages
-npm run clean     # Clean dist/coverage
+### Configuration
+
+| Env Variable | Description | Default |
+|---|---|---|
+| `PORT` | MCP server WebSocket port | `3000` |
+| `MCP_JWT_SECRET` | Enable JWT auth (leave unset for disabled) | `unset` |
+| `MCP_AGENT_TOKEN` | Agent auth token (set if server has auth enabled) | `unset` |
+| `MCP_SERVER_URL` | Server URL for agent connection | `ws://localhost:3000` |
+| `NEXT_PUBLIC_MCP_SERVER_URL` | Server URL for web dashboard | `ws://localhost:3000` |
+| `ANTHROPIC_API_KEY` | Claude API key (for metadata extraction agent) | `unset` |
+
+## JSON-RPC Methods
+
+### Server Methods (called by clients)
+- `agents/list()` - List connected agents
+- `tools/list()` - List all available tools
+- `tools/invoke({toolName, agentId, arguments})` - Invoke a tool
+
+### Agent Methods (sent by agents)
+- `tools/register({tools})` - Register tools on startup
+- `tools/invoke` - Respond to tool invocation
+
+## Common Issues & Solutions
+
+| Issue | Solution |
+|-------|----------|
+| Port 3000 already in use | Change PORT env var or kill process with `lsof -i :3000` |
+| Agent won't connect | Check server URL with `MCP_SERVER_URL=ws://127.0.0.1:3000` |
+| Dashboard shows "Disconnected" | Verify server running, check browser console (F12) |
+| Tools don't appear | Refresh dashboard, check server logs for agent registration |
+| Auth failures | If auth enabled, ensure `MCP_AGENT_TOKEN` matches secret |
+
+## File Quick Reference
+
+| File | Purpose |
+|------|---------|
+| `src/server.ts` | Main MCPServer class - orchestrates everything |
+| `src/protocol/handler.ts` | JSON-RPC request routing |
+| `src/transport/websocket.ts` | WebSocket server implementation |
+| `src/registry/tool-registry.ts` | Tool storage and search |
+| `src/handlers.ts` | RPC method handlers |
+| `src/logging/logger.ts` | Structured logging with Pino |
+| `src/bin/start.ts` | CLI entry point |
+| `apps/web/components/Dashboard.tsx` | React main UI |
+| `apps/web/hooks/useWebSocket.ts` | WebSocket client hook |
+
+## Adding a New Agent
+
+1. **In Python** (copy sample-agent pattern):
+```python
+import websockets
+import json
+
+async def main():
+    async with websockets.connect('ws://localhost:3000') as ws:
+        # Register tools
+        await ws.send(json.dumps({
+            'jsonrpc': '2.0',
+            'method': 'tools/register',
+            'params': {'tools': [...]},
+            'id': 1
+        }))
+        
+        # Handle invocations
+        async for message in ws:
+            ...
 ```
+
+2. **In Go/Node.js/Other**: Same JSON-RPC 2.0 protocol over WebSocket
+
+3. **Start agent**: `python agent.py` (will auto-connect to ws://localhost:3000)
+
+4. **Verify**: Check dashboard or run `agents/list` to see it listed
+
+## Adding a New Tool
+
+In your agent, add to `tools/register` message:
+
+```javascript
+{
+  name: 'my-tool',
+  description: 'What it does',
+  agentId: 'my-agent-id',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      param1: { type: 'string' },
+      param2: { type: 'number' }
+    }
+  },
+  metadata: { /* optional */ }
+}
+```
+
+Tool automatically appears in web dashboard and is callable via `tools/invoke`.
 
 ## Documentation
 
 - **[QUICKSTART.md](QUICKSTART.md)** - One-command startup guide
 - **[Getting Started - Setup and Usage Guide](docs/Getting%20Started%20-%20Setup%20and%20Usage%20Guide.md)** - Complete setup, troubleshooting, and usage
-- **[Quick Reference - Developer Cheat Sheet](docs/Quick%20Reference%20-%20Developer%20Cheat%20Sheet.md)** - TL;DR commands and API reference
-- **[Slice 01 - MVP Foundation Completion Summary](docs/Slice%2001%20-%20MVP%20Foundation%20Completion%20Summary.md)** - Implementation details and test coverage
-- **[Pala Platform - Architecture & Repository Strategy](docs/Pala%20Platform%20-%20Architecture%20%26%20Repository%20Strategy.md)** - Overall architecture
-- **[Pala Platform - Project Management Guide](docs/Pala%20Platform%20-%20Project%20Management%20Guide.md)** - Development workflow
-- **[packages/mcp-server/README.md](packages/mcp-server/README.md)** - Server details
+- **[packages/mcp-server/README.md](packages/mcp-server/README.md)** - Server implementation details
 - **[packages/agents/sample-agent/README.md](packages/agents/sample-agent/README.md)** - Sample agent guide
 - **[packages/agents/metadata-extraction-agent/README.md](packages/agents/metadata-extraction-agent/README.md)** - Metadata extraction agent guide
-- **[apps/web/README.md](apps/web/README.md)** - Dashboard details
+- **[apps/web/README.md](apps/web/README.md)** - Dashboard implementation
 
 ## Contributing
 
-See [docs/Pala Platform - Project Management Guide.md](docs/Pala%20Platform%20-%20Project%20Management%20Guide.md) for:
-- Development workflow
-- Commit conventions
-- Story/epic structure
-- Code review process
+- Follow the project structure and conventions
+- Write tests for new features
+- Update relevant READMEs
+- Submit pull requests with clear descriptions
 
 ## License
 
