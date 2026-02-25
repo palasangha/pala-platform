@@ -27,11 +27,13 @@ def create_app(config_name='development'):
     from app.routes.health import health_bp
     from app.routes.models_routes import models_bp
     from app.routes.agents_routes import agents_bp
+    from app.routes.auth_routes import auth_bp
 
     app.register_blueprint(chat_bp, url_prefix='/api')
     app.register_blueprint(lookup_bp, url_prefix='/api')
     app.register_blueprint(health_bp, url_prefix='/api')
     app.register_blueprint(models_bp, url_prefix='/api')
     app.register_blueprint(agents_bp, url_prefix='/api')
+    app.register_blueprint(auth_bp, url_prefix='/api')
 
     return app

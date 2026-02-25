@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Agent Chat API</title>
+    <style>
+        body { font-family: Arial; padding: 20px; max-width: 800px; margin: 0 auto; }
+        .box { border: 1px solid #ccc; padding: 15px; margin: 10px 0; border-radius: 5px; }
+        textarea { width: 100%; height: 100px; }
+        button { padding: 10px 20px; background: #4CAF50; color: white; border: none; cursor: pointer; }
+        button:hover { background: #45a049; }
+        .response { background: #f9f9f9; white-space: pre-wrap; }
+        .error { background: #ffebee; color: #c62828; }
+        .loading { color: #1976d2; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Test Agent Chat API</h1>
+
+    <div class="box">
+        <h3>Test Configuration:</h3>
+        <p><strong>Backend URL:</strong> <span id="backendUrl">http://localhost:5001/api/agents/chat</span></p>
+        <p><strong>Agent:</strong> pala-jarvis</p>
+    </div>
+
+    <div class="box">
+        <h3>Send Message:</h3>
+        <textarea id="message" placeholder="Type your message here...">hi</textarea>
+        <br><br>
+        <button onclick="sendMessage()">Send Message</button>
+        <button onclick="clearResponse()">Clear Response</button>
+    </div>
+
+    <div class="box">
+        <h3>Response:</h3>
+        <div id="status"></div>
+        <div id="response" class="response"></div>
+    </div>
+
+    <script>
+        async function sendMessage() {
+            const message = document.getElementById('message').value;
+            const statusDiv = document.getElementById('status');
+            const responseDiv = document.getElementById('response');
+
+            statusDiv.className = 'loading';
+            statusDiv.textContent = '⏳ Sending message to Pala-Jarvis...';
+            responseDiv.textContent = '';
+
+            try {
+                const response = await fetch('http://localhost:5001/api/agents/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        agent_name: 'pala-jarvis',
+                        message: message,
+                        conversation_id: 'test-' + Date.now()
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+
+                statusDiv.className = '';
+                statusDiv.textContent = '✅ Success!';
+                responseDiv.textContent = JSON.stringify(data, null, 2);
+
+            } catch (error) {
+                statusDiv.className = 'error';
+                statusDiv.textContent = '❌ Error: ' + error.message;
+                responseDiv.className = 'response error';
+                responseDiv.textContent = error.stack || error.toString();
+            }
+        }
+
+        function clearResponse() {
+            document.getElementById('status').textContent = '';
+            document.getElementById('response').textContent = '';
+        }
+
+        // Auto-test on load
+        window.onload = function() {
+            console.log('Test page loaded. Click "Send Message" to test the API.');
+        };
+    </script>
+</body>
+</html>

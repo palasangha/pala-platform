@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/agent_provider.dart';
-import 'agent_status_view.dart';
 import 'team_chat_view.dart';
 import 'direct_message_view.dart';
 import 'task_board_view.dart';
 import 'collaboration_view.dart';
 import 'execution_monitor_view.dart';
+import 'pala_jarvis_view.dart';
 
 /// Main Agent Dashboard with tabs for different views
 class AgentDashboard extends StatefulWidget {
@@ -48,7 +48,7 @@ class _AgentDashboardState extends State<AgentDashboard>
           isScrollable: true,
           tabAlignment: TabAlignment.start,
           tabs: const [
-            Tab(icon: Icon(Icons.dashboard), text: 'Status'),
+            Tab(icon: Icon(Icons.smart_toy), text: 'Pala Jarvis'),
             Tab(icon: Icon(Icons.groups), text: 'Teams'),
             Tab(icon: Icon(Icons.chat), text: 'Direct'),
             Tab(icon: Icon(Icons.view_kanban), text: 'Tasks'),
@@ -72,7 +72,7 @@ class _AgentDashboardState extends State<AgentDashboard>
       body: TabBarView(
         controller: _tabController,
         children: const [
-          AgentStatusView(),
+          PalaJarvisView(),
           TeamChatView(),
           DirectMessageView(),
           TaskBoardView(),

@@ -54,7 +54,7 @@ def chat():
 
     message = data['message']
     conversation_id = data.get('conversation_id', str(uuid.uuid4()))
-    model_id = data.get('model_id', 'claude-sonnet-4-20250514')
+    model_id = data.get('model_id', 'copilot')
 
     try:
         # Step 1: Query Tipitaka database for relevant passages

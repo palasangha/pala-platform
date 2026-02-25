@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../providers/agent_provider.dart';
 import '../../models/agent.dart';
 
@@ -16,12 +19,174 @@ class _DirectMessageViewState extends State<DirectMessageView> {
   final _messageController = TextEditingController();
   final _searchController = TextEditingController();
   final _conversations = <String, List<_DirectMessage>>{};
+  final _conversationIds = <String, String>{}; // agent_name -> conversation_id
+  bool _isLoading = false;
+  bool _isSending = false;
 
   @override
   void dispose() {
     _messageController.dispose();
     _searchController.dispose();
     super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // Load conversation history from localStorage
+    _loadConversationHistory();
+  }
+
+  Future<void> _loadConversationHistory() async {
+    // Load conversations from localStorage (browser storage)
+    setState(() => _isLoading = true);
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      // Load conversation IDs
+      final conversationIdsJson = prefs.getString('agent_conversation_ids');
+      if (conversationIdsJson != null) {
+        final decoded = json.decode(conversationIdsJson) as Map<String, dynamic>;
+        _conversationIds.addAll(decoded.cast<String, String>());
+      }
+
+      // Load all conversations
+      final conversationsJson = prefs.getString('agent_conversations');
+      if (conversationsJson != null) {
+        final decoded = json.decode(conversationsJson) as Map<String, dynamic>;
+
+        for (var entry in decoded.entries) {
+          final agentName = entry.key;
+          final messages = (entry.value as List).map((msg) {
+            return _DirectMessage(
+              from: msg['from'],
+              to: msg['to'],
+              content: msg['content'],
+              timestamp: DateTime.parse(msg['timestamp']),
+              isFromUser: msg['isFromUser'],
+              read: msg['read'],
+            );
+          }).toList();
+
+          _conversations[agentName] = messages;
+        }
+      }
+
+      debugPrint('Loaded conversations for ${_conversations.length} agents from localStorage');
+    } catch (e) {
+      debugPrint('Error loading conversation history from localStorage: $e');
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _saveConversationsToLocalStorage() async {
+    // Save conversations to localStorage for persistence
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      // Save conversation IDs
+      await prefs.setString('agent_conversation_ids', json.encode(_conversationIds));
+
+      // Save all conversations
+      final conversationsData = <String, List<Map<String, dynamic>>>{};
+      for (var entry in _conversations.entries) {
+        conversationsData[entry.key] = entry.value.map((msg) {
+          return {
+            'from': msg.from,
+            'to': msg.to,
+            'content': msg.content,
+            'timestamp': msg.timestamp.toIso8601String(),
+            'isFromUser': msg.isFromUser,
+            'read': msg.read,
+          };
+        }).toList();
+      }
+
+      await prefs.setString('agent_conversations', json.encode(conversationsData));
+      debugPrint('Saved conversations to localStorage');
+    } catch (e) {
+      debugPrint('Error saving conversations to localStorage: $e');
+    }
+  }
+
+  Future<void> _loadAgentConversation(String agentName) async {
+    setState(() => _isLoading = true);
+
+    try {
+      final response = await http.get(
+        Uri.parse('http://localhost:5001/api/agents/$agentName/conversations'),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final conversations = data['conversations'] as List;
+
+        if (conversations.isNotEmpty) {
+          // Load the most recent conversation
+          final mostRecent = conversations.first;
+          final conversationId = mostRecent['conversation_id'] as String;
+          _conversationIds[agentName] = conversationId;
+
+          // Load full conversation history
+          await _loadConversationMessages(conversationId, agentName);
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading agent conversation: $e');
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _loadConversationMessages(String conversationId, String agentName) async {
+    try {
+      final response = await http.get(
+        Uri.parse('http://localhost:5001/api/agents/chat/history/$conversationId'),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final messages = data['messages'] as List;
+
+        setState(() {
+          _conversations[agentName] = messages.map((msg) {
+            return _DirectMessage(
+              from: 'You',
+              to: agentName,
+              content: msg['user_message'],
+              timestamp: DateTime.parse(msg['timestamp']),
+              isFromUser: true,
+              read: true,
+            );
+          }).expand((userMsg) {
+            // Get the corresponding agent response
+            final msgData = messages.firstWhere(
+              (m) => m['user_message'] == userMsg.content,
+              orElse: () => null,
+            );
+
+            if (msgData != null && msgData['agent_response'] != null) {
+              return [
+                userMsg,
+                _DirectMessage(
+                  from: agentName,
+                  to: 'You',
+                  content: msgData['agent_response'],
+                  timestamp: DateTime.parse(msgData['timestamp']),
+                  isFromUser: false,
+                  read: true,
+                ),
+              ];
+            }
+            return [userMsg];
+          }).toList();
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading conversation messages: $e');
+    }
   }
 
   @override
@@ -115,7 +280,11 @@ class _DirectMessageViewState extends State<DirectMessageView> {
                               ),
                             ),
                             selected: isSelected,
-                            onTap: () => setState(() => _selectedAgent = agent),
+                            onTap: () {
+                              setState(() => _selectedAgent = agent);
+                              // Load conversation history for this agent
+                              _loadAgentConversation(agent.name);
+                            },
                           );
                         },
                       ),
@@ -134,6 +303,8 @@ class _DirectMessageViewState extends State<DirectMessageView> {
                       messages: _conversations[_selectedAgent!.name] ?? [],
                       controller: _messageController,
                       onSend: _sendMessage,
+                      isLoading: _isLoading,
+                      isSending: _isSending,
                     ),
             ),
           ],
@@ -173,40 +344,101 @@ class _DirectMessageViewState extends State<DirectMessageView> {
     }
   }
 
-  void _sendMessage() {
-    if (_messageController.text.trim().isEmpty || _selectedAgent == null) return;
+  Future<void> _sendMessage() async {
+    if (_messageController.text.trim().isEmpty || _selectedAgent == null || _isSending) return;
 
     final agentName = _selectedAgent!.name;
+    final messageText = _messageController.text;
 
+    // Add user message to UI immediately
     setState(() {
       _conversations.putIfAbsent(agentName, () => []);
       _conversations[agentName]!.add(_DirectMessage(
         from: 'You',
         to: agentName,
-        content: _messageController.text,
+        content: messageText,
         timestamp: DateTime.now(),
         isFromUser: true,
         read: true,
       ));
+      _isSending = true;
     });
 
     _messageController.clear();
 
-    // Simulate agent response
-    Future.delayed(const Duration(seconds: 1), () {
+    try {
+      // Get or create conversation ID
+      final conversationId = _conversationIds.putIfAbsent(
+        agentName,
+        () => DateTime.now().millisecondsSinceEpoch.toString(),
+      );
+
+      // Send message to backend
+      final response = await http.post(
+        Uri.parse('http://localhost:5001/api/agents/chat'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'agent_name': agentName,
+          'message': messageText,
+          'conversation_id': conversationId,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final agentResponse = data['agent_response'] as String;
+
+        // Add agent response to UI
+        if (mounted && _selectedAgent?.name == agentName) {
+          setState(() {
+            _conversations[agentName]!.add(_DirectMessage(
+              from: agentName,
+              to: 'You',
+              content: agentResponse,
+              timestamp: DateTime.parse(data['timestamp']),
+              isFromUser: false,
+              read: true,
+            ));
+          });
+          // Save to localStorage for persistence
+          _saveConversationsToLocalStorage();
+        }
+      } else {
+        // Show error message
+        if (mounted && _selectedAgent?.name == agentName) {
+          setState(() {
+            _conversations[agentName]!.add(_DirectMessage(
+              from: agentName,
+              to: 'You',
+              content: 'Error: ${response.statusCode} - ${response.body}',
+              timestamp: DateTime.now(),
+              isFromUser: false,
+              read: true,
+            ));
+          });
+          _saveConversationsToLocalStorage();
+        }
+      }
+    } catch (e) {
+      // Show error message
       if (mounted && _selectedAgent?.name == agentName) {
         setState(() {
           _conversations[agentName]!.add(_DirectMessage(
             from: agentName,
             to: 'You',
-            content: 'I received your message. Let me process this request...',
+            content: 'Error sending message: $e',
             timestamp: DateTime.now(),
             isFromUser: false,
             read: true,
           ));
         });
+        _saveConversationsToLocalStorage();
       }
-    });
+    } finally {
+      if (mounted) {
+        setState(() => _isSending = false);
+      }
+    }
   }
 }
 
@@ -249,12 +481,16 @@ class _ChatArea extends StatelessWidget {
   final List<_DirectMessage> messages;
   final TextEditingController controller;
   final VoidCallback onSend;
+  final bool isLoading;
+  final bool isSending;
 
   const _ChatArea({
     required this.agent,
     required this.messages,
     required this.controller,
     required this.onSend,
+    this.isLoading = false,
+    this.isSending = false,
   });
 
   @override
@@ -308,34 +544,64 @@ class _ChatArea extends StatelessWidget {
 
           // Messages
           Expanded(
-            child: messages.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.chat,
-                          size: 48,
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+            child: isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : messages.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.chat,
+                              size: 48,
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Start a conversation with ${agent.displayName}',
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Start a conversation with ${agent.displayName}',
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      )
+                    : Stack(
+                        children: [
+                          ListView.builder(
+                            padding: const EdgeInsets.all(16),
+                            itemCount: messages.length,
+                            itemBuilder: (context, index) {
+                              final msg = messages[index];
+                              return _MessageBubble(message: msg);
+                            },
                           ),
-                        ),
-                      ],
-                    ),
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: messages.length,
-                    itemBuilder: (context, index) {
-                      final msg = messages[index];
-                      return _MessageBubble(message: msg);
-                    },
-                  ),
+                          if (isSending)
+                            Positioned(
+                              bottom: 16,
+                              left: 16,
+                              child: Card(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text('${agent.displayName} is thinking...'),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
           ),
 
           // Input
@@ -371,8 +637,17 @@ class _ChatArea extends StatelessWidget {
                 ),
                 const SizedBox(width: 12),
                 IconButton.filled(
-                  onPressed: onSend,
-                  icon: const Icon(Icons.send),
+                  onPressed: isSending ? null : onSend,
+                  icon: isSending
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.send),
                 ),
               ],
             ),

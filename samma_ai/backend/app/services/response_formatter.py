@@ -77,9 +77,10 @@ class ResponseFormatter:
 
         # Part 0: Pali Texts (if passages provided)
         if passages:
-            pali_section = f"\n{divider}\n🔤 PĀḶI TEXTS FROM TIPITAKA\n{divider}\n"
+            pali_section = f"\n{divider}\n🔤 PĀḶI TEXTS & TRANSLATIONS FROM TIPITAKA\n{divider}\n"
             for i, p in enumerate(passages, 1):
                 pali_text = p.get('pali_text', 'N/A')
+                eng_text = p.get('english_translation')
                 pitaka = p.get('pitaka_name', '')
                 nikaya = p.get('nikaya_name', '')
                 book = p.get('book_name', '')
@@ -94,7 +95,12 @@ class ResponseFormatter:
                 ref_parts.append(f"Paragraph: {paragraph}")
 
                 detailed_ref = " | ".join(ref_parts)
-                pali_section += f"\n[PASSAGE {i}]\n{detailed_ref}\n\n{pali_text}\n\n"
+                pali_section += f"\n[PASSAGE {i}]\n{detailed_ref}\n\n[PALI]\n{pali_text}\n"
+                
+                if eng_text:
+                    pali_section += f"\n[ENGLISH]\n{eng_text}\n"
+                
+                pali_section += "\n"
             sections.append(pali_section)
 
         # 1. Direct Definition

@@ -54,7 +54,12 @@ class ModelRouterService:
             if api_key:
                 try:
                     import openai
-                    self._openai_client = openai.OpenAI(api_key=api_key)
+                    base_url = current_app.config.get('OPENAI_BASE_URL')
+                    if base_url:
+                        # Custom OpenAI-compatible endpoint (e.g., LM Studio)
+                        self._openai_client = openai.OpenAI(api_key=api_key, base_url=base_url)
+                    else:
+                        self._openai_client = openai.OpenAI(api_key=api_key)
                 except ImportError:
                     current_app.logger.warning("openai package not installed")
         return self._openai_client
@@ -144,9 +149,14 @@ class ModelRouterService:
 
         provider = self._resolve_provider(model_id)
 
-        # Try requested provider, then fallback chain
+        # Try requested provider, then fallback chain (only enabled providers)
         providers_to_try = [provider]
-        for fallback in ['claude', 'openai', 'ollama']:
+        fallback_providers = ['copilot', 'claude', 'openai']
+        # Only add Ollama if enabled
+        if current_app.config.get('OLLAMA_ENABLED', True):
+            fallback_providers.append('ollama')
+
+        for fallback in fallback_providers:
             if fallback not in providers_to_try:
                 providers_to_try.append(fallback)
 
@@ -424,6 +434,7 @@ DO NOT summarize briefly. Provide full scholarly detail for each section.
     def _call_copilot(self, prompt: str, model_id: str, system_prompt: str) -> str:
         endpoint = current_app.config.get('COPILOT_ENDPOINT')
         api_key = current_app.config.get('COPILOT_API_KEY', '')
+        model = current_app.config.get('COPILOT_MODEL', 'claude-3-5-haiku-20241022')
         if not endpoint:
             raise RuntimeError('Copilot endpoint not configured')
 
@@ -436,7 +447,13 @@ DO NOT summarize briefly. Provide full scholarly detail for each section.
         if api_key:
             headers['Authorization'] = f'Bearer {api_key}'
 
-        resp = requests.post(endpoint, json={'messages': messages, 'max_tokens': 4096}, headers=headers, timeout=120)
+        payload = {
+            'model': model,
+            'messages': messages,
+            'max_tokens': 4096
+        }
+
+        resp = requests.post(endpoint, json=payload, headers=headers, timeout=120)
         resp.raise_for_status()
         data = resp.json()
         return data['choices'][0]['message']['content']

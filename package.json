@@ -19,5 +19,8 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "nanobot": "^0.0.1"
   }
 }

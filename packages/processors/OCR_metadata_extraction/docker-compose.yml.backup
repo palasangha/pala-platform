@@ -290,7 +290,7 @@ services:
   nsqd:
     image: nsqio/nsq:v1.2.1
     container_name: gvpocr-nsqd
-    command: /nsqd --lookupd-tcp-address=nsqlookupd:4160 --broadcast-address=nsqd
+    command: /nsqd --lookupd-tcp-address=nsqlookupd:4160 --broadcast-address=172.12.0.132
     ports:
     - 4150:4150
     - 4151:4151
@@ -467,7 +467,7 @@ services:
     ports:
     - 1234:1234
     environment:
-    - DISPLAY=${DISPLAY:-:1}
+    - DISPLAY=${DISPLAY:-:2}
     - QT_X11_NO_MITSHM=1
     - QT_DEBUG_PLUGINS=1
     - LIBGL_ALWAYS_INDIRECT=1

@@ -21,13 +21,15 @@ class Config:
     ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
     CLAUDE_MODEL = os.environ.get('CLAUDE_MODEL', 'claude-sonnet-4-20250514')
 
-    # OpenAI API
+    # OpenAI API (also supports LM Studio)
     OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
+    OPENAI_BASE_URL = os.environ.get('OPENAI_BASE_URL', None)
     OPENAI_MODEL = os.environ.get('OPENAI_MODEL', 'gpt-4o')
 
     # Copilot-compatible endpoint
     COPILOT_ENDPOINT = os.environ.get('COPILOT_ENDPOINT', '')
     COPILOT_API_KEY = os.environ.get('COPILOT_API_KEY', '')
+    COPILOT_MODEL = os.environ.get('COPILOT_MODEL', 'claude-3-5-haiku-20241022')
 
     # Ollama API
     OLLAMA_ENABLED = os.environ.get('OLLAMA_ENABLED', 'True').lower() == 'true'

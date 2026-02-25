@@ -99,14 +99,80 @@ class TipitakaService:
             cursor.execute(sql, params)
             passages = cursor.fetchall()
 
-            # Build complete reference for each passage
+            # Build complete reference and fetch translations
             for passage in passages:
                 passage['reference'] = self._build_reference(passage)
+                passage['english_translation'] = self._fetch_translation(
+                    cursor, passage['book_id'], passage['paragraph_number']
+                )
 
             return passages
 
         finally:
             conn.close()
+
+    def _get_translation_book_id(self, pali_book_id: str) -> Optional[str]:
+        """Map Pali book ID to translation book ID (anya_pe series)."""
+        # Mapping rules based on observed patterns:
+        # dn1m -> annya_pe_dn1
+        # mn1m -> annya_pe_mn1
+        # sn1m -> annya_pe_sn1
+        # an1m -> annya_pe_an1
+        
+        # Remove 'm' suffix (mula)
+        base_id = pali_book_id
+        if base_id.endswith('m'):
+            base_id = base_id[:-1]
+        
+        # Sutta Pitaka prefixing
+        if base_id.startswith(('dn', 'mn', 'sn', 'an')):
+            return f"annya_pe_{base_id}"
+            
+        # Vinaya Pitaka mapping
+        vinaya_map = {
+            'pajm': 'annya_pe_parajika',
+            'pacm': 'annya_pe_pacittiya',
+            'mvm': 'annya_pe_mahavagga',
+            'cvm': 'annya_pe_culavagga',
+            'prm': 'annya_pe_parivara'
+        }
+        
+        return vinaya_map.get(pali_book_id)
+
+    def _fetch_translation(self, cursor, pali_book_id: str, para_num: int) -> Optional[str]:
+        """Fetch English translation from pages table."""
+        trans_book_id = self._get_translation_book_id(pali_book_id)
+        if not trans_book_id:
+            return None
+
+        # paranum in pages is often '-N-' or '-N-M-'
+        para_pattern = f'%-{para_num}-%'
+        
+        cursor.execute("""
+            SELECT content FROM pages 
+            WHERE bookid = ? AND (paranum = ? OR paranum LIKE ?)
+            LIMIT 1
+        """, [trans_book_id, f'-{para_num}-', para_pattern])
+        
+        result = cursor.fetchone()
+        if not result:
+            return None
+            
+        content = result['content']
+        # Extract English text from <span class="t1"> or <span class="t5">
+        # t1 usually contains the English translation in annya_pe books
+        English_matches = re.findall(r'<span class="t1">([^<]+)</span>', content)
+        if not English_matches:
+            # Fallback to t5 which sometimes has it or other content
+            English_matches = re.findall(r'<span class="t5">([^<]+)</span>', content)
+            
+        if English_matches:
+            # Join fragments and clean up
+            text = " ".join(English_matches).strip()
+            # Remove leading/trailing markers if any
+            return text if text else None
+            
+        return None
 
     def _get_pali_diacritical_variants(self, term: str) -> List[str]:
         """Get common Pali diacritical mark variants of a term."""
