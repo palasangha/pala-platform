@@ -6,3 +6,6 @@ venv/
 .DS_Store
 *.db
 backend/database/*.db
+.dart_tool/
+.flutter-plugins-dependencies
+.samma_pids
