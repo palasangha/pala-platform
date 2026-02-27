@@ -11,6 +11,7 @@ import { ToolInvoker } from './registry/tool-invoker';
 import { ServerHandlers } from './handlers';
 import { Logger } from './logging/logger';
 import { WebSocket } from 'ws';
+import { StorageTool, getStorageTools } from './storage/storage-tool';
 
 const logger = new Logger({ name: 'MCPServer' });
 
@@ -22,6 +23,7 @@ export class MCPServer {
   private invoker?: ToolInvoker;
   private handlers?: ServerHandlers;
   private agentConnections: Map<string, string> = new Map(); // agentId -> connectionId
+  private storageTool?: StorageTool;
 
   constructor(config: ServerConfig) {
     this.config = config;
@@ -80,6 +82,17 @@ export class MCPServer {
     // Initialize server handlers
     this.handlers = new ServerHandlers(this.registry, this.transport, this.agentConnections);
 
+    // Initialize storage tool
+    this.storageTool = new StorageTool();
+    logger.debug('Storage tool initialized');
+
+    // Register storage tools as a system provider
+    const storageTools = getStorageTools();
+    for (const tool of storageTools) {
+      this.registry.register(tool);
+    }
+    logger.debug(`Storage provider registered with ${storageTools.length} tools`);
+
     // Register JSON-RPC method handlers
     this.protocolHandler.registerHandler('tools/list', async (method, params) => {
       return this.handlers!.handleToolsList();
@@ -94,10 +107,29 @@ export class MCPServer {
     });
 
     this.protocolHandler.registerHandler('tools/invoke', async (method, params: any) => {
-      const { toolName, arguments: args } = params;
+      // Support both 'name' and 'toolName' for backward compatibility
+      const toolName = params.name || params.toolName;
+      const args = params.arguments || params.args || {};
+      
+      // Handle storage tools directly
+      if (toolName === 'store-content') {
+        const result = await this.storageTool!.storeContent(args);
+        return result;
+      } else if (toolName === 'retrieve-content') {
+        const result = await this.storageTool!.retrieveContent(args.content_id);
+        return result;
+      } else if (toolName === 'list-content') {
+        const result = await this.storageTool!.listContent();
+        return result;
+      } else if (toolName === 'list-backends') {
+        const result = await this.storageTool!.listBackends();
+        return result;
+      }
+      
+      // Handle other agent tools
       const result = await this.invoker!.invoke({
         toolName,
-        arguments: args || {},
+        arguments: args,
       });
       return result;
     });

@@ -40,7 +40,7 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 # 1. Start MCP Server
-echo -e "${GREEN}[1/4] Starting MCP Server...${NC}"
+echo -e "${GREEN}[1/5] Starting MCP Server...${NC}"
 cd "$ROOT_DIR/packages/mcp-server"
 if [ ! -d "node_modules" ]; then
     echo -e "${YELLOW}Installing MCP Server dependencies...${NC}"
@@ -53,7 +53,7 @@ echo -e "  Logs: logs/mcp-server.log\n"
 sleep 3
 
 # 2. Start Sample Agent
-echo -e "${GREEN}[2/4] Starting Sample Agent...${NC}"
+echo -e "${GREEN}[2/5] Starting Sample Agent...${NC}"
 cd "$ROOT_DIR/packages/agents/sample-agent"
 if [ ! -d "venv" ]; then
     echo -e "${YELLOW}Creating virtual environment...${NC}"
@@ -74,7 +74,7 @@ echo -e "  Logs: logs/sample-agent.log\n"
 sleep 2
 
 # 3. Start Metadata Extraction Agent
-echo -e "${GREEN}[3/4] Starting Metadata Extraction Agent...${NC}"
+echo -e "${GREEN}[3/5] Starting Metadata Extraction Agent...${NC}"
 cd "$ROOT_DIR/packages/agents/metadata-extraction-agent"
 if [ ! -d "venv" ]; then
     echo -e "${YELLOW}Creating virtual environment...${NC}"
@@ -94,8 +94,29 @@ echo -e "${GREEN}✓ Metadata Extraction Agent started (PID: $METADATA_PID)${NC}
 echo -e "  Logs: logs/metadata-agent.log\n"
 sleep 2
 
-# 4. Start Web Dashboard
-echo -e "${GREEN}[4/4] Starting Web Dashboard...${NC}"
+# 4. Start Storage Agent
+echo -e "${GREEN}[4/5] Starting Storage Agent...${NC}"
+cd "$ROOT_DIR/packages/agents/storage-agent"
+if [ ! -d "venv" ]; then
+    echo -e "${YELLOW}Creating virtual environment...${NC}"
+    python3 -m venv venv
+fi
+source venv/bin/activate
+if [ ! -f "venv/bin/websockets" ]; then
+    echo -e "${YELLOW}Installing dependencies...${NC}"
+    pip install -q -r requirements.txt
+fi
+export MCP_SERVER_URL="ws://localhost:3000"
+export MCP_AGENT_ID="storage-agent"
+python main.py > "$ROOT_DIR/logs/storage-agent.log" 2>&1 &
+STORAGE_PID=$!
+deactivate
+echo -e "${GREEN}✓ Storage Agent started (PID: $STORAGE_PID)${NC}"
+echo -e "  Logs: logs/storage-agent.log\n"
+sleep 2
+
+# 5. Start Web Dashboard
+echo -e "${GREEN}[5/5] Starting Web Dashboard...${NC}"
 cd "$ROOT_DIR/apps/web"
 if [ ! -d "node_modules" ]; then
     echo -e "${YELLOW}Installing Web Dashboard dependencies...${NC}"
@@ -115,12 +136,14 @@ echo -e "${YELLOW}Services:${NC}"
 echo -e "  • MCP Server:          ws://localhost:3000"
 echo -e "  • Sample Agent:        Connected (echo, sum)"
 echo -e "  • Metadata Agent:      Connected (extract_metadata)"
+echo -e "  • Storage Agent:       Connected (store_document, retrieve_document, list_documents, list_backends, get_stats)"
 echo -e "  • Web Dashboard:       http://localhost:3001\n"
 
 echo -e "${YELLOW}Logs:${NC}"
 echo -e "  • MCP Server:          tail -f logs/mcp-server.log"
 echo -e "  • Sample Agent:        tail -f logs/sample-agent.log"
 echo -e "  • Metadata Agent:      tail -f logs/metadata-agent.log"
+echo -e "  • Storage Agent:       tail -f logs/storage-agent.log"
 echo -e "  • Web Dashboard:       tail -f logs/web-dashboard.log\n"
 
 echo -e "${YELLOW}Press Ctrl+C to stop all services${NC}\n"

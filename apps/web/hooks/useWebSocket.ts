@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 
 interface ToolDefinition {
   name: string;
@@ -20,6 +20,11 @@ export function useWebSocket(url: string) {
   const messageIdRef = useRef(0);
 
   useEffect(() => {
+    if (!url) {
+      setConnected(false);
+      return;
+    }
+
     const ws = new WebSocket(url);
 
     ws.onopen = () => {
@@ -60,7 +65,7 @@ export function useWebSocket(url: string) {
     };
   }, [url]);
 
-  const send = (method: string, params?: unknown): Promise<unknown> => {
+  const send = useCallback((method: string, params?: unknown): Promise<unknown> => {
     return new Promise((resolve, reject) => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
         reject(new Error('WebSocket not connected'));
@@ -92,7 +97,7 @@ export function useWebSocket(url: string) {
         reject(err);
       }
     });
-  };
+  }, []);
 
   return { connected, error, send };
 }

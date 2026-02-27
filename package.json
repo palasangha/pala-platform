@@ -15,6 +15,7 @@
     "clean": "turbo run clean && rm -rf node_modules"
   },
   "devDependencies": {
+    "concurrently": "^8.2.2",
     "turbo": "^1.11.0"
   },
   "engines": {
