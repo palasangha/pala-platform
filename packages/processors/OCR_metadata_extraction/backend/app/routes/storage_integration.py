@@ -10,17 +10,11 @@ storage layer, handling:
 """
 
 from flask import Blueprint, request, jsonify
-from bson import ObjectId
 from datetime import datetime
-import sys
-from pathlib import Path
 import asyncio
 import hashlib
+import importlib
 import json
-
-# Add storage package to path
-storage_path = Path(__file__).parent.parent.parent.parent.parent.parent / 'storage'
-sys.path.insert(0, str(storage_path))
 
 from app.models import mongo
 from app.models.user import User
@@ -30,11 +24,11 @@ from app.utils.decorators import token_required
 
 # Import storage API
 try:
-    from api.storage_api import StorageAPI
+    StorageAPI = importlib.import_module('api.storage_api').StorageAPI
     STORAGE_AVAILABLE = True
 except ImportError:
     STORAGE_AVAILABLE = False
-    print("Warning: Storage API not available. Storage integration disabled.")
+    print("Warning: Legacy Storage API not available. Storage integration endpoints are disabled.")
 
 storage_bp = Blueprint('storage', __name__, url_prefix='/storage')
 
@@ -300,6 +294,9 @@ def sign_document(current_user_id):
     TODO: Implement actual cryptographic signing
     For now, this creates a signature record in metadata
     """
+    if not STORAGE_AVAILABLE:
+        return jsonify({'error': 'Storage layer not available'}), 503
+
     try:
         data = request.get_json()
         content_id = data.get('content_id')

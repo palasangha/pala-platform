@@ -55,6 +55,37 @@ interface Agent {
   tools: ToolDefinition[];
 }
 
+interface SearchReference {
+  id: string;
+  source_type: 'local' | 'web';
+  content_id?: string;
+  title: string;
+  snippet: string;
+  score?: number;
+  backend?: string;
+  created_at?: string;
+  url?: string;
+}
+
+interface SearchAnswerPayload {
+  query: string;
+  answer_local: string;
+  references_local: SearchReference[];
+  web_section?: {
+    enabled: boolean;
+    answer?: string;
+    references?: SearchReference[];
+    note?: string;
+  };
+}
+
+interface SearchMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  response?: SearchAnswerPayload;
+}
+
 type WorkflowId = 'document-processing' | 'audio-transcription' | 'search-query';
 type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
 
@@ -124,6 +155,16 @@ const initialWorkflows: Workflow[] = [
 ];
 
 export default function Dashboard() {
+  const unwrapMcpResult = (payload: any) => {
+    let current = payload;
+    let depth = 0;
+    while (current && typeof current === 'object' && 'result' in current && depth < 6) {
+      current = current.result;
+      depth += 1;
+    }
+    return current || {};
+  };
+
   const [wsUrl, setWsUrl] = useState('');
 
   useEffect(() => {
@@ -158,6 +199,11 @@ export default function Dashboard() {
   const [expandedStep, setExpandedStep] = useState<string | null>(null); // Which step is expanded for editing
   const [editingStep, setEditingStep] = useState<string | null>(null); // Which step is being edited
   const [workflowDropdownOpen, setWorkflowDropdownOpen] = useState(false); // Workflow dropdown state
+
+  // Content Search State
+  const [searchInput, setSearchInput] = useState('');
+  const [searchMessages, setSearchMessages] = useState<SearchMessage[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
 
   const loadAvailableBackends = useCallback(async () => {
     if (!connected) {
@@ -438,7 +484,83 @@ export default function Dashboard() {
     setDocumentFile(null);
     setDocumentFileName('');
     setDocumentPreviewUrl('');
+    setSearchInput('');
+    setSearchMessages([]);
+    setSearchLoading(false);
     setError(null);
+  };
+
+  const handleSearchSubmit = async () => {
+    const query = searchInput.trim();
+    if (!query) {
+      return;
+    }
+
+    if (!connected) {
+      setError('WebSocket not connected. Please wait for the connection to establish.');
+      return;
+    }
+
+    const userMessage: SearchMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: query,
+    };
+
+    setSearchMessages((prev) => [...prev, userMessage]);
+    setSearchInput('');
+    setSearchLoading(true);
+    setError(null);
+
+    updateStepStatus('search-query', 'query', 'completed', { query });
+    updateStepStatus('search-query', 'search', 'running');
+
+    const startTime = Date.now();
+
+    try {
+      const result = await send('tools/invoke', {
+        name: 'answer_content_query',
+        agentId: 'storage-agent',
+        arguments: {
+          query,
+          limit: 5,
+          backend: selectedBackend,
+          include_web: true,
+        },
+      }) as any;
+
+      if (result?.success === false || result?.error) {
+        throw new Error(result?.error || 'Search failed');
+      }
+
+      const data = unwrapMcpResult(result) as SearchAnswerPayload;
+      const assistantMessage: SearchMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: data?.answer_local || 'No answer returned.',
+        response: data,
+      };
+
+      setSearchMessages((prev) => [...prev, assistantMessage]);
+
+      const duration = Date.now() - startTime;
+      updateStepStatus('search-query', 'search', 'completed', { query, references: data?.references_local || [] }, undefined, 'storage-agent', duration);
+      updateStepStatus('search-query', 'results', 'completed', data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Search failed';
+      setSearchMessages((prev) => [
+        ...prev,
+        {
+          id: `assistant-error-${Date.now()}`,
+          role: 'assistant',
+          content: `I couldn’t complete the search: ${message}`,
+        },
+      ]);
+      updateStepStatus('search-query', 'search', 'failed', undefined, message);
+      setError(message);
+    } finally {
+      setSearchLoading(false);
+    }
   };
 
   const currentWorkflow = workflows.find(w => w.id === activeWorkflow);
@@ -954,7 +1076,96 @@ export default function Dashboard() {
                   </>
                 )}
 
-                {activeWorkflow !== 'document-processing' && (
+                {activeWorkflow === 'search-query' && (
+                  <div className="space-y-4">
+                    <div className="bg-white rounded-xl border border-slate-200 p-4">
+                      <h3 className="font-semibold text-slate-900">🔍 Content Search (Grounded Q&A)</h3>
+                      <p className="text-sm text-slate-600 mt-1">
+                        Ask natural-language questions. Answers are grounded in stored documents with references. Optional web context is shown separately.
+                      </p>
+                    </div>
+
+                    <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden flex flex-col h-[60vh]">
+                      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                        {searchMessages.length === 0 && (
+                          <div className="text-sm text-slate-500 bg-white rounded-lg border border-slate-200 p-4">
+                            Try: “What policies are mentioned in my stored documents?”
+                          </div>
+                        )}
+
+                        {searchMessages.map((message) => (
+                          <div key={message.id} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`max-w-[80%] rounded-xl px-4 py-3 text-sm ${message.role === 'user' ? 'bg-blue-600 text-white' : 'bg-white text-slate-900 border border-slate-200'}`}>
+                              <p className="whitespace-pre-wrap">{message.content}</p>
+
+                              {message.role === 'assistant' && message.response && (
+                                <div className="mt-3 space-y-3">
+                                  <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                                    <p className="text-xs font-semibold text-blue-900 mb-2">Local References</p>
+                                    {message.response.references_local?.length ? (
+                                      <div className="space-y-2">
+                                        {message.response.references_local.map((reference) => (
+                                          <div key={reference.id} className="rounded border border-blue-100 bg-white p-2">
+                                            <p className="text-xs font-semibold text-slate-900">
+                                              [{reference.id}] {reference.title}
+                                            </p>
+                                            <p className="text-xs text-slate-700 mt-1">{reference.snippet}</p>
+                                            <p className="text-[11px] text-slate-500 mt-1">
+                                              {reference.content_id ? `content_id: ${reference.content_id}` : ''}
+                                              {reference.backend ? ` • backend: ${reference.backend}` : ''}
+                                            </p>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <p className="text-xs text-slate-600">No local references found.</p>
+                                    )}
+                                  </div>
+
+                                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                    <p className="text-xs font-semibold text-slate-900 mb-1">Web / OpenAI Section</p>
+                                    <p className="text-xs text-slate-600">
+                                      {message.response.web_section?.note || 'No additional web context provided.'}
+                                    </p>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <form
+                        className="border-t border-slate-200 bg-white p-3"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          if (!searchLoading) {
+                            handleSearchSubmit();
+                          }
+                        }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={searchInput}
+                            onChange={(event) => setSearchInput(event.target.value)}
+                            placeholder="Ask a question about your stored content..."
+                            className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                          />
+                          <button
+                            type="submit"
+                            disabled={searchLoading || !searchInput.trim()}
+                            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-sm font-medium"
+                          >
+                            {searchLoading ? 'Searching…' : 'Ask'}
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  </div>
+                )}
+
+                {activeWorkflow !== 'document-processing' && activeWorkflow !== 'search-query' && (
                   <div className="text-center py-12">
                     <p className="text-slate-500">This workflow is under development</p>
                   </div>

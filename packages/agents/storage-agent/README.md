@@ -8,7 +8,10 @@ MCP agent that exposes document storage operations with automatic deduplication.
 - `retrieve_document` - Retrieve by content ID
 - `list_documents` - List stored documents
 - `list_backends` - List available storage backends
+- `list_storage_providers` - List provider catalog and enabled status
 - `get_stats` - Get storage statistics
+- `answer_content_query` - Grounded Q&A over stored content with citations
+- `delete_all_documents` - Delete all stored content and metadata
 
 ## Usage
 
@@ -18,10 +21,16 @@ export MCP_AGENT_ID="storage-agent"
 python main.py
 ```
 
-## Storage Backend
+## Storage Architecture
 
-Uses the `packages/storage` backend with:
-- SHA-256 content deduplication
-- Multiple backend support (local, S3, GCS, Azure)
-- Version control
-- Metadata storage in SQLite
+The storage-agent is now self-contained and provider-centric.
+
+- `metadata_db.py` manages cross-provider metadata and deduplication in SQLite.
+- `providers/` contains backend-specific provider implementations.
+- `providers/registry.py` maps provider IDs to backend names and enablement.
+
+Current provider status:
+
+- `local-provider`: enabled (default)
+- `sqlite-provider`: enabled
+- `s3-provider`, `gcs-provider`, `azure-provider`: scaffolded (disabled)
