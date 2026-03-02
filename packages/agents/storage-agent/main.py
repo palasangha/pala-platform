@@ -1,3 +1,30 @@
+from __future__ import annotations
+
+# Tool to delete all documents
+async def tool_delete_all_documents(params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Delete all documents from the storage database and content folder.
+    """
+    try:
+        # Delete all rows from content_metadata and content_versions
+        import sqlite3
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM content_metadata')
+        cursor.execute('DELETE FROM content_versions')
+        conn.commit()
+        conn.close()
+        # Optionally, clear content files (dangerous, but for full reset)
+        import shutil
+        import os
+        if os.path.exists(str(content_path)):
+            shutil.rmtree(str(content_path))
+            os.makedirs(str(content_path), exist_ok=True)
+        logger.info('All documents deleted from storage DB and content folder.')
+        return {"success": True, "message": "All documents deleted."}
+    except Exception as e:
+        logger.error(f"Error deleting all documents: {e}", exc_info=True)
+        raise
 #!/usr/bin/env python3
 """
 Storage Agent - Document Storage with Deduplication
@@ -207,7 +234,7 @@ async def tool_list_backends(params: Dict[str, Any]) -> Dict[str, Any]:
         
         for backend_name in storage_api.backend_manager.backends.keys():
             backend = storage_api.backend_manager.backends[backend_name]
-            is_default = backend_name == storage_api.backend_manager.default_backend_name
+            is_default = backend_name == storage_api.backend_manager.default_backend
             
             backends.append({
                 'name': backend_name,
@@ -218,7 +245,7 @@ async def tool_list_backends(params: Dict[str, Any]) -> Dict[str, Any]:
         
         return {
             'backends': backends,
-            'default_backend': storage_api.backend_manager.default_backend_name
+            'default_backend': storage_api.backend_manager.default_backend
         }
         
     except Exception as e:
@@ -248,6 +275,7 @@ TOOLS: Dict[str, Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]] = {
     "list_documents": tool_list_documents,
     "list_backends": tool_list_backends,
     "get_stats": tool_get_stats,
+    "delete_all_documents": tool_delete_all_documents,
 }
 
 
@@ -334,6 +362,14 @@ async def register_tools(ws: websockets.WebSocketClientProtocol, agent_id: str) 
         {
             "name": "get_stats",
             "description": "Get storage statistics across all backends",
+            "agentId": agent_id,
+            "inputSchema": {
+                "type": "object"
+            }
+        },
+        {
+            "name": "delete_all_documents",
+            "description": "Delete all stored documents and reset storage state",
             "agentId": agent_id,
             "inputSchema": {
                 "type": "object"

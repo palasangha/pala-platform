@@ -147,7 +147,6 @@ export default function Dashboard() {
   const [documentPreviewUrl, setDocumentPreviewUrl] = useState<string>('');
   const [ocrText, setOcrText] = useState<string>('');
   const [ocrLines, setOcrLines] = useState<Array<{ text: string; confidence: number }>>([]);
-  const [ocrProgress, setOcrProgress] = useState<number>(0);
   const [extractedMetadata, setExtractedMetadata] = useState<DocumentMetadata | null>(null);
   
   // Storage configuration
@@ -158,6 +157,7 @@ export default function Dashboard() {
   const [currentView, setCurrentView] = useState<'workflow' | 'browse'>('workflow');
   const [expandedStep, setExpandedStep] = useState<string | null>(null); // Which step is expanded for editing
   const [editingStep, setEditingStep] = useState<string | null>(null); // Which step is being edited
+  const [workflowDropdownOpen, setWorkflowDropdownOpen] = useState(false); // Workflow dropdown state
 
   const loadAvailableBackends = useCallback(async () => {
     if (!connected) {
@@ -270,7 +270,6 @@ export default function Dashboard() {
       const duration = Date.now() - startTime;
       setOcrText(extractedText);
       setOcrLines(lineConfidence);
-      setOcrProgress(100);
       updateStepStatus('document-processing', 'ocr', 'completed',
         { text: extractedText, confidence: data?.confidence, lines: lineConfidence },
         undefined,
@@ -467,82 +466,91 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100">
-      {/* Show Document Browser */}
-      {currentView === 'browse' && (
-        <div className="fixed inset-0 z-40">
-          <div className="h-full flex flex-col bg-white">
-            {/* Browser Header */}
-            <div className="bg-white border-b border-slate-200 px-6 py-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h1 className="text-xl font-bold text-slate-900">Pala Platform</h1>
-                  <p className="text-sm text-slate-600">Browse Stored Documents</p>
-                </div>
-                <button
-                  onClick={() => setCurrentView('workflow')}
-                  className="px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 rounded-lg border border-slate-300"
-                >
-                  Back to Workflow
-                </button>
-              </div>
-            </div>
-            <div className="flex-1">
-              <DocumentBrowser />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Main Workflow View */}
-      {currentView === 'workflow' && (
-        <>
-          {/* Header */}
-          <nav className="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-50">
+      {/* Top Navigation Bar */}
+      <div className="bg-white border-b border-slate-200 sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
-            <div>
+            <div className="flex items-center gap-4">
               <h1 className="text-xl font-bold text-slate-900">Pala Platform</h1>
-              <p className="text-sm text-slate-600">Digital Preservation Workflows</p>
-            </div>
-            <div className="flex items-center gap-3">
-              {/* View Switcher */}
-              <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
-                <button
-                  onClick={() => setCurrentView('workflow')}
-                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                    currentView === 'workflow'
-                      ? 'bg-white text-slate-900 shadow-sm'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Workflow
-                </button>
-                <button
-                  onClick={() => setCurrentView('browse')}
-                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                    currentView === 'browse'
-                      ? 'bg-white text-slate-900 shadow-sm'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Browse
-                </button>
-              </div>
               
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-50">
-                <div className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-                <span className="text-xs font-medium text-slate-600">{connected ? 'Connected' : 'Offline'}</span>
+              {/* Workflow Selector Dropdown */}
+              <div className="relative">
+                <button
+                  onClick={() => setWorkflowDropdownOpen(!workflowDropdownOpen)}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  <span className="text-lg">{currentWorkflow?.icon}</span>
+                  <span className="font-medium">{currentWorkflow?.name}</span>
+                  <svg className={`w-4 h-4 transition-transform ${workflowDropdownOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                
+                {/* Dropdown Menu */}
+                {workflowDropdownOpen && (
+                  <>
+                    <div 
+                      className="fixed inset-0 z-30" 
+                      onClick={() => setWorkflowDropdownOpen(false)}
+                    />
+                    <div className="absolute top-full left-0 mt-2 w-80 bg-white rounded-xl shadow-2xl border border-slate-200 z-40">
+                      <div className="p-3 space-y-2">
+                        {workflows.map(workflow => (
+                          <button
+                            key={workflow.id}
+                            onClick={() => {
+                              setActiveWorkflow(workflow.id);
+                              setCurrentView('workflow');
+                              setWorkflowDropdownOpen(false);
+                            }}
+                            className={`w-full text-left p-3 rounded-lg transition-all ${
+                              activeWorkflow === workflow.id
+                                ? 'bg-blue-50 border-2 border-blue-500'
+                                : 'border-2 border-transparent hover:bg-slate-50 hover:border-slate-200'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <span className="text-2xl">{workflow.icon}</span>
+                              <div className="flex-1">
+                                <p className="font-semibold text-slate-900 text-sm">{workflow.name}</p>
+                                <p className="text-xs text-slate-600">{workflow.description}</p>
+                              </div>
+                              {activeWorkflow === workflow.id && (
+                                <svg className="w-5 h-5 text-blue-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                </svg>
+                              )}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
+            </div>
+            
+            <div className="flex items-center gap-2">
               <button
-                onClick={refreshData}
-                className="px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+                onClick={() => setCurrentView('browse')}
+                className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                  currentView === 'browse'
+                    ? 'bg-blue-100 text-blue-700'
+                    : 'text-slate-700 hover:bg-slate-100'
+                }`}
               >
-                Sync Agents
+                📚 Browse Documents
+              </button>
+              <button
+                onClick={handleResetWorkflow}
+                className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+              >
+                🔄 Reset
               </button>
             </div>
           </div>
         </div>
-      </nav>
+      </div>
 
       {error && (
         <div className="max-w-7xl mx-auto px-6 pt-6">
@@ -553,41 +561,18 @@ export default function Dashboard() {
       )}
 
       <div className="max-w-7xl mx-auto px-6 py-8">
-        <div className="grid grid-cols-12 gap-6">
-          {/* Workflow Selector */}
-          <div className="col-span-3">
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
-              <h2 className="text-sm font-semibold text-slate-700 mb-4">Workflows</h2>
-              <div className="space-y-2">
-                {workflows.map(workflow => (
-                  <button
-                    key={workflow.id}
-                    onClick={() => setActiveWorkflow(workflow.id)}
-                    className={`w-full text-left p-4 rounded-xl border-2 transition-all ${
-                      activeWorkflow === workflow.id
-                        ? 'border-blue-500 bg-blue-50 shadow-sm'
-                        : 'border-slate-200 hover:border-slate-300 bg-white'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3 mb-2">
-                      <span className="text-2xl">{workflow.icon}</span>
-                      <div className="flex-1">
-                        <p className="font-semibold text-slate-900 text-sm">{workflow.name}</p>
-                      </div>
-                    </div>
-                    <p className="text-xs text-slate-600">{workflow.description}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
+        {/* Main Content Area */}
+        <div className="grid grid-cols-1 gap-6">
           {/* Main Content */}
-          <div className="col-span-9">
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200">
-              {/* Workflow Header */}
-              <div className="border-b border-slate-200 px-6 py-5 bg-gradient-to-r from-blue-50 to-indigo-50">
-                <div className="flex items-center justify-between">
+          <div className="w-full">
+            {currentView === 'browse' && (
+              <DocumentBrowser wsUrl={wsUrl} connected={connected} send={send} />
+            )}
+
+            {currentView === 'workflow' && (
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-200">
+                {/* Workflow Header */}
+                <div className="border-b border-slate-200 px-6 py-5 bg-gradient-to-r from-blue-50 to-indigo-50">
                   <div className="flex items-center gap-3">
                     <span className="text-3xl">{currentWorkflow?.icon}</span>
                     <div>
@@ -595,16 +580,16 @@ export default function Dashboard() {
                       <p className="text-sm text-slate-600 mt-1">{currentWorkflow?.description}</p>
                     </div>
                   </div>
-                  <button
-                    onClick={handleResetWorkflow}
-                    className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
-                  >
-                    Reset Workflow
-                  </button>
+                </div>
+
+                {/* Workflow Content - Unified Step Display */}
+                <div className="p-6 space-y-4">
                 </div>
               </div>
+            )}
 
               {/* Pipeline Steps Timeline - Interactive */}
+              {currentView === 'workflow' && (
               <div className="px-6 py-5 border-b border-slate-200 bg-slate-50">
                 <div className="flex items-center gap-2">
                   {currentWorkflow?.steps.map((step, idx) => (
@@ -646,8 +631,10 @@ export default function Dashboard() {
                   ))}
                 </div>
               </div>
+              )}
 
               {/* Workflow Content - Unified Step Display */}
+              {currentView === 'workflow' && (
               <div className="p-6 space-y-4">
                 {activeWorkflow === 'document-processing' && (
                   <>
@@ -947,7 +934,7 @@ export default function Dashboard() {
                         ) : currentWorkflow?.steps[4].status === 'completed' ? (
                           <div className="p-5 bg-emerald-50 border-t border-emerald-200">
                             <p className="text-sm text-emerald-700 mb-2">
-                              {currentWorkflow?.steps[4].data?.deduplication
+                              {(currentWorkflow?.steps[4].data as any)?.deduplication
                                 ? '⚠️ Document already exists (deduplicated)'
                                 : '✅ Document successfully stored'}
                             </p>
@@ -973,12 +960,10 @@ export default function Dashboard() {
                   </div>
                 )}
               </div>
-            </div>
+              )}
           </div>
         </div>
       </div>
-      </>
-      )}
     </div>
   );
 }

@@ -13,7 +13,6 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useWebSocket } from '@/hooks/useWebSocket';
 
 interface StoredDocument {
   content_id: string;
@@ -77,15 +76,39 @@ interface DocumentContent {
   };
 }
 
-export default function DocumentBrowser() {
-  // WebSocket connection
-  const { connected, send } = useWebSocket(process.env.NEXT_PUBLIC_MCP_SERVER_URL || 'ws://localhost:3000');
-  
+interface DocumentBrowserProps {
+  wsUrl: string;
+  connected: boolean;
+  send: (method: string, params: any) => Promise<any>;
+}
+
+export default function DocumentBrowser({ wsUrl, connected, send }: DocumentBrowserProps) {
+  const unwrapMcpResult = (payload: any) => {
+    let current = payload;
+    let depth = 0;
+    while (current && typeof current === 'object' && 'result' in current && depth < 6) {
+      const next = current.result;
+      if (next === undefined) {
+        break;
+      }
+      current = next;
+      depth += 1;
+    }
+    return current || {};
+  };
+
   // State
   const [documents, setDocuments] = useState<StoredDocument[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<DocumentContent | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Debug: log loaded documents
+  useEffect(() => {
+    if (documents.length > 0) {
+      // eslint-disable-next-line no-console
+      console.log('Loaded documents:', documents);
+    }
+  }, [documents]);
   
   // Pagination
   const [page, setPage] = useState(1);
@@ -100,7 +123,7 @@ export default function DocumentBrowser() {
   // Stats
   const [stats, setStats] = useState<StorageStats | null>(null);
 
-  // Load documents
+  // Load documents (always show all, then filter in UI)
   const loadDocuments = useCallback(async (reset = false) => {
     if (!connected) {
       setError('WebSocket not connected');
@@ -111,35 +134,29 @@ export default function DocumentBrowser() {
     setError(null);
     
     try {
-      const offset = reset ? 0 : (page - 1) * limit;
-      const args: any = {
-        limit,
-        offset,
-      };
-      
-      if (contentTypeFilter) {
-        args.content_type = contentTypeFilter;
-      }
-
-      if (backendFilter) {
-        args.backend = backendFilter;
-      }
-      
+      // Always fetch all documents, ignore filters for now
       const result = await send('tools/invoke', {
         name: 'list_documents',
         agentId: 'storage-agent',
-        arguments: args
+        arguments: { limit: 1000, offset: 0 }
       }) as any;
-      
-      const data = result || {};
-      
-      if (reset) {
-        setDocuments(data.items || []);
-      } else {
-        setDocuments(prev => [...prev, ...(data.items || [])]);
-      }
-      
-      setHasMore((data.items || []).length === limit);
+      const data = unwrapMcpResult(result);
+      const items = Array.isArray(data.items)
+        ? data.items
+        : Array.isArray(data.documents)
+          ? data.documents
+          : [];
+      setDocuments(
+        items.map((item: any) => ({
+          ...item,
+          content_id: item.content_id || item.id || '',
+          backend: item.backend || item.backend_name || '',
+          size: Number(item.size || item.file_size || 0),
+          version: Number(item.version || 0),
+          hash: item.file_hash || item.hash || '', // map file_hash to hash
+        }))
+      );
+      setHasMore(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load documents';
       setError(message);
@@ -158,39 +175,56 @@ export default function DocumentBrowser() {
         agentId: 'storage-agent',
         arguments: {}
       }) as any;
-      
-      if (result) {
-        setStats(result);
-      }
+      const data = unwrapMcpResult(result);
+      const totalItems = Number(data.total_items ?? data.count ?? 0);
+      const totalSize = Number(data.total_size ?? data.size ?? 0);
+      setStats({
+        total_items: Number.isFinite(totalItems) ? totalItems : 0,
+        total_size: Number.isFinite(totalSize) ? totalSize : 0,
+      });
     } catch (err) {
       console.error('Failed to load stats:', err);
     }
   };
 
-  // View document
-  const viewDocument = async (contentId: string) => {
-    if (!connected) {
-      setError('WebSocket not connected');
+  const handleClearAllDocuments = async () => {
+    if (!window.confirm('Are you sure you want to delete ALL documents? This cannot be undone.')) {
       return;
     }
-    
-    setLoading(true);
+
     setError(null);
-    
+    setDocuments([]);
+    setSelectedDocument(null);
+    setStats({ total_items: 0, total_size: 0 });
+
     try {
-      const result = await send('tools/invoke', {
-        name: 'retrieve_document',
+      const response = await send('tools/invoke', {
+        name: 'delete_all_documents',
         agentId: 'storage-agent',
-        arguments: { content_id: contentId }
+        arguments: {}
       }) as any;
-      
-      setSelectedDocument(result);
+
+      if (response?.success === false) {
+        throw new Error(response?.error || 'Failed to clear documents');
+      }
+
+      await Promise.all([loadDocuments(true), loadStats()]);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to retrieve document';
+      const message = err instanceof Error ? err.message : 'Failed to clear documents';
       setError(message);
-    } finally {
-      setLoading(false);
+      // eslint-disable-next-line no-alert
+      alert('Failed to clear documents: ' + message);
     }
+  };
+
+  // View document (optional: show metadata in a modal or side panel)
+  // For now, just highlight selected
+  const viewDocument = (contentId: string) => {
+    setSelectedDocument({
+      storage_metadata: { content_id: contentId, backend: '', size: 0, hash: '', version: 0, created_at: '' },
+      ocr_text: '',
+      enriched_metadata: {},
+    });
   };
 
   // Initial load
@@ -230,7 +264,6 @@ export default function DocumentBrowser() {
         {/* Header */}
         <div className="p-6 border-b border-slate-200">
           <h2 className="text-xl font-bold text-slate-900 mb-4">Document Browser</h2>
-          
           {/* Search */}
           <div className="mb-4">
             <input
@@ -241,7 +274,6 @@ export default function DocumentBrowser() {
               className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
             />
           </div>
-          
           {/* Filters */}
           <div className="space-y-2">
             <select
@@ -254,7 +286,6 @@ export default function DocumentBrowser() {
               <option value="image">Images</option>
               <option value="text">Text</option>
             </select>
-            
             <select
               value={backendFilter}
               onChange={(e) => setBackendFilter(e.target.value)}
@@ -268,7 +299,6 @@ export default function DocumentBrowser() {
               <option value="azure">Azure</option>
             </select>
           </div>
-          
           {/* Stats */}
           {stats && (
             <div className="mt-4 grid grid-cols-2 gap-2">
@@ -283,29 +313,32 @@ export default function DocumentBrowser() {
             </div>
           )}
         </div>
-
         {/* Document List */}
         <div className="flex-1 overflow-y-auto">
           {loading && documents.length === 0 && (
             <div className="p-6 text-center text-slate-500">Loading...</div>
           )}
-          
           {error && (
             <div className="p-6 text-center text-red-600 text-sm">{error}</div>
           )}
-          
           {documents.length === 0 && !loading && (
             <div className="p-6 text-center text-slate-500 text-sm">No documents found</div>
           )}
-          
           <div className="p-4 space-y-2">
             {documents
               .filter(doc => {
+                // Apply search and filter after all docs are loaded
+                // Removed content_type filter as StoredDocument does not have this property
+                if (backendFilter && doc.backend !== backendFilter) return false;
                 if (!searchQuery) return true;
                 const title = doc.metadata?.document?.title || '';
                 const path = doc.metadata?.original_file_path || '';
-                return title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                       path.toLowerCase().includes(searchQuery.toLowerCase());
+                const fallback = doc.content_id + (doc.backend || '') + (doc.hash || '');
+                return (
+                  title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                  path.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                  fallback.toLowerCase().includes(searchQuery.toLowerCase())
+                );
               })
               .map((doc) => (
                 <button
@@ -319,204 +352,135 @@ export default function DocumentBrowser() {
                 >
                   <div className="flex items-start justify-between mb-1">
                     <h3 className="font-medium text-slate-900 text-sm line-clamp-1">
-                      {doc.metadata?.document?.title || 'Untitled Document'}
+                      {doc.metadata?.document?.title || doc.metadata?.original_file_path || doc.content_id || 'Untitled Document'}
                     </h3>
                     <span className="text-xs text-slate-500 ml-2">{formatSize(doc.size)}</span>
                   </div>
-                  
+                  {!doc.metadata?.document?.title && doc.metadata?.original_file_path && (
+                    <p className="text-xs text-slate-500 mb-1">
+                      📄 {doc.metadata.original_file_path}
+                    </p>
+                  )}
                   {doc.metadata?.document?.date?.display && (
                     <p className="text-xs text-slate-500 mb-1">
                       📅 {doc.metadata.document.date.display}
                     </p>
                   )}
-                  
                   {doc.metadata?.content?.summary && (
                     <p className="text-xs text-slate-600 line-clamp-2 mb-2">
                       {doc.metadata.content.summary}
                     </p>
                   )}
-                  
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-600 rounded">
-                      {doc.backend}
-                    </span>
-                    <span className="text-xs text-slate-400">
-                      v{doc.version}
-                    </span>
-                  </div>
                 </button>
               ))}
           </div>
-          
-          {/* Load More */}
-          {hasMore && !loading && (
-            <div className="p-4">
-              <button
-                onClick={loadMore}
-                className="w-full px-4 py-2 text-sm text-blue-600 hover:bg-blue-50 rounded-lg border border-blue-200"
-              >
-                Load More
-              </button>
-            </div>
-          )}
+        </div>
+        {/* Clear All Button */}
+        <div className="p-4 border-t border-slate-200">
+          <button
+            className="w-full px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium text-sm"
+            onClick={handleClearAllDocuments}
+          >
+            🗑️ Clear All Documents
+          </button>
         </div>
       </div>
-
       {/* Main Content - Document Viewer */}
-      <div className="flex-1 flex flex-col">
-        {!selectedDocument && (
-          <div className="flex-1 flex items-center justify-center text-slate-400">
-            <div className="text-center">
-              <svg className="w-24 h-24 mx-auto mb-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              <p className="text-lg">Select a document to view</p>
-            </div>
-          </div>
-        )}
-
-        {selectedDocument && (
+      <div className="flex-1 flex flex-col overflow-y-auto">
+        {selectedDocument ? (
           <>
-            {/* Document Header */}
-            <div className="bg-white border-b border-slate-200 px-6 py-4">
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <h2 className="text-2xl font-bold text-slate-900 mb-2">
-                    {selectedDocument.enriched_metadata?.document?.title || 'Untitled Document'}
-                  </h2>
-                  <div className="flex items-center gap-4 text-sm text-slate-600">
-                    {selectedDocument.enriched_metadata?.document?.type && (
-                      <span>📄 {selectedDocument.enriched_metadata.document.type}</span>
-                    )}
-                    {selectedDocument.enriched_metadata?.document?.date?.display && (
-                      <span>📅 {selectedDocument.enriched_metadata.document.date.display}</span>
-                    )}
-                    {selectedDocument.enriched_metadata?.document?.language && (
-                      <span>🌐 {selectedDocument.enriched_metadata.document.language}</span>
-                    )}
-                  </div>
-                </div>
-                
-                <div className="flex items-center gap-2">
-                  <button className="px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 rounded-lg border border-slate-300">
-                    Export
-                  </button>
-                  <button className="px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 rounded-lg border border-slate-300">
-                    Download
-                  </button>
-                  <button
-                    onClick={() => setSelectedDocument(null)}
-                    className="px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 rounded-lg"
-                  >
-                    ✕
-                  </button>
-                </div>
+            {/* Summary */}
+            {selectedDocument.enriched_metadata?.content?.summary && (
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                <h3 className="font-semibold text-blue-900 mb-2">Summary</h3>
+                <p className="text-sm text-blue-800">
+                  {selectedDocument.enriched_metadata.content.summary}
+                </p>
+              </div>
+            )}
+            {/* OCR Text */}
+            <div className="bg-white rounded-xl border border-slate-200 p-6">
+              <h3 className="text-lg font-semibold text-slate-900 mb-4">Extracted Text</h3>
+              <div className="prose prose-sm max-w-none">
+                <pre className="whitespace-pre-wrap font-sans text-sm text-slate-700 leading-relaxed">
+                  {selectedDocument.ocr_text}
+                </pre>
               </div>
             </div>
-
-            {/* Document Content */}
-            <div className="flex-1 overflow-y-auto p-6">
-              <div className="max-w-4xl mx-auto space-y-6">
-                {/* Summary */}
-                {selectedDocument.enriched_metadata?.content?.summary && (
-                  <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-                    <h3 className="font-semibold text-blue-900 mb-2">Summary</h3>
-                    <p className="text-sm text-blue-800">
-                      {selectedDocument.enriched_metadata.content.summary}
-                    </p>
-                  </div>
-                )}
-
-                {/* OCR Text */}
-                <div className="bg-white rounded-xl border border-slate-200 p-6">
-                  <h3 className="text-lg font-semibold text-slate-900 mb-4">Extracted Text</h3>
-                  <div className="prose prose-sm max-w-none">
-                    <pre className="whitespace-pre-wrap font-sans text-sm text-slate-700 leading-relaxed">
-                      {selectedDocument.ocr_text}
-                    </pre>
+            {/* Metadata */}
+            <div className="bg-white rounded-xl border border-slate-200 p-6">
+              <h3 className="text-lg font-semibold text-slate-900 mb-4">Metadata</h3>
+              {/* People */}
+              {selectedDocument.enriched_metadata?.people && selectedDocument.enriched_metadata.people.length > 0 && (
+                <div className="mb-6">
+                  <h4 className="text-sm font-semibold text-slate-700 mb-3">People</h4>
+                  <div className="space-y-3">
+                    {selectedDocument.enriched_metadata.people.map((person, index) => (
+                      <div key={index} className="bg-slate-50 rounded-lg p-3">
+                        <p className="font-medium text-slate-900">{person.name}</p>
+                        {person.role && <p className="text-sm text-slate-600">{person.role}</p>}
+                        {person.biography && <p className="text-xs text-slate-500 mt-1">{person.biography}</p>}
+                      </div>
+                    ))}
                   </div>
                 </div>
-
-                {/* Metadata */}
-                <div className="bg-white rounded-xl border border-slate-200 p-6">
-                  <h3 className="text-lg font-semibold text-slate-900 mb-4">Metadata</h3>
-                  
-                  {/* People */}
-                  {selectedDocument.enriched_metadata?.people && selectedDocument.enriched_metadata.people.length > 0 && (
-                    <div className="mb-6">
-                      <h4 className="text-sm font-semibold text-slate-700 mb-3">People</h4>
-                      <div className="space-y-3">
-                        {selectedDocument.enriched_metadata.people.map((person, index) => (
-                          <div key={index} className="bg-slate-50 rounded-lg p-3">
-                            <p className="font-medium text-slate-900">{person.name}</p>
-                            {person.role && <p className="text-sm text-slate-600">{person.role}</p>}
-                            {person.biography && <p className="text-xs text-slate-500 mt-1">{person.biography}</p>}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Keywords */}
-                  {selectedDocument.enriched_metadata?.content?.keywords && (
-                    <div className="mb-6">
-                      <h4 className="text-sm font-semibold text-slate-700 mb-3">Keywords</h4>
-                      <div className="flex flex-wrap gap-2">
-                        {selectedDocument.enriched_metadata.content.keywords.map((keyword: string, index: number) => (
-                          <span key={index} className="px-3 py-1 bg-blue-100 text-blue-700 text-sm rounded-full">
-                            {keyword}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Full Metadata JSON */}
-                  <details className="mt-6">
-                    <summary className="cursor-pointer text-sm font-medium text-slate-700 hover:text-slate-900">
-                      View Full Metadata JSON
-                    </summary>
-                    <pre className="mt-3 p-4 bg-slate-900 text-slate-100 text-xs rounded-lg overflow-x-auto">
-                      {JSON.stringify(selectedDocument.enriched_metadata, null, 2)}
-                    </pre>
-                  </details>
-                </div>
-
-                {/* Storage Info */}
-                <div className="bg-white rounded-xl border border-slate-200 p-6">
-                  <h3 className="text-lg font-semibold text-slate-900 mb-4">Storage Information</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Content ID</p>
-                      <p className="text-sm font-mono text-slate-900">{selectedDocument.storage_metadata.content_id}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Backend</p>
-                      <p className="text-sm text-slate-900">{selectedDocument.storage_metadata.backend}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Size</p>
-                      <p className="text-sm text-slate-900">{formatSize(selectedDocument.storage_metadata.size)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Version</p>
-                      <p className="text-sm text-slate-900">v{selectedDocument.storage_metadata.version}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Hash</p>
-                      <p className="text-sm font-mono text-slate-900 truncate">{selectedDocument.storage_metadata.hash}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Created</p>
-                      <p className="text-sm text-slate-900">{formatDate(selectedDocument.storage_metadata.created_at)}</p>
-                    </div>
+              )}
+              {/* Keywords */}
+              {selectedDocument.enriched_metadata?.content?.keywords && (
+                <div className="mb-6">
+                  <h4 className="text-sm font-semibold text-slate-700 mb-3">Keywords</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedDocument.enriched_metadata.content.keywords.map((keyword: string, index: number) => (
+                      <span key={index} className="px-3 py-1 bg-blue-100 text-blue-700 text-sm rounded-full">
+                        {keyword}
+                      </span>
+                    ))}
                   </div>
+                </div>
+              )}
+              {/* Full Metadata JSON */}
+              <details className="mt-6">
+                <summary className="cursor-pointer text-sm font-medium text-slate-700 hover:text-slate-900">
+                  View Full Metadata JSON
+                </summary>
+                <pre className="mt-3 p-4 bg-slate-900 text-slate-100 text-xs rounded-lg overflow-x-auto">
+                  {JSON.stringify(selectedDocument.enriched_metadata, null, 2)}
+                </pre>
+              </details>
+            </div>
+            {/* Storage Info */}
+            <div className="bg-white rounded-xl border border-slate-200 p-6">
+              <h3 className="text-lg font-semibold text-slate-900 mb-4">Storage Information</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Content ID</p>
+                  <p className="text-sm font-mono text-slate-900">{selectedDocument.storage_metadata.content_id}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Backend</p>
+                  <p className="text-sm text-slate-900">{selectedDocument.storage_metadata.backend}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Size</p>
+                  <p className="text-sm text-slate-900">{formatSize(selectedDocument.storage_metadata.size)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Version</p>
+                  <p className="text-sm text-slate-900">v{selectedDocument.storage_metadata.version}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Hash</p>
+                  <p className="text-sm font-mono text-slate-900 truncate">{selectedDocument.storage_metadata.hash}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Created</p>
+                  <p className="text-sm text-slate-900">{formatDate(selectedDocument.storage_metadata.created_at)}</p>
                 </div>
               </div>
             </div>
           </>
-        )}
+        ) : null}
       </div>
-    </div>
+      </div>
   );
 }
