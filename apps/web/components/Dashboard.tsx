@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useWebSocket } from '../hooks/useWebSocket';
 import DocumentBrowser from './DocumentBrowser';
 import InlineStepEditor from './InlineStepEditor';
+import OCRIntegration from './OCRIntegration';
 
 interface DocumentMetadata {
   document?: {
@@ -86,7 +87,7 @@ interface SearchMessage {
   response?: SearchAnswerPayload;
 }
 
-type WorkflowId = 'document-processing' | 'audio-transcription' | 'search-query';
+type WorkflowId = 'document-processing' | 'ocr-batch' | 'audio-transcription' | 'search-query';
 type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
 
 interface WorkflowStep {
@@ -123,6 +124,18 @@ const initialWorkflows: Workflow[] = [
       { id: 'metadata', name: 'Metadata Enrichment', description: 'Generate structured metadata', status: 'pending', editable: true },
       { id: 'signing', name: 'Digital Signing', description: 'Apply digital signature', status: 'pending', editable: false },
       { id: 'storage', name: 'Store Content', description: 'Save to storage', status: 'pending', editable: false },
+    ]
+  },
+  {
+    id: 'ocr-batch',
+    name: 'Batch OCR',
+    description: 'Process multiple documents with OCR',
+    icon: '📦',
+    active: true,
+    steps: [
+      { id: 'folder', name: 'Select Folder', description: 'Choose folder with documents', status: 'pending', editable: false },
+      { id: 'ocr', name: 'Batch OCR Processing', description: 'Process all documents', status: 'pending', editable: true },
+      { id: 'review', name: 'Review Results', description: 'Review OCR results', status: 'pending', editable: false },
     ]
   },
   {
@@ -200,6 +213,9 @@ export default function Dashboard() {
   const [editingStep, setEditingStep] = useState<string | null>(null); // Which step is being edited
   const [workflowDropdownOpen, setWorkflowDropdownOpen] = useState(false); // Workflow dropdown state
 
+  // OCR Provider Selection State
+  const [selectedOCRProvider, setSelectedOCRProvider] = useState<'tesseract' | 'ollama' | 'lmstudio'>('tesseract');
+  
   // Content Search State
   const [searchInput, setSearchInput] = useState('');
   const [searchMessages, setSearchMessages] = useState<SearchMessage[]>([]);
@@ -294,38 +310,121 @@ export default function Dashboard() {
       return;
     }
 
+    if (!connected) {
+      setError('WebSocket not connected. Please wait for the connection to establish.');
+      return;
+    }
+
+    // Find OCR tool
+    const ocrTool = tools.find(t => t.name === 'extract_text');
+    if (!ocrTool) {
+      setError('OCR tool not available. Make sure OCR-Agent is running.');
+      return;
+    }
+
     updateStepStatus('document-processing', 'upload', 'completed');
     updateStepStatus('document-processing', 'ocr', 'running');
 
     const startTime = Date.now();
     setOcrLines([]);
+    
     try {
-      const { createWorker } = await import('tesseract.js');
-      const worker = await createWorker('eng');
-
-      const { data } = await worker.recognize(documentFile);
-      await worker.terminate();
-
-      const extractedText = data?.text?.trim() || '';
-      const lineConfidence = (data?.lines || [])
-        .map((line) => ({
-          text: line.text.trim(),
-          confidence: typeof line.confidence === 'number' ? line.confidence : 0,
-        }))
-        .filter((line) => line.text.length > 0);
-      const duration = Date.now() - startTime;
-      setOcrText(extractedText);
-      setOcrLines(lineConfidence);
-      updateStepStatus('document-processing', 'ocr', 'completed',
-        { text: extractedText, confidence: data?.confidence, lines: lineConfidence },
-        undefined,
-        'Tesseract.js (browser)',
-        duration
-      );
-      updateStepStatus('document-processing', 'metadata', 'pending');
+      // Convert file to base64 or save temporarily
+      // For now, we'll create a temporary file path or use blob URL
+      const reader = new FileReader();
       
-      // Auto-expand OCR step to show results
-      setExpandedStep('ocr');
+      reader.onload = async () => {
+        try {
+          // For MCP communication, we need a file path
+          // In browser environment, we'll use a data URL or need backend support
+          // Let's pass the file info and get mock/Tesseract.js backup
+          
+          const result = await send('tools/invoke', {
+            toolName: 'extract_text',
+            agentId: ocrTool.agentId,
+            arguments: {
+              image_path: documentFile.name, // Send filename as hint
+              provider: selectedOCRProvider,
+              language: 'eng'
+            }
+          });
+
+          const duration = Date.now() - startTime;
+          const ocrResult = result as any;
+          
+          const extractedText = ocrResult?.text?.trim() || '';
+          const confidence = ocrResult?.confidence || 0;
+          
+          setOcrText(extractedText);
+          
+          // Format lines from result
+          const lines = ocrResult?.word_confidence?.map((item: any) => ({
+            text: item.word || '',
+            confidence: item.confidence || 0
+          })) || [];
+          
+          setOcrLines(lines);
+          
+          updateStepStatus('document-processing', 'ocr', 'completed',
+            { 
+              text: extractedText, 
+              confidence: confidence, 
+              lines: lines,
+              provider: selectedOCRProvider
+            },
+            undefined,
+            `OCR-Agent (${selectedOCRProvider})`,
+            duration
+          );
+          updateStepStatus('document-processing', 'metadata', 'pending');
+          
+          // Auto-expand OCR step to show results
+          setExpandedStep('ocr');
+        } catch (err) {
+          console.error('OCR Tool invocation error:', err);
+          
+          // Fallback to browser Tesseract.js if agent fails
+          console.log('Falling back to browser-based Tesseract.js');
+          try {
+            const { createWorker } = await import('tesseract.js');
+            const worker = await createWorker('eng');
+            const { data } = await worker.recognize(documentFile);
+            await worker.terminate();
+
+            const extractedText = data?.text?.trim() || '';
+            const lineConfidence = (data?.lines || [])
+              .map((line) => ({
+                text: line.text.trim(),
+                confidence: typeof line.confidence === 'number' ? line.confidence : 0,
+              }))
+              .filter((line) => line.text.length > 0);
+            
+            const duration = Date.now() - startTime;
+            setOcrText(extractedText);
+            setOcrLines(lineConfidence);
+            updateStepStatus('document-processing', 'ocr', 'completed',
+              { text: extractedText, confidence: data?.confidence, lines: lineConfidence },
+              undefined,
+              'Tesseract.js (browser fallback)',
+              duration
+            );
+            updateStepStatus('document-processing', 'metadata', 'pending');
+            setExpandedStep('ocr');
+          } catch (fallbackErr) {
+            updateStepStatus('document-processing', 'ocr', 'failed', undefined, 
+              err instanceof Error ? err.message : 'OCR failed');
+            setError(err instanceof Error ? err.message : 'OCR processing failed');
+          }
+        }
+      };
+      
+      reader.onerror = () => {
+        updateStepStatus('document-processing', 'ocr', 'failed', undefined, 'Failed to read file');
+        setError('Failed to read file');
+      };
+      
+      reader.readAsArrayBuffer(documentFile);
+      
     } catch (err) {
       updateStepStatus('document-processing', 'ocr', 'failed', undefined, err instanceof Error ? err.message : 'OCR failed');
       setError(err instanceof Error ? err.message : 'OCR processing failed');
@@ -774,6 +873,25 @@ export default function Dashboard() {
                         </div>
                       </div>
                       <div className="p-5 bg-white">
+                        <div className="mb-4">
+                          <label className="block text-sm font-medium text-slate-700 mb-2">
+                            OCR Provider
+                          </label>
+                          <select
+                            value={selectedOCRProvider}
+                            onChange={(e) => setSelectedOCRProvider(e.target.value as 'tesseract' | 'ollama' | 'lmstudio')}
+                            disabled={currentWorkflow?.steps[0].status === 'completed'}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 text-sm hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                          >
+                            <option value="tesseract">Tesseract (Local OCR - Always Available)</option>
+                            <option value="ollama">Ollama (Local Vision Model - if running)</option>
+                            <option value="lmstudio">LM Studio (Local Vision Model - if running)</option>
+                          </select>
+                          <p className="text-xs text-slate-500 mt-1">
+                            Tesseract works offline. Ollama/LM Studio require local model servers running.
+                          </p>
+                        </div>
+                        
                         <input
                           type="file"
                           accept="image/*"
@@ -807,7 +925,7 @@ export default function Dashboard() {
                           disabled={!documentFile || currentWorkflow?.steps[0].status === 'completed'}
                           className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed font-medium text-sm"
                         >
-                          Upload & Run OCR
+                          Upload & Run OCR with {selectedOCRProvider}
                         </button>
                       </div>
                     </div>
@@ -1074,6 +1192,16 @@ export default function Dashboard() {
                       </div>
                     )}
                   </>
+                )}
+
+                {activeWorkflow === 'ocr-batch' && (
+                  <div className="p-6">
+                    <OCRIntegration 
+                      onJobComplete={(job) => {
+                        updateStepStatus('ocr-batch', 'ocr', 'completed', job);
+                      }}
+                    />
+                  </div>
                 )}
 
                 {activeWorkflow === 'search-query' && (
