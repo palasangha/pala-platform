@@ -16,14 +16,6 @@ echo -e "${BLUE}================================================${NC}"
 echo -e "${BLUE}  Pala Platform - Starting Development Stack${NC}"
 echo -e "${BLUE}================================================${NC}\n"
 
-# Check if ANTHROPIC_API_KEY is set
-if [ -z "$ANTHROPIC_API_KEY" ]; then
-    echo -e "${RED}ERROR: ANTHROPIC_API_KEY not set${NC}"
-    echo -e "${YELLOW}Please set it:${NC}"
-    echo -e "  export ANTHROPIC_API_KEY=\"sk-ant-api03-your-key-here\"\n"
-    exit 1
-fi
-
 # Store the root directory
 ROOT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$ROOT_DIR"
@@ -39,8 +31,63 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM
 
+# Preflight: clear stale listeners on required ports
+clear_port() {
+    local port=$1
+    local label=$2
+    local pids
+    pids=$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)
+
+    if [ -n "$pids" ]; then
+        echo -e "${YELLOW}Found existing listener(s) on :$port for $label -> $pids${NC}"
+        echo "$pids" | xargs kill -9 2>/dev/null || true
+        sleep 1
+        echo -e "${GREEN}✓ Cleared port $port${NC}"
+    fi
+}
+
+echo -e "${GREEN}[Preflight] Clearing conflicting ports...${NC}"
+clear_port 4000 "MCP Server"
+clear_port 4001 "Web Dashboard"
+echo ""
+
+# 0. Dependency gate
+echo -e "${GREEN}[0/6] Validating required dependencies...${NC}"
+if ! "$ROOT_DIR/setup-dev.sh"; then
+    echo -e "\n${RED}Dependency gate failed. Services were not started.${NC}"
+    echo -e "${YELLOW}Fix missing dependencies, then run:${NC} ./start-dev.sh\n"
+    exit 1
+fi
+echo ""
+
+# Start Ollama server in background if not already running
+echo -e "${GREEN}[0.5/6] Starting Ollama Server...${NC}"
+if command -v ollama >/dev/null 2>&1; then
+    if ! curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
+        echo -e "${YELLOW}Starting Ollama server...${NC}"
+        ollama serve > "$ROOT_DIR/logs/ollama.log" 2>&1 &
+        OLLAMA_PID=$!
+        echo -e "${GREEN}✓ Ollama Server started (PID: $OLLAMA_PID)${NC}"
+        sleep 3  # Give Ollama time to start
+    else
+        echo -e "${GREEN}✓ Ollama Server already running${NC}"
+    fi
+    echo ""
+else
+    echo -e "${YELLOW}⚠ Ollama not found - skipping Ollama startup${NC}"
+    echo ""
+fi
+
+# Check if ANTHROPIC_API_KEY is set
+if [ -z "$ANTHROPIC_API_KEY" ]; then
+    echo -e "${RED}ERROR: ANTHROPIC_API_KEY not set${NC}"
+    echo -e "${YELLOW}Please set it:${NC}"
+    echo -e "  export ANTHROPIC_API_KEY=\"sk-ant-api03-your-key-here\"\n"
+    exit 1
+fi
+
 # 1. Start MCP Server
-echo -e "${GREEN}[1/5] Starting MCP Server...${NC}"
+echo -e "${GREEN}[1/6] Starting MCP Server...${NC}"
 cd "$ROOT_DIR/packages/mcp-server"
 if [ ! -d "node_modules" ]; then
     echo -e "${YELLOW}Installing MCP Server dependencies...${NC}"
@@ -53,7 +100,7 @@ echo -e "  Logs: logs/mcp-server.log\n"
 sleep 3
 
 # 2. Start Sample Agent
-echo -e "${GREEN}[2/5] Starting Sample Agent...${NC}"
+echo -e "${GREEN}[2/6] Starting Sample Agent...${NC}"
 cd "$ROOT_DIR/packages/agents/sample-agent"
 if [ ! -d "venv" ]; then
     echo -e "${YELLOW}Creating virtual environment...${NC}"
@@ -64,7 +111,7 @@ if [ ! -f "venv/bin/websockets" ]; then
     echo -e "${YELLOW}Installing dependencies...${NC}"
     pip install -q -r requirements.txt
 fi
-export MCP_SERVER_URL="ws://localhost:3000"
+export MCP_SERVER_URL="ws://localhost:4000"
 export MCP_AGENT_ID="sample-agent"
 python main.py > "$ROOT_DIR/logs/sample-agent.log" 2>&1 &
 SAMPLE_PID=$!
@@ -74,7 +121,7 @@ echo -e "  Logs: logs/sample-agent.log\n"
 sleep 2
 
 # 3. Start Metadata Extraction Agent
-echo -e "${GREEN}[3/5] Starting Metadata Extraction Agent...${NC}"
+echo -e "${GREEN}[3/6] Starting Metadata Extraction Agent...${NC}"
 cd "$ROOT_DIR/packages/agents/metadata-extraction-agent"
 if [ ! -d "venv" ]; then
     echo -e "${YELLOW}Creating virtual environment...${NC}"
@@ -85,7 +132,7 @@ if [ ! -f "venv/bin/anthropic" ]; then
     echo -e "${YELLOW}Installing dependencies...${NC}"
     pip install -q -r requirements.txt
 fi
-export MCP_SERVER_URL="ws://localhost:3000"
+export MCP_SERVER_URL="ws://localhost:4000"
 export MCP_AGENT_ID="metadata-extraction-agent"
 python main.py > "$ROOT_DIR/logs/metadata-agent.log" 2>&1 &
 METADATA_PID=$!
@@ -95,8 +142,8 @@ echo -e "  Logs: logs/metadata-agent.log\n"
 sleep 2
 
 # 4. Start Storage Agent
-echo -e "${GREEN}[4/5] Starting Storage Agent...${NC}"
-cd "$ROOT_DIR/packages/agents/storage-agent"
+echo -e "${GREEN}[4/6] Starting Storage Agent...${NC}"
+cd "$ROOT_DIR/packages/PalaAgents/storage-agent"
 if [ ! -d "venv" ]; then
     echo -e "${YELLOW}Creating virtual environment...${NC}"
     python3 -m venv venv
@@ -106,7 +153,7 @@ if [ ! -f "venv/bin/websockets" ]; then
     echo -e "${YELLOW}Installing dependencies...${NC}"
     pip install -q -r requirements.txt
 fi
-export MCP_SERVER_URL="ws://localhost:3000"
+export MCP_SERVER_URL="ws://localhost:4000"
 export MCP_AGENT_ID="storage-agent"
 python main.py > "$ROOT_DIR/logs/storage-agent.log" 2>&1 &
 STORAGE_PID=$!
@@ -133,11 +180,11 @@ echo -e "${GREEN}✓ All services running!${NC}"
 echo -e "${BLUE}================================================${NC}\n"
 
 echo -e "${YELLOW}Services:${NC}"
-echo -e "  • MCP Server:          ws://localhost:3000"
+echo -e "  • MCP Server:          ws://localhost:4000"
 echo -e "  • Sample Agent:        Connected (echo, sum)"
 echo -e "  • Metadata Agent:      Connected (extract_metadata)"
-echo -e "  • Storage Agent:       Connected (store_document, retrieve_document, list_documents, list_backends, get_stats)"
-echo -e "  • Web Dashboard:       http://localhost:3001\n"
+echo -e "  • Storage Agent:       Connected (store_document, retrieve_document, list_documents, etc.)"
+echo -e "  • Web Dashboard:       http://localhost:4001\n"
 
 echo -e "${YELLOW}Logs:${NC}"
 echo -e "  • MCP Server:          tail -f logs/mcp-server.log"

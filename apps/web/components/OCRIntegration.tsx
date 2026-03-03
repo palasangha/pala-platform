@@ -24,11 +24,12 @@ interface OCRJob {
 }
 
 interface OCRIntegrationProps {
+  wsUrl: string;
   onJobComplete?: (job: OCRJob) => void;
 }
 
-export default function OCRIntegration({ onJobComplete }: OCRIntegrationProps) {
-  const { ws } = useWebSocket();
+export default function OCRIntegration({ wsUrl, onJobComplete }: OCRIntegrationProps) {
+  const { connected, send } = useWebSocket(wsUrl);
   const [folderPath, setFolderPath] = useState('');
   const [provider, setProvider] = useState('tesseract');
   const [jobId, setJobId] = useState<string | null>(null);
@@ -38,37 +39,17 @@ export default function OCRIntegration({ onJobComplete }: OCRIntegrationProps) {
 
   // Poll for job status every 2 seconds
   useEffect(() => {
-    if (!jobId || !ws) return;
+    if (!jobId || !connected) return;
 
     const pollStatus = async () => {
       try {
-        const response = await new Promise((resolve) => {
-          const msgId = `status-${Date.now()}`;
-          
-          const handleMessage = (event: Event) => {
-            const message = JSON.parse((event as MessageEvent).data);
-            if (message.id === msgId && message.result) {
-              resolve(message.result);
-              ws.removeEventListener('message', handleMessage);
-            }
-          };
-
-          ws.addEventListener('message', handleMessage);
-
-          ws.send(
-            JSON.stringify({
-              jsonrpc: '2.0',
-              method: 'tools/invoke',
-              params: {
-                toolName: 'get_ocr_status',
-                arguments: { job_id: jobId }
-              },
-              id: msgId
-            })
-          );
+        const response = await send('tools/invoke', {
+          toolName: 'get_ocr_status',
+          arguments: { job_id: jobId }
         });
-
-        const jobData = response as OCRJob;
+        const invocationResult = response as any;
+        const payload = invocationResult?.result ?? invocationResult;
+        const jobData = payload as OCRJob;
         setJob(jobData);
 
         if (jobData.status === 'completed' || jobData.status === 'failed') {
@@ -94,10 +75,10 @@ export default function OCRIntegration({ onJobComplete }: OCRIntegrationProps) {
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [jobId, ws, onJobComplete]);
+  }, [jobId, connected, send, onJobComplete]);
 
   const startProcessing = useCallback(async () => {
-    if (!ws || !folderPath) {
+    if (!connected || !folderPath) {
       alert('Please enter a folder path');
       return;
     }
@@ -105,41 +86,25 @@ export default function OCRIntegration({ onJobComplete }: OCRIntegrationProps) {
     setIsProcessing(true);
 
     try {
-      const response = await new Promise((resolve) => {
-        const msgId = `process-${Date.now()}`;
-
-        const handleMessage = (event: Event) => {
-          const message = JSON.parse((event as MessageEvent).data);
-          if (message.id === msgId) {
-            resolve(message.result || message.error);
-            ws.removeEventListener('message', handleMessage);
-          }
-        };
-
-        ws.addEventListener('message', handleMessage);
-
-        ws.send(
-          JSON.stringify({
-            jsonrpc: '2.0',
-            method: 'tools/invoke',
-            params: {
-              toolName: 'process_folder',
-              arguments: {
-                folder_path: folderPath,
-                provider: provider,
-                language: 'eng',
-                file_pattern: '*.*'
-              }
-            },
-            id: msgId
-          })
-        );
+      const response = await send('tools/invoke', {
+        toolName: 'process_folder',
+        arguments: {
+          folder_path: folderPath,
+          provider: provider,
+          language: 'eng',
+          file_pattern: '*.*'
+        }
       });
 
-      const result = response as any;
-      if (result.job_id) {
+      const invocationResult = response as any;
+      if (invocationResult?.success === false) {
+        throw new Error(invocationResult?.error || 'OCR process_folder invocation failed');
+      }
+
+      const result = invocationResult?.result ?? invocationResult;
+      if (result?.job_id) {
         setJobId(result.job_id);
-      } else if (result.message) {
+      } else if (result?.message) {
         alert(`Error: ${result.message}`);
         setIsProcessing(false);
       }
@@ -148,7 +113,7 @@ export default function OCRIntegration({ onJobComplete }: OCRIntegrationProps) {
       alert(`Error: ${error}`);
       setIsProcessing(false);
     }
-  }, [ws, folderPath, provider]);
+  }, [connected, send, folderPath, provider]);
 
   const getProgressPercentage = () => {
     if (!job || job.files_total === 0) return 0;

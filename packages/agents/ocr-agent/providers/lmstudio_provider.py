@@ -73,21 +73,26 @@ class LMStudioProvider(BaseOCRProvider):
         Returns:
             Dictionary containing extracted text and metadata
         """
+        logger.info(f"[TRACE-LMSTUDIO] extract_text called: image_path={image_path}, language={language}")
         try:
             import requests
             from PIL import Image
             
+            logger.info(f"[TRACE-LMSTUDIO] Checking LM Studio availability at {self.host}")
             # Check availability
             if not self._check_availability():
-                logger.warning("LM Studio not available, returning mock data")
-                return self._mock_extract_text(image_path, language, **kwargs)
+                raise RuntimeError(
+                    f"LM Studio server is not reachable at {self.host}. "
+                    "Start it with LM Studio GUI or API server."
+                )
             
+            logger.info(f"[TRACE-LMSTUDIO] LM Studio server available")
             # Load image
             image_path = Path(image_path)
             if not image_path.exists():
-                logger.warning(f"Image not found: {image_path}, returning mock data")
-                return self._mock_extract_text(str(image_path), language, **kwargs)
+                raise FileNotFoundError(f"Image not found: {image_path}")
             
+            logger.info(f"[TRACE-LMSTUDIO] Loading image from {image_path}")
             img = Image.open(image_path)
             
             # Convert to base64
@@ -95,6 +100,7 @@ class LMStudioProvider(BaseOCRProvider):
             buffer = io.BytesIO()
             img.save(buffer, format='JPEG')
             image_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            logger.info(f"[TRACE-LMSTUDIO] Image encoded to base64, size={len(image_data)} chars")
             
             # Build prompt
             prompt = self._build_prompt(language, kwargs.get('handwriting', False))
@@ -127,6 +133,7 @@ class LMStudioProvider(BaseOCRProvider):
                 "max_tokens": self.max_tokens
             }
             
+            logger.info(f"[TRACE-LMSTUDIO] Calling LM Studio API at {self.host}/v1/chat/completions")
             response = requests.post(
                 f"{self.host}/v1/chat/completions",
                 json=payload,
@@ -135,12 +142,21 @@ class LMStudioProvider(BaseOCRProvider):
                 verify=False
             )
             
+            logger.info(f"[TRACE-LMSTUDIO] API response received: status={response.status_code}")
             if response.status_code != 200:
-                raise Exception(f"LM Studio API error: {response.status_code}")
+                raise RuntimeError(f"LM Studio API error: {response.status_code} - {response.text[:500]}")
             
             result = response.json()
             text = result.get('choices', [{}])[0].get('message', {}).get('content', '').strip()
+            logger.info(f"[TRACE-LMSTUDIO] Text extracted: length={len(text)}")
             
+            if not text:
+                raise RuntimeError(
+                    "LM Studio returned an empty OCR response. "
+                    "Verify that a vision model is loaded and image quality is sufficient."
+                )
+            
+            logger.info(f"[TRACE-LMSTUDIO] Returning extraction result")
             return {
                 "text": text,
                 "confidence": 0.90,
@@ -158,9 +174,8 @@ class LMStudioProvider(BaseOCRProvider):
             }
             
         except Exception as e:
-            logger.error(f"LM Studio extraction error: {e}", exc_info=True)
-            # Fallback to mock data
-            return self._mock_extract_text(image_path, language, **kwargs)
+            logger.error(f"[TRACE-LMSTUDIO] Extraction error: {e}", exc_info=True)
+            raise
     
     def _build_prompt(self, language: str, handwriting: bool = False) -> str:
         """Build OCR prompt"""
@@ -176,23 +191,3 @@ class LMStudioProvider(BaseOCRProvider):
         prompt += "4. Output ONLY the extracted text\n"
         
         return prompt
-    
-    def _mock_extract_text(
-        self,
-        image_path: str,
-        language: str = "eng",
-        **kwargs
-    ) -> Dict[str, Any]:
-        """Return mock OCR data for testing"""
-        return {
-            "text": "Sample extracted text from image.\nLine 2 of sample text.\nLine 3 of sample text.",
-            "confidence": 0.90,
-            "word_confidence": [],
-            "language": language,
-            "metadata": {
-                "provider": "lmstudio_mock",
-                "image_path": str(image_path),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "note": "Mock data - LM Studio not available"
-            }
-        }

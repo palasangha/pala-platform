@@ -214,7 +214,7 @@ export default function Dashboard() {
   const [workflowDropdownOpen, setWorkflowDropdownOpen] = useState(false); // Workflow dropdown state
 
   // OCR Provider Selection State
-  const [selectedOCRProvider, setSelectedOCRProvider] = useState<'tesseract' | 'ollama' | 'lmstudio'>('tesseract');
+  const [selectedOCRProvider, setSelectedOCRProvider] = useState<'tesseract' | 'ollama' | 'lmstudio'>('ollama');
   
   // Content Search State
   const [searchInput, setSearchInput] = useState('');
@@ -251,13 +251,20 @@ export default function Dashboard() {
     try {
       setError(null);
 
+      console.log('[DASHBOARD] Calling tools/list and agents/list...');
       const [agentsData, toolsData] = await Promise.all([
         send('agents/list', {}),
         send('tools/list', {}),
       ]);
 
+      console.log('[DASHBOARD] Received agentsData:', agentsData);
+      console.log('[DASHBOARD] Received toolsData:', toolsData);
+
       const agentsResponse = agentsData as { agents?: Agent[] };
       const toolsResponse = toolsData as { tools?: ToolDefinition[] };
+
+      console.log('[DASHBOARD] Parsed tools array:', toolsResponse.tools);
+      console.log('[DASHBOARD] Tool count:', toolsResponse.tools?.length || 0);
 
       const mergedTools = (toolsResponse.tools || []).map((tool) => {
         const agentMatch = agentsResponse.agents?.find((agent) => agent.id === tool.agentId);
@@ -267,8 +274,10 @@ export default function Dashboard() {
         };
       });
 
+      console.log('[DASHBOARD] Setting tools state with', mergedTools.length, 'tools');
       setTools(mergedTools);
     } catch (err) {
+      console.error('[DASHBOARD] refreshData error:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch data');
     }
   }, [send]);
@@ -305,8 +314,14 @@ export default function Dashboard() {
   };
 
   const handleRunOCR = async () => {
+    console.log('[DASHBOARD] handleRunOCR called');
+    console.log('[DASHBOARD] documentFile:', documentFile?.name);
+    console.log('[DASHBOARD] connected:', connected);
+    console.log('[DASHBOARD] tools array:', tools);
+    console.log('[DASHBOARD] tools count:', tools.length);
+
     if (!documentFile) {
-      setError('Please upload a document image');
+      setError('Please upload a document (image or PDF)');
       return;
     }
 
@@ -317,7 +332,11 @@ export default function Dashboard() {
 
     // Find OCR tool
     const ocrTool = tools.find(t => t.name === 'extract_text');
+    console.log('[DASHBOARD] ocrTool found:', ocrTool);
+    
     if (!ocrTool) {
+      console.error('[DASHBOARD] OCR tool NOT FOUND in tools array');
+      console.error('[DASHBOARD] Available tool names:', tools.map(t => t.name));
       setError('OCR tool not available. Make sure OCR-Agent is running.');
       return;
     }
@@ -328,32 +347,57 @@ export default function Dashboard() {
     const startTime = Date.now();
     setOcrLines([]);
     
+    console.log('[DASHBOARD] Starting FileReader...');
+    
     try {
       // Convert file to base64 or save temporarily
       // For now, we'll create a temporary file path or use blob URL
       const reader = new FileReader();
       
       reader.onload = async () => {
+        console.log('[DASHBOARD] FileReader.onload triggered');
         try {
-          // For MCP communication, we need a file path
-          // In browser environment, we'll use a data URL or need backend support
-          // Let's pass the file info and get mock/Tesseract.js backup
+          // Convert ArrayBuffer to base64
+          const arrayBuffer = reader.result as ArrayBuffer;
+          const bytes = new Uint8Array(arrayBuffer);
+          let binary = '';
+          for (let i = 0; i < bytes.byteLength; i++) {
+            binary += String.fromCharCode(bytes[i]);
+          }
+          const base64Data = btoa(binary);
+          console.log('[DASHBOARD] Converted to base64, length:', base64Data.length);
+          console.log('[DASHBOARD] Base64 first 50 chars:', base64Data.substring(0, 50));
+          
+          console.log('[DASHBOARD] Calling send(tools/invoke) with base64 data');
           
           const result = await send('tools/invoke', {
             toolName: 'extract_text',
             agentId: ocrTool.agentId,
             arguments: {
-              image_path: documentFile.name, // Send filename as hint
+              image_data: base64Data,
+              file_name: documentFile.name,
               provider: selectedOCRProvider,
               language: 'eng'
             }
           });
+          
+          console.log('[DASHBOARD] send() returned result:', result);
 
           const duration = Date.now() - startTime;
-          const ocrResult = result as any;
+          const invocationResult = result as any;
+
+          if (invocationResult?.success === false) {
+            throw new Error(invocationResult?.error || 'OCR invocation failed');
+          }
+
+          const ocrResult = invocationResult?.result ?? invocationResult;
           
           const extractedText = ocrResult?.text?.trim() || '';
           const confidence = ocrResult?.confidence || 0;
+
+          if (!extractedText) {
+            throw new Error('OCR returned empty text. Verify Ollama model supports vision OCR and try again.');
+          }
           
           setOcrText(extractedText);
           
@@ -381,10 +425,11 @@ export default function Dashboard() {
           // Auto-expand OCR step to show results
           setExpandedStep('ocr');
         } catch (err) {
-          console.error('OCR Tool invocation error:', err);
+          console.error('❌ OCR Tool invocation FAILED:', err);
+          console.error('Error details:', err instanceof Error ? err.message : String(err));
           
           // Fallback to browser Tesseract.js if agent fails
-          console.log('Falling back to browser-based Tesseract.js');
+          console.log('⚠️ Falling back to browser-based Tesseract.js');
           try {
             const { createWorker } = await import('tesseract.js');
             const worker = await createWorker('eng');
@@ -399,6 +444,7 @@ export default function Dashboard() {
               }))
               .filter((line) => line.text.length > 0);
             
+            console.log('📝 Tesseract.js result:', extractedText.substring(0, 100));
             const duration = Date.now() - startTime;
             setOcrText(extractedText);
             setOcrLines(lineConfidence);
@@ -411,6 +457,7 @@ export default function Dashboard() {
             updateStepStatus('document-processing', 'metadata', 'pending');
             setExpandedStep('ocr');
           } catch (fallbackErr) {
+            console.error('❌ Tesseract.js fallback also failed:', fallbackErr);
             updateStepStatus('document-processing', 'ocr', 'failed', undefined, 
               err instanceof Error ? err.message : 'OCR failed');
             setError(err instanceof Error ? err.message : 'OCR processing failed');
@@ -894,7 +941,7 @@ export default function Dashboard() {
                         
                         <input
                           type="file"
-                          accept="image/*"
+                          accept="image/*,application/pdf"
                           onChange={(event) => {
                             const file = event.target.files?.[0] || null;
                             setDocumentFile(file);
@@ -908,7 +955,17 @@ export default function Dashboard() {
                             Selected: {documentFileName} • {(documentFile.size / 1024).toFixed(1)} KB
                           </div>
                         )}
-                        {documentPreviewUrl && (
+                        {documentPreviewUrl && documentFile?.type === 'application/pdf' && (
+                          <div className="mb-3">
+                            <div className="mb-2 text-xs text-slate-600">PDF Preview</div>
+                            <iframe
+                              src={documentPreviewUrl}
+                              title="Uploaded PDF preview"
+                              className="h-64 w-full rounded-lg border border-slate-200"
+                            />
+                          </div>
+                        )}
+                        {documentPreviewUrl && documentFile?.type !== 'application/pdf' && (
                           <div className="mb-3">
                             <Image
                               src={documentPreviewUrl}
@@ -1197,6 +1254,7 @@ export default function Dashboard() {
                 {activeWorkflow === 'ocr-batch' && (
                   <div className="p-6">
                     <OCRIntegration 
+                      wsUrl={wsUrl}
                       onJobComplete={(job) => {
                         updateStepStatus('ocr-batch', 'ocr', 'completed', job);
                       }}

@@ -8,7 +8,7 @@ Supports local deployment without external API keys.
 import logging
 import base64
 import os
-from typing import Dict, Any
+from typing import Dict, Any, List
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -42,6 +42,32 @@ class OllamaProvider(BaseOCRProvider):
         except Exception as e:
             logger.warning(f"Ollama availability check failed: {e}")
             return False
+
+    def _list_models(self) -> List[str]:
+        """Return available model names from Ollama server."""
+        import requests
+
+        response = requests.get(f"{self.host}/api/tags", timeout=10)
+        if response.status_code != 200:
+            raise RuntimeError(f"Ollama /api/tags failed with status {response.status_code}")
+
+        data = response.json() or {}
+        models = data.get("models", [])
+        return [m.get("name", "") for m in models if isinstance(m, dict) and m.get("name")]
+
+    def _extract_response_text(self, payload: Dict[str, Any]) -> str:
+        """Extract text from Ollama response payload."""
+        text = (payload.get("response") or "").strip()
+        if text:
+            return text
+
+        message = payload.get("message")
+        if isinstance(message, dict):
+            content = (message.get("content") or "").strip()
+            if content:
+                return content
+
+        return ""
     
     async def extract_text(
         self,
@@ -60,33 +86,49 @@ class OllamaProvider(BaseOCRProvider):
         Returns:
             Dictionary containing extracted text and metadata
         """
+        logger.info(f"[TRACE-OLLAMA] extract_text called: image_path={image_path}, language={language}")
         try:
             import requests
             from PIL import Image
             
+            logger.info(f"[TRACE-OLLAMA] Checking Ollama availability at {self.host}")
             # Check availability
             if not self._check_availability():
-                logger.warning("Ollama not available, returning mock data")
-                return self._mock_extract_text(image_path, language, **kwargs)
+                raise RuntimeError(
+                    f"Ollama server is not reachable at {self.host}. "
+                    "Start it with `ollama serve`."
+                )
+
+            logger.info(f"[TRACE-OLLAMA] Ollama server available, listing models")
+            available_models = self._list_models()
+            logger.info(f"[TRACE-OLLAMA] Available models: {available_models}")
             
+            if not any(name == self.model or name.startswith(f"{self.model}:") for name in available_models):
+                raise RuntimeError(
+                    f"Ollama model '{self.model}' not found. Available: {available_models[:10]}. "
+                    f"Install with `ollama pull {self.model}`."
+                )
+            
+            logger.info(f"[TRACE-OLLAMA] Model {self.model} found, loading image from {image_path}")
             # Load image
             image_path = Path(image_path)
             if not image_path.exists():
-                logger.warning(f"Image not found: {image_path}, returning mock data")
-                return self._mock_extract_text(str(image_path), language, **kwargs)
+                raise FileNotFoundError(f"Image not found: {image_path}")
             
             img = Image.open(image_path)
+            logger.info(f"[TRACE-OLLAMA] Image loaded: size={img.size}")
             
             # Convert to base64
             import io
             buffer = io.BytesIO()
             img.save(buffer, format='JPEG')
             image_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            logger.info(f"[TRACE-OLLAMA] Image encoded to base64, size={len(image_data)} chars")
             
             # Build prompt
             prompt = self._build_prompt(language, kwargs.get('handwriting', False))
             
-            # Call Ollama API
+            # Build request payload
             payload = {
                 "model": self.model,
                 "prompt": prompt,
@@ -98,18 +140,29 @@ class OllamaProvider(BaseOCRProvider):
                 }
             }
             
+            logger.info(f"[TRACE-OLLAMA] Calling Ollama API at {self.host}/api/generate - this may take several minutes for model loading and inference...")
             response = requests.post(
                 f"{self.host}/api/generate",
                 json=payload,
-                timeout=600
+                timeout=1800
             )
             
+            logger.info(f"[TRACE-OLLAMA] API response received: status={response.status_code}")
             if response.status_code != 200:
-                raise Exception(f"Ollama API error: {response.status_code}")
+                raise RuntimeError(f"Ollama API error: {response.status_code} - {response.text[:500]}")
             
             result = response.json()
-            text = result.get('response', '').strip()
+            logger.info(f"[TRACE-OLLAMA] Response parsed successfully")
+            text = self._extract_response_text(result)
+            logger.info(f"[TRACE-OLLAMA] Text extracted: length={len(text)}")
+
+            if not text:
+                raise RuntimeError(
+                    "Ollama returned an empty OCR response. "
+                    "Try a stronger vision model or verify image quality."
+                )
             
+            logger.info(f"[TRACE-OLLAMA] Extraction successful, returning result")
             return {
                 "text": text,
                 "confidence": 0.92,
@@ -128,9 +181,8 @@ class OllamaProvider(BaseOCRProvider):
             }
             
         except Exception as e:
-            logger.error(f"Ollama extraction error: {e}", exc_info=True)
-            # Fallback to mock data
-            return self._mock_extract_text(image_path, language, **kwargs)
+            logger.error(f"[TRACE-OLLAMA] Extraction error: {e}", exc_info=True)
+            raise
     
     def _build_prompt(self, language: str, handwriting: bool = False) -> str:
         """Build OCR prompt"""
@@ -147,22 +199,3 @@ class OllamaProvider(BaseOCRProvider):
         
         return prompt
     
-    def _mock_extract_text(
-        self,
-        image_path: str,
-        language: str = "eng",
-        **kwargs
-    ) -> Dict[str, Any]:
-        """Return mock OCR data for testing"""
-        return {
-            "text": "Sample extracted text from image.\nLine 2 of sample text.\nLine 3 of sample text.",
-            "confidence": 0.92,
-            "word_confidence": [],
-            "language": language,
-            "metadata": {
-                "provider": "ollama_mock",
-                "image_path": str(image_path),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "note": "Mock data - Ollama not available"
-            }
-        }

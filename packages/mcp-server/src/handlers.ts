@@ -22,6 +22,9 @@ export class ServerHandlers {
       throw new Error('Invalid tools/register: expected { tools: [...] }');
     }
 
+    console.log('[MCP-SERVER] tools/register called with', params.tools.length, 'tools');
+    console.log('[MCP-SERVER] Tool names:', params.tools.map((t: any) => t.name));
+
     let count = 0;
     let firstAgentId = '';
     for (const tool of params.tools) {
@@ -42,9 +45,11 @@ export class ServerHandlers {
       const connectionId = getCurrentConnectionId();
       if (connectionId) {
         this.agentConnections.set(firstAgentId, connectionId);
+        console.log('[MCP-SERVER] Tracked agent connection:', firstAgentId, '→', connectionId);
       }
     }
 
+    console.log('[MCP-SERVER] Registered', count, 'tools successfully');
     return { registered: count };
   }
 
@@ -54,6 +59,8 @@ export class ServerHandlers {
    */
   async handleToolsList(): Promise<{ tools: any[] }> {
     const tools = this.registry.listTools();
+    console.log('[MCP-SERVER] tools/list called - returning', tools.length, 'tools');
+    console.log('[MCP-SERVER] Tool names:', tools.map((t: any) => t.name));
     return { tools };
   }
 

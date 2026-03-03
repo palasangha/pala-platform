@@ -50,12 +50,18 @@ class TesseractOCRProvider(BaseOCRProvider):
         Returns:
             Dictionary containing extracted text and metadata
         """
+        logger.info(f"[TRACE-TESSERACT] extract_text called: image_path={image_path}, language={language}")
+        
         if not self.pytesseract or not self.Image:
-            # Fallback to mock data
-            logger.warning("Tesseract not available, using mock data")
-            return self._mock_extract_text(image_path, language, **kwargs)
+            logger.error(f"[TRACE-TESSERACT] Tesseract not available")
+            raise RuntimeError(
+                "Tesseract OCR not available. "
+                "Install with: pip install pytesseract pillow\n"
+                "Also requires tesseract binary: brew install tesseract (macOS) or apt install tesseract-ocr (Linux)"
+            )
         
         try:
+            logger.info(f"[TRACE-TESSERACT] Opening image: {image_path}")
             # Open image
             image = self.Image.open(image_path)
             
@@ -68,6 +74,7 @@ class TesseractOCRProvider(BaseOCRProvider):
             
             config = " ".join(config_parts) if config_parts else None
             
+            logger.info(f"[TRACE-TESSERACT] Calling pytesseract.image_to_string with config={config}, lang={language}")
             # Extract text
             text = self.pytesseract.image_to_string(
                 image,
@@ -75,6 +82,7 @@ class TesseractOCRProvider(BaseOCRProvider):
                 config=config
             )
             
+            logger.info(f"[TRACE-TESSERACT] Text extracted: length={len(text)}")
             # Get detailed data with confidence scores
             data = self.pytesseract.image_to_data(
                 image,
@@ -89,6 +97,7 @@ class TesseractOCRProvider(BaseOCRProvider):
                 if conf != '-1' and str(conf).isdigit()
             ]
             avg_confidence = sum(confidences) / len(confidences) / 100.0 if confidences else 0.0
+            logger.info(f"[TRACE-TESSERACT] Confidence calculated: {avg_confidence}")
             
             # Build word-level confidence data
             word_confidence = []
@@ -105,6 +114,7 @@ class TesseractOCRProvider(BaseOCRProvider):
                         }
                     })
             
+            logger.info(f"[TRACE-TESSERACT] Returning result with {len(word_confidence)} words")
             return {
                 "text": text.strip(),
                 "confidence": round(avg_confidence, 3),
@@ -126,27 +136,3 @@ class TesseractOCRProvider(BaseOCRProvider):
         except Exception as e:
             logger.error(f"Error during OCR extraction: {e}", exc_info=True)
             raise
-    
-    def _mock_extract_text(
-        self,
-        image_path: str,
-        language: str = "eng",
-        **kwargs
-    ) -> Dict[str, Any]:
-        """Return mock OCR data for testing"""
-        return {
-            "text": "Letter dated 15th March 1892\n\nDear Venerable Sir,\n\nI write to inform you of the monastery's administrative matters. The construction of the new meditation hall has progressed well under the supervision of Brother Thomas. We anticipate completion by June.\n\nRespectfully yours,\nJohn Smith\nSecretary, Monastery Board",
-            "confidence": 0.95,
-            "word_confidence": [
-                {"word": "Letter", "confidence": 0.98, "bbox": {"left": 10, "top": 10, "width": 50, "height": 20}},
-                {"word": "dated", "confidence": 0.96, "bbox": {"left": 65, "top": 10, "width": 45, "height": 20}},
-            ],
-            "language": language,
-            "metadata": {
-                "provider": "mock",
-                "image_path": str(image_path),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "psm": kwargs.get("psm", 3),
-                "note": "Mock data - pytesseract not installed"
-            }
-        }

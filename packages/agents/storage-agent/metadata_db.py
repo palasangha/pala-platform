@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 import sqlite3
+import uuid
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,17 +29,32 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ContentMetadata:
-    """Metadata for stored content"""
-    content_id: str
-    content_type: str
+    """Metadata for stored content - unified schema"""
+    # Core identification
+    document_id: str
+    type: str
     file_hash: str
+    
+    # File information
+    original_file: str
+    file_format: str
     file_size: int
-    provider_id: str  # Which provider stores this
-    storage_location: str  # Location within that provider
+    
+    # Content storage
+    processed_data: Dict[str, Any]  # The actual content
     metadata: Dict[str, Any]
-    version: int
+    app_data: Dict[str, Any]
+    
+    # Tracking
+    created_by: str
     created_at: str
     updated_at: str
+    version: int = 1
+    deleted_at: Optional[str] = None
+    
+    # Provider information
+    provider_id: str = "local-provider"
+    storage_location: str = ""
     signature: Optional[str] = None
     tags: Optional[Dict[str, str]] = None
 
@@ -73,21 +89,37 @@ class MetadataDB:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # Content metadata table
+        # Drop old schema if it exists (for migration from old to new schema)
+        try:
+            cursor.execute('DROP TABLE IF EXISTS content_versions')
+            cursor.execute('DROP INDEX IF EXISTS idx_content_type')
+            cursor.execute('DROP TABLE IF EXISTS content_metadata')
+            conn.commit()
+            logger.info("Dropped old schema tables for migration")
+        except Exception as e:
+            logger.debug(f"No old schema to drop: {e}")
+        
+        # Content metadata table - unified schema
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS content_metadata (
-                content_id TEXT PRIMARY KEY,
-                content_type TEXT NOT NULL,
+                document_id TEXT PRIMARY KEY,
+                type TEXT NOT NULL,
+                original_file TEXT,
+                file_format TEXT,
                 file_hash TEXT NOT NULL,
                 file_size INTEGER NOT NULL,
-                provider_id TEXT NOT NULL,
-                storage_location TEXT NOT NULL,
+                processed_data TEXT NOT NULL,
                 metadata TEXT NOT NULL,
-                version INTEGER NOT NULL DEFAULT 1,
-                signature TEXT,
-                tags TEXT,
+                app_data TEXT,
+                created_by TEXT NOT NULL,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                version INTEGER NOT NULL DEFAULT 1,
+                deleted_at TEXT,
+                provider_id TEXT NOT NULL,
+                storage_location TEXT,
+                signature TEXT,
+                tags TEXT
             )
         ''')
         
@@ -96,9 +128,43 @@ class MetadataDB:
             CREATE INDEX IF NOT EXISTS idx_file_hash ON content_metadata(file_hash)
         ''')
         
-        # Content type index for filtering
+        # Type index for filtering
         cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_content_type ON content_metadata(content_type)
+            CREATE INDEX IF NOT EXISTS idx_type ON content_metadata(type)
+        ''')
+        
+        # Created by index for filtering
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_created_by ON content_metadata(created_by)
+        ''')
+        
+        # Unified extractions table (generic schema for all extraction tools)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS unified_extractions (
+                id TEXT PRIMARY KEY,
+                source_type TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                data TEXT NOT NULL,
+                data_type TEXT NOT NULL,
+                metadata TEXT,
+                provider TEXT,
+                confidence REAL,
+                created_by TEXT,
+                created_at TEXT NOT NULL
+            )
+        ''')
+        
+        # Indexes for unified extractions
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_source_type ON unified_extractions(source_type)
+        ''')
+        
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_source_id ON unified_extractions(source_id)
+        ''')
+        
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_created_at ON unified_extractions(created_at)
         ''')
         
         # Provider index for provider-specific queries
@@ -156,7 +222,7 @@ class MetadataDB:
             cursor = conn.cursor()
             
             cursor.execute('''
-                SELECT content_id FROM content_metadata WHERE file_hash = ? LIMIT 1
+                SELECT document_id FROM content_metadata WHERE file_hash = ? LIMIT 1
             ''', (file_hash,))
             
             row = cursor.fetchone()
@@ -171,27 +237,37 @@ class MetadataDB:
     
     def insert(
         self,
-        content_id: str,
-        content_type: str,
+        document_id: str,
+        type: str,
         file_hash: str,
+        original_file: str,
+        file_format: str,
         file_size: int,
-        provider_id: str,
-        storage_location: str,
+        processed_data: Dict[str, Any],
         metadata: Dict[str, Any],
+        app_data: Dict[str, Any],
+        created_by: str,
+        provider_id: str = "local-provider",
+        storage_location: str = "",
         signature: Optional[str] = None,
         tags: Optional[Dict[str, str]] = None
     ) -> ContentMetadata:
         """
-        Insert new content metadata
+        Insert new content metadata with unified schema
         
         Args:
-            content_id: Unique content identifier
-            content_type: Type of content
+            document_id: Unique document identifier
+            type: Document type (ocr, transcription, etc)
             file_hash: SHA-256 hash
+            original_file: Original file name/path
+            file_format: File format (pdf, txt, json)
             file_size: Size in bytes
+            processed_data: The actual content/extracted data
+            metadata: Document metadata
+            app_data: Application-specific data
+            created_by: Creator identifier
             provider_id: Storage provider ID
             storage_location: Location within provider
-            metadata: Additional metadata
             signature: Digital signature
             tags: Content tags
             
@@ -206,53 +282,52 @@ class MetadataDB:
             
             cursor.execute('''
                 INSERT INTO content_metadata (
-                    content_id, content_type, file_hash, file_size,
-                    provider_id, storage_location, metadata,
-                    version, signature, tags, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    document_id, type, file_hash, original_file, file_format,
+                    file_size, processed_data, metadata, app_data,
+                    created_by, created_at, updated_at, version,
+                    provider_id, storage_location, signature, tags
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
-                content_id,
-                content_type,
+                document_id,
+                type,
                 file_hash,
+                original_file,
+                file_format,
                 file_size,
+                json.dumps(processed_data) if isinstance(processed_data, dict) else processed_data,
+                json.dumps(metadata),
+                json.dumps(app_data) if app_data else None,
+                created_by,
+                timestamp,
+                timestamp,
+                1,
                 provider_id,
                 storage_location,
-                json.dumps(metadata),
-                1,
                 signature,
-                json.dumps(tags) if tags else None,
-                timestamp,
-                timestamp
-            ))
-            
-            # Add to version history
-            cursor.execute('''
-                INSERT INTO content_versions (
-                    content_id, version, metadata, updated_at
-                ) VALUES (?, ?, ?, ?)
-            ''', (
-                content_id,
-                1,
-                json.dumps(metadata),
-                timestamp
+                json.dumps(tags) if tags else None
             ))
             
             conn.commit()
             conn.close()
             
-            logger.info(f"Metadata inserted: {content_id} (provider={provider_id}, hash={file_hash[:16]}...)")
+            logger.info(f"Document inserted: {document_id} (type={type}, created_by={created_by}, hash={file_hash[:16]}...)")
             
             return ContentMetadata(
-                content_id=content_id,
-                content_type=content_type,
+                document_id=document_id,
+                type=type,
                 file_hash=file_hash,
+                original_file=original_file,
+                file_format=file_format,
                 file_size=file_size,
-                provider_id=provider_id,
-                storage_location=storage_location,
+                processed_data=processed_data,
                 metadata=metadata,
-                version=1,
+                app_data=app_data,
+                created_by=created_by,
                 created_at=timestamp,
                 updated_at=timestamp,
+                version=1,
+                provider_id=provider_id,
+                storage_location=storage_location,
                 signature=signature,
                 tags=tags
             )
@@ -260,12 +335,12 @@ class MetadataDB:
             logger.error(f"Error inserting metadata: {e}")
             raise
     
-    def get_metadata(self, content_id: str) -> Optional[ContentMetadata]:
+    def get_metadata(self, document_id: str) -> Optional[ContentMetadata]:
         """
-        Get metadata for content
+        Get metadata for document
         
         Args:
-            content_id: Content identifier
+            document_id: Document identifier
             
         Returns:
             ContentMetadata or None if not found
@@ -275,11 +350,12 @@ class MetadataDB:
             cursor = conn.cursor()
             
             cursor.execute('''
-                SELECT content_id, content_type, file_hash, file_size,
-                       provider_id, storage_location, metadata, version,
-                       signature, tags, created_at, updated_at
-                FROM content_metadata WHERE content_id = ?
-            ''', (content_id,))
+                SELECT document_id, type, file_hash, original_file, file_format,
+                       file_size, processed_data, metadata, app_data,
+                       created_by, created_at, updated_at, version,
+                       provider_id, storage_location, signature, tags, deleted_at
+                FROM content_metadata WHERE document_id = ?
+            ''', (document_id,))
             
             row = cursor.fetchone()
             conn.close()
@@ -288,35 +364,43 @@ class MetadataDB:
                 return None
             
             return ContentMetadata(
-                content_id=row[0],
-                content_type=row[1],
+                document_id=row[0],
+                type=row[1],
                 file_hash=row[2],
-                file_size=row[3],
-                provider_id=row[4],
-                storage_location=row[5],
-                metadata=json.loads(row[6]),
-                version=row[7],
-                signature=row[8],
-                tags=json.loads(row[9]) if row[9] else None,
+                original_file=row[3],
+                file_format=row[4],
+                file_size=row[5],
+                processed_data=json.loads(row[6]) if isinstance(row[6], str) else row[6],
+                metadata=json.loads(row[7]),
+                app_data=json.loads(row[8]) if row[8] else {},
+                created_by=row[9],
                 created_at=row[10],
-                updated_at=row[11]
+                updated_at=row[11],
+                version=row[12],
+                provider_id=row[13],
+                storage_location=row[14],
+                signature=row[15],
+                tags=json.loads(row[16]) if row[16] else None,
+                deleted_at=row[17]
             )
         except Exception as e:
-            logger.error(f"Error getting metadata for {content_id}: {e}")
+            logger.error(f"Error getting metadata for {document_id}: {e}")
             return None
     
     def list_all(
         self,
-        content_type: Optional[str] = None,
+        type: Optional[str] = None,
+        created_by: Optional[str] = None,
         provider_id: Optional[str] = None,
         limit: int = 100,
         offset: int = 0
     ) -> List[ContentMetadata]:
         """
-        List content metadata with filters
+        List documents with filters
         
         Args:
-            content_type: Filter by content type
+            type: Filter by document type
+            created_by: Filter by creator
             provider_id: Filter by provider
             limit: Maximum results
             offset: Pagination offset
@@ -329,12 +413,20 @@ class MetadataDB:
             cursor = conn.cursor()
             
             # Build query
-            query = 'SELECT content_id, content_type, file_hash, file_size, provider_id, storage_location, metadata, version, signature, tags, created_at, updated_at FROM content_metadata WHERE 1=1'
+            query = '''SELECT document_id, type, file_hash, original_file, file_format,
+                       file_size, processed_data, metadata, app_data,
+                       created_by, created_at, updated_at, version,
+                       provider_id, storage_location, signature, tags, deleted_at
+                       FROM content_metadata WHERE deleted_at IS NULL'''
             params = []
             
-            if content_type:
-                query += ' AND content_type = ?'
-                params.append(content_type)
+            if type:
+                query += ' AND type = ?'
+                params.append(type)
+            
+            if created_by:
+                query += ' AND created_by = ?'
+                params.append(created_by)
             
             if provider_id:
                 query += ' AND provider_id = ?'
@@ -350,21 +442,27 @@ class MetadataDB:
             results = []
             for row in rows:
                 results.append(ContentMetadata(
-                    content_id=row[0],
-                    content_type=row[1],
+                    document_id=row[0],
+                    type=row[1],
                     file_hash=row[2],
-                    file_size=row[3],
-                    provider_id=row[4],
-                    storage_location=row[5],
-                    metadata=json.loads(row[6]),
-                    version=row[7],
-                    signature=row[8],
-                    tags=json.loads(row[9]) if row[9] else None,
+                    original_file=row[3],
+                    file_format=row[4],
+                    file_size=row[5],
+                    processed_data=json.loads(row[6]) if isinstance(row[6], str) else row[6],
+                    metadata=json.loads(row[7]),
+                    app_data=json.loads(row[8]) if row[8] else {},
+                    created_by=row[9],
                     created_at=row[10],
-                    updated_at=row[11]
+                    updated_at=row[11],
+                    version=row[12],
+                    provider_id=row[13],
+                    storage_location=row[14],
+                    signature=row[15],
+                    tags=json.loads(row[16]) if row[16] else None,
+                    deleted_at=row[17]
                 ))
             
-            logger.debug(f"Listed {len(results)} metadata records")
+            logger.debug(f"Listed {len(results)} documents")
             return results
         except Exception as e:
             logger.error(f"Error listing metadata: {e}")
@@ -469,3 +567,130 @@ class MetadataDB:
         except Exception as e:
             logger.error(f"Error getting stats: {e}")
             return {'error': str(e)}
+
+    # Unified Extractions methods
+    
+    def store_extraction(self, source_type: str, source_id: str, data: str | dict, 
+                        data_type: str, metadata: Dict[str, Any], provider: str,
+                        confidence: float = None, created_by: str = None) -> str:
+        """
+        Store a generic extraction result to unified table
+        
+        Args:
+            source_type: Type of extraction (ocr, transcription, translation, custom, etc)
+            source_id: ID of the source file/input
+            data: The actual extracted content
+            data_type: Type of data (text, json, binary)
+            metadata: Additional metadata about the extraction
+            provider: Which model/service performed extraction
+            confidence: Confidence score if applicable
+            created_by: Which UI/service stored this
+        
+        Returns:
+            extraction_id
+        """
+        try:
+            extraction_id = f"ext-{uuid.uuid4()}"
+            timestamp = datetime.now(timezone.utc).isoformat()
+            
+            # Convert data to string if dict
+            data_str = json.dumps(data) if isinstance(data, dict) else str(data)
+            metadata_str = json.dumps(metadata) if isinstance(metadata, dict) else str(metadata)
+            
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO unified_extractions 
+                (id, source_type, source_id, data, data_type, metadata, provider, confidence, created_by, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (extraction_id, source_type, source_id, data_str, data_type, metadata_str, provider, confidence, created_by, timestamp))
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Extraction stored: {extraction_id} (type={source_type}, provider={provider})")
+            return extraction_id
+        except Exception as e:
+            logger.error(f"Error storing extraction: {e}")
+            raise
+    
+    def get_extraction(self, extraction_id: str) -> Dict[str, Any]:
+        """Get a single extraction by ID"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT id, source_type, source_id, data, data_type, metadata, provider, confidence, created_by, created_at
+                FROM unified_extractions
+                WHERE id = ?
+            ''', (extraction_id,))
+            
+            row = cursor.fetchone()
+            conn.close()
+            
+            if not row:
+                return None
+            
+            return {
+                'id': row[0],
+                'source_type': row[1],
+                'source_id': row[2],
+                'data': json.loads(row[3]) if row[3].startswith('{') or row[3].startswith('[') else row[3],
+                'data_type': row[4],
+                'metadata': json.loads(row[5]) if row[5] else {},
+                'provider': row[6],
+                'confidence': row[7],
+                'created_by': row[8],
+                'created_at': row[9]
+            }
+        except Exception as e:
+            logger.error(f"Error getting extraction: {e}")
+            raise
+    
+    def list_extractions(self, source_type: str = None, source_id: str = None, 
+                        limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """List extractions with optional filters"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            query = 'SELECT id, source_type, source_id, data, data_type, metadata, provider, confidence, created_by, created_at FROM unified_extractions WHERE 1=1'
+            params = []
+            
+            if source_type:
+                query += ' AND source_type = ?'
+                params.append(source_type)
+            
+            if source_id:
+                query += ' AND source_id = ?'
+                params.append(source_id)
+            
+            query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?'
+            params.extend([limit, offset])
+            
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            conn.close()
+            
+            results = []
+            for row in rows:
+                results.append({
+                    'id': row[0],
+                    'source_type': row[1],
+                    'source_id': row[2],
+                    'data': json.loads(row[3]) if row[3] and (row[3].startswith('{') or row[3].startswith('[')) else row[3],
+                    'data_type': row[4],
+                    'metadata': json.loads(row[5]) if row[5] else {},
+                    'provider': row[6],
+                    'confidence': row[7],
+                    'created_by': row[8],
+                    'created_at': row[9]
+                })
+            
+            return results
+        except Exception as e:
+            logger.error(f"Error listing extractions: {e}")
+            raise
+

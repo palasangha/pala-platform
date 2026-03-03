@@ -32,7 +32,7 @@ export interface ToolInvokerEvents {
  */
 export class ToolInvoker extends EventEmitter {
   private pendingInvocations: Map<string, (result: any) => void> = new Map();
-  private invocationTimeout: number = 30000; // 30 seconds default
+  private invocationTimeout: number = 1800000; // 1800 seconds (30 minutes) for long-running operations like OCR with model loading
 
   constructor(
     private registry: ToolRegistry,

@@ -20,6 +20,7 @@ from typing import Dict, Any, Optional
 
 from providers.base_provider import BaseMetadataProvider
 from providers.claude_provider import ClaudeMetadataProvider
+from providers.ollama_provider import OllamaMetadataProvider
 from mappers.pala_mapper import PalaMapper
 from mappers.archipelago_mapper import ArchipelagoMapper
 
@@ -61,11 +62,17 @@ class MetadataExtractionAgent:
 
         # Initialize Claude provider
         self.claude_provider = ClaudeMetadataProvider()
+        
+        # Initialize Ollama provider
+        self.ollama_provider = OllamaMetadataProvider()
 
         logger.info(f"Initialized {self.agent_id}")
         logger.info(f"Server: {self.server_url}")
         logger.info(
             f"Claude provider available: {self.claude_provider.is_available()}"
+        )
+        logger.info(
+            f"Ollama provider available: {self.ollama_provider.is_available()}"
         )
 
     def get_provider(self, model: str) -> BaseMetadataProvider:
@@ -81,16 +88,25 @@ class MetadataExtractionAgent:
         Raises:
             ValueError: If model not supported
         """
-        if model.lower() == "claude":
+        model_lower = model.lower()
+        
+        if model_lower == "claude":
+            if not self.claude_provider.is_available():
+                raise RuntimeError("Claude provider is not available (ANTHROPIC_API_KEY not set)")
             return self.claude_provider
-        # Future providers can be added here
-        # elif model.lower() == "ollama":
-        #     return self.ollama_provider
-        # elif model.lower() == "gemini":
-        #     return self.gemini_provider
+        elif model_lower == "ollama":
+            if not self.ollama_provider.is_available():
+                raise RuntimeError("Ollama provider is not available (check if Ollama is running on localhost:11434)")
+            return self.ollama_provider
         else:
+            available = []
+            if self.claude_provider.is_available():
+                available.append("claude")
+            if self.ollama_provider.is_available():
+                available.append("ollama")
+            
             raise ValueError(
-                f"Unsupported model: {model}. Supported: claude (more coming soon)"
+                f"Unsupported model: {model}. Available providers: {', '.join(available) if available else 'none available'}"
             )
 
     async def extract_metadata(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -99,7 +115,7 @@ class MetadataExtractionAgent:
 
         Input parameters:
         {
-            "ocr_text": str,                                    # Required
+            "text": str,                                    # Required
             "model": "claude" | "ollama" | "gemini" | "openai", # Required
             "output_type": "pala" | "archipelago" | "combined", # Required
             "language": str (optional),                         # ISO language code
@@ -130,7 +146,7 @@ class MetadataExtractionAgent:
         start_time = datetime.now(timezone.utc)
 
         # Extract parameters
-        ocr_text = params.get("ocr_text", "").strip()
+        text = params.get("text", "").strip()
         model = params.get("model", "claude").lower()
         output_type = params.get("output_type", "pala").lower()
         language = params.get("language")
@@ -139,15 +155,15 @@ class MetadataExtractionAgent:
         schema_version = params.get("schema_version", "1.0.0")
 
         # Validate required parameters
-        if not ocr_text:
-            raise ValueError("ocr_text is required and cannot be empty")
+        if not text:
+            raise ValueError("text is required and cannot be empty")
         if output_type not in ["pala", "archipelago", "combined"]:
             raise ValueError(
                 f'output_type must be "pala", "archipelago", or "combined", got: {output_type}'
             )
 
         logger.info(
-            f"Extracting metadata: model={model}, output_type={output_type}, text_len={len(ocr_text)}"
+            f"Extracting metadata: model={model}, output_type={output_type}, text_len={len(text)}"
         )
 
         try:
@@ -160,7 +176,7 @@ class MetadataExtractionAgent:
 
             # Extract metadata from provider
             extracted_data = await provider.extract_metadata(
-                ocr_text=ocr_text,
+                ocr_text=text,
                 language=language,
                 document_context=document_context,
                 custom_prompt=custom_prompt,
@@ -168,7 +184,7 @@ class MetadataExtractionAgent:
 
             # Add metadata
             extracted_data["extraction_timestamp"] = datetime.now(timezone.utc).isoformat()
-            extracted_data["input_text_length"] = len(ocr_text)
+            extracted_data["input_text_length"] = len(text)
             extracted_data["model"] = model
             extracted_data["document_context"] = document_context
 
@@ -183,7 +199,7 @@ class MetadataExtractionAgent:
                     "model_used": model,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "processing_time_ms": processing_time_ms,
-                    "input_length": len(ocr_text),
+                    "input_length": len(text),
                 },
                 "confidence_scores": self._extract_confidence_scores(extracted_data),
             }
@@ -234,9 +250,9 @@ class MetadataExtractionAgent:
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "ocr_text": {
+                        "text": {
                             "type": "string",
-                            "description": "OCR-extracted text from document",
+                            "description": "Input text (from OCR, transcription, or any source)",
                         },
                         "model": {
                             "type": "string",
@@ -265,7 +281,7 @@ class MetadataExtractionAgent:
                             "description": "Pin to specific schema version (e.g., '1.0.0')",
                         },
                     },
-                    "required": ["ocr_text", "model", "output_type"],
+                    "required": ["text", "model", "output_type"],
                     "additionalProperties": False,
                 },
             }

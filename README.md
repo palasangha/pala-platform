@@ -4,21 +4,33 @@ Centralized orchestration platform for AI agents using the Model Context Protoco
 
 ## Quick Start
 
-### One-Command Startup (Recommended)
+### First-Time Setup (One-Time)
 
 ```bash
+# Set up all required dependencies (Node, Python, Tesseract, Ollama, LM Studio)
+# Idempotent: only installs what's missing where possible
+./setup-dev.sh
+
 # Set your Anthropic API key (required for metadata-extraction-agent)
 export ANTHROPIC_API_KEY="sk-ant-api03-your-key-here"
+```
 
-# Start everything: MCP server, agents, and dashboard
+### Start Development Stack
+
+```bash
+# Runs dependency gate first, then starts MCP server, all agents, and dashboard
+# If anything required is missing, startup aborts and shows install instructions
 ./start-dev.sh
 ```
 
-**That's it!** This will start:
-- ✅ MCP Server (ws://localhost:3000)
+**Services Started:**
+- ✅ MCP Server (ws://localhost:4000)
 - ✅ Sample Agent (echo, sum tools)
 - ✅ Metadata Extraction Agent (extract_metadata tool)
-- ✅ Web Dashboard (http://localhost:3001)
+- ✅ Storage Agent (unified document storage with store_document, retrieve_document, list_documents)
+- ✅ Web Dashboard (http://localhost:4001)
+
+**Note:** Pala Platform provides core infrastructure (MCP + Storage + Metadata extraction). Domain-specific applications (OCR, transcription, etc.) are separate web apps that use the Storage Agent as their integration point.
 
 **Stop everything:**
 ```bash
@@ -44,26 +56,37 @@ tail -f logs/*.log
 
 ## Architecture
 
+**Pala Platform Core:**
+- **MCP Server**: Central communication hub using JSON-RPC 2.0 over WebSocket
+- **Storage Agent**: Unified database layer with `store_document()`, `retrieve_document()`, `list_documents()` tools
+- **Metadata Extractor Agent**: Optional service for enriching content with AI-powered metadata
+- **Web Dashboard**: Real-time monitoring and tool invocation UI
+
+**External Applications:**
+- Domain-specific web apps (OCR, transcription, document conversion, etc.) run independently
+- Each app has its own business logic, UI, and local storage
+- Apps connect to MCP Server and use Storage Agent as the integration point
+- All extracted data flows into Pala Platform's unified database (single source of truth)
+- Apps can optionally use Metadata Extractor for enrichment
+
 ```
-MCP Server (Node.js + WebSocket)
-├── Protocol: JSON-RPC 2.0 message routing
-├── Transport: WebSocket with heartbeat, auth hooks
-├── Registry: Tool catalog with agent mapping
-├── Invoker: Tool execution routing to agents
-├── Logging: Structured JSON with Pino
-└── Tracing: Request correlation IDs
-
-Agents (Python, JavaScript, Go, etc.)
-├── WebSocket client connecting to MCP server
-├── Self-registration via tools/register on connect
-├── Tool invocation handling via JSON-RPC requests
-└── Results routed back via tools/invoke response
-
-Web Dashboard (React + Next.js)
-├── Real-time WebSocket client
-├── Agent and tool discovery
-├── Interactive tool invocation UI
-└── Connection status monitoring
+┌─────────────────────────────────────────────────────────┐
+│                    Pala Platform Core                    │
+│                                                          │
+│  ┌──────────────┐    ┌──────────────┐   ┌────────────┐ │
+│  │  MCP Server  │◄──►│Storage Agent │   │ Metadata   │ │
+│  │  (WS Hub)    │    │ (Unified DB) │   │ Extractor  │ │
+│  └──────────────┘    └──────────────┘   └────────────┘ │
+│         ▲                    ▲                  ▲        │
+└─────────┼────────────────────┼──────────────────┼────────┘
+          │                    │                  │
+          │                    │                  │
+┌─────────▼────────┐  ┌────────▼──────┐  ┌───────▼────────┐
+│   OCR Web App    │  │ Transcription │  │  Doc Convert   │
+│  (own logic/DB)  │  │  (own logic)  │  │  (own logic)   │
+│  Calls:          │  │  Calls:       │  │  Calls:        │
+│  store_extraction│  │  store_extract│  │  store_extract │
+└──────────────────┘  └───────────────┘  └────────────────┘
 ```
 
 ## Project Structure
@@ -71,25 +94,28 @@ Web Dashboard (React + Next.js)
 ```
 pala-platform/
 ├── apps/
-│   ├── mobile/     (mobile client, future)
-│   └── web/        (React dashboard - start here)
+│   ├── mobile/     (future mobile client)
+│   └── web/        (React dashboard for monitoring MCP + agents)
 ├── packages/
+│   ├── mcp-server/                   (Core: MCP Server)
+│   ├── PalaAgents/
+│   │   ├── metadata-extraction-agent/(Core: Claude AI metadata extraction)
+│   │   └── storage-agent/            (Core: Unified database layer)
 │   ├── agents/
-│   │   ├── sample-agent/              (Python reference - echo, sum tools)
-│   │   ├── metadata-extraction-agent/ (Claude AI metadata extraction)
-│   │   └── ...other agents
-│   ├── mcp-server/        (core MCP server)
-│   ├── processors/        (data processing pipeline)
-│   ├── storage/           (persistence layer)
-│   ├── enrichment/        (AI enrichment agents)
-│   └── shared/            (shared types/utilities)
+│   │   └── sample-agent/             (Example: echo, sum tools)
+│   ├── processors/
+│   │   └── OCR_metadata_extraction/  (Example: External OCR web app)
+│   ├── storage/                      (Persistence utilities)
+│   ├── enrichment/                   (AI enrichment services)
+│   └── shared/                       (Shared types/utilities)
 ├── docs/           (architecture, guides)
 ├── scripts/        (build, deploy scripts)
 ├── tests/          (integration tests)
-├── start-dev.sh    (one-command startup script)
-├── stop-dev.sh     (stop all services)
+├── start-dev.sh    (one-command startup for core services)
 └── turbo.json      (monorepo config)
 ```
+
+**Note:** `packages/processors/OCR_metadata_extraction` is an example of an external web app that uses Pala Platform. It has its own business logic and calls `storage-agent` to persist data.
 
 ## Stories Implemented
 
@@ -147,11 +173,11 @@ npm run clean
 
 | Env Variable | Description | Default |
 |---|---|---|
-| `PORT` | MCP server WebSocket port | `3000` |
+| `PORT` | MCP server WebSocket port | `4000` |
 | `MCP_JWT_SECRET` | Enable JWT auth (leave unset for disabled) | `unset` |
 | `MCP_AGENT_TOKEN` | Agent auth token (set if server has auth enabled) | `unset` |
-| `MCP_SERVER_URL` | Server URL for agent connection | `ws://localhost:3000` |
-| `NEXT_PUBLIC_MCP_SERVER_URL` | Server URL for web dashboard | `ws://localhost:3000` |
+| `MCP_SERVER_URL` | Server URL for agent connection | `ws://localhost:4000` |
+| `NEXT_PUBLIC_MCP_SERVER_URL` | Server URL for web dashboard | `ws://localhost:4000` |
 | `ANTHROPIC_API_KEY` | Claude API key (for metadata extraction agent) | `unset` |
 
 ## JSON-RPC Methods
@@ -169,8 +195,8 @@ npm run clean
 
 | Issue | Solution |
 |-------|----------|
-| Port 3000 already in use | Change PORT env var or kill process with `lsof -i :3000` |
-| Agent won't connect | Check server URL with `MCP_SERVER_URL=ws://127.0.0.1:3000` |
+| Port 4000 already in use | Change PORT env var or kill process with `lsof -i :4000` |
+| Agent won't connect | Check server URL with `MCP_SERVER_URL=ws://127.0.0.1:4000` |
 | Dashboard shows "Disconnected" | Verify server running, check browser console (F12) |
 | Tools don't appear | Refresh dashboard, check server logs for agent registration |
 | Auth failures | If auth enabled, ensure `MCP_AGENT_TOKEN` matches secret |
@@ -197,7 +223,7 @@ import websockets
 import json
 
 async def main():
-    async with websockets.connect('ws://localhost:3000') as ws:
+    async with websockets.connect('ws://localhost:4000') as ws:
         # Register tools
         await ws.send(json.dumps({
             'jsonrpc': '2.0',
@@ -213,7 +239,7 @@ async def main():
 
 2. **In Go/Node.js/Other**: Same JSON-RPC 2.0 protocol over WebSocket
 
-3. **Start agent**: `python agent.py` (will auto-connect to ws://localhost:3000)
+3. **Start agent**: `python agent.py` (will auto-connect to ws://localhost:4000)
 
 4. **Verify**: Check dashboard or run `agents/list` to see it listed
 
@@ -244,7 +270,7 @@ Tool automatically appears in web dashboard and is callable via `tools/invoke`.
 - **[Getting Started - Setup and Usage Guide](docs/Getting%20Started%20-%20Setup%20and%20Usage%20Guide.md)** - Complete setup, troubleshooting, and usage
 - **[packages/mcp-server/README.md](packages/mcp-server/README.md)** - Server implementation details
 - **[packages/agents/sample-agent/README.md](packages/agents/sample-agent/README.md)** - Sample agent guide
-- **[packages/agents/metadata-extraction-agent/README.md](packages/agents/metadata-extraction-agent/README.md)** - Metadata extraction agent guide
+- **[packages/PalaAgents/metadata-extraction-agent/README.md](packages/PalaAgents/metadata-extraction-agent/README.md)** - Metadata extraction agent guide
 - **[apps/web/README.md](apps/web/README.md)** - Dashboard implementation
 
 ## Contributing

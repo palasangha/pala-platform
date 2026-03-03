@@ -1,5 +1,5 @@
-import Dashboard from '@/components/Dashboard';
+import { PalaWebDashboard } from '@/components/PalaWebDashboard';
 
 export default function Home() {
-  return <Dashboard />;
+  return <PalaWebDashboard />;
 }

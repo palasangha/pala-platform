@@ -12,20 +12,33 @@ interface Agent {
   tools: ToolDefinition[];
 }
 
-export function useWebSocket(url: string) {
+export function useWebSocket(url?: string) {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const messageHandlerRef = useRef<Map<number, (response: unknown) => void>>(new Map());
   const messageIdRef = useRef(0);
 
+  // Default URL if not provided
+  const [wsUrl, setWsUrl] = useState(url || '');
+
   useEffect(() => {
-    if (!url) {
+    if (!url && typeof window !== 'undefined') {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.hostname;
+      setWsUrl(`${protocol}//${host}:4000`);
+    }
+  }, [url]);
+
+  const effectiveUrl = url || wsUrl;
+
+  useEffect(() => {
+    if (!effectiveUrl) {
       setConnected(false);
       return;
     }
 
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(effectiveUrl);
 
     ws.onopen = () => {
       console.log('WebSocket connected');
@@ -63,7 +76,7 @@ export function useWebSocket(url: string) {
         wsRef.current.close();
       }
     };
-  }, [url]);
+  }, [effectiveUrl]);
 
   const send = useCallback((method: string, params?: unknown): Promise<unknown> => {
     return new Promise((resolve, reject) => {
@@ -86,18 +99,18 @@ export function useWebSocket(url: string) {
 
       try {
         wsRef.current.send(JSON.stringify(message));
-        // Timeout after 10 seconds
+        // Timeout after 1800 seconds (30 minutes) for long-running operations like OCR with model loading
         setTimeout(() => {
           if (messageHandlerRef.current.has(id)) {
             messageHandlerRef.current.delete(id);
             reject(new Error('Request timeout'));
           }
-        }, 10000);
+        }, 1800000);
       } catch (err) {
         reject(err);
       }
     });
   }, []);
 
-  return { connected, error, send };
+  return { connected, error, send, client: wsRef.current };
 }

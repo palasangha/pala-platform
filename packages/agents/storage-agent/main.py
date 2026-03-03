@@ -60,94 +60,100 @@ def _build_content_id(file_hash: str) -> str:
 # Tool implementations
 async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Store document with automatic deduplication
+    Store document with unified schema and automatic deduplication
     
-    Params:
-    - job_id: Job identifier
-    - file_index: File index in job
-    - ocr_text: Extracted text content
-    - content_type: Type of content (default: document)
-    - original_file_path: Original file path
-    - enriched_metadata: Metadata from extraction
-    - document_metadata: Additional document metadata
-    - backend: Storage backend name (optional)
+    Params (unified schema):
+    - type: Document type (ocr, transcription, metadata, etc) - REQUIRED
+    - original_file: Original file name/path - REQUIRED
+    - file_format: File format (pdf, txt, json, etc) - REQUIRED
+    - processed_data: The actual extracted/processed content (dict or JSON) - REQUIRED
+    - metadata: Document metadata (dict) - optional
+    - app_data: Application-specific data (dict) - optional
+    - created_by: Creator identifier (required)
     - signature: Digital signature (optional)
     - tags: Document tags (optional)
     """
     try:
-        ocr_text = params.get('ocr_text', params.get('content', ''))
-        if not ocr_text:
-            raise ValueError('ocr_text or content is required')
-
-        content_bytes = ocr_text.encode('utf-8')
+        # Validate required fields
+        doc_type = params.get('type')
+        original_file = params.get('original_file')
+        file_format = params.get('file_format')
+        processed_data = params.get('processed_data')
+        created_by = params.get('created_by', 'api')
+        
+        if not all([doc_type, original_file, file_format, processed_data is not None]):
+            raise ValueError('type, original_file, file_format, and processed_data are required')
+        
+        # Convert processed_data to bytes for hashing
+        if isinstance(processed_data, dict):
+            content_bytes = json.dumps(processed_data).encode('utf-8')
+        else:
+            content_bytes = str(processed_data).encode('utf-8')
+        
         file_hash = metadata_db.calculate_hash(content_bytes)
         existing = metadata_db.find_by_hash(file_hash)
-
+        
         if existing:
             return {
-                'content_id': existing.content_id,
-                'provider': 'pala-storage-provider',
-                'storage_provider': existing.provider_id,
-                'backend': _backend_name(existing.provider_id),
-                'path': existing.storage_location,
-                'version': existing.version,
-                'file_hash': existing.file_hash,
-                'size': existing.file_size,
+                'document_id': existing.document_id,
+                'type': existing.type,
+                'original_file': existing.original_file,
+                'file_format': existing.file_format,
+                'created_by': existing.created_by,
                 'created_at': existing.created_at,
+                'version': existing.version,
                 'deduplication': True,
-                'message': 'Content already exists (deduplicated)'
+                'message': 'Document already exists (deduplicated)'
             }
-
+        
         provider_id = _resolve_provider_id(params)
         provider = providers.get(provider_id)
         if not provider:
             raise ValueError(f'Provider not available: {provider_id}')
-
-        content_id = _build_content_id(file_hash)
-        content_type = params.get('content_type', 'document')
-        timestamp = datetime.now(timezone.utc).isoformat()
-
-        document_metadata = {
-            'job_id': params.get('job_id'),
-            'file_index': params.get('file_index', 0),
-            'original_file_path': params.get('original_file_path'),
-            'enriched_metadata': params.get('enriched_metadata', {}),
-            'document_metadata': params.get('document_metadata', {}),
-        }
-
+        
+        # Generate unique document ID
+        document_id = f"doc-{uuid.uuid4().hex[:12]}"
+        
+        # Write to provider
         location = await provider.write(
-            content_id=content_id,
+            content_id=document_id,
             content=content_bytes,
             metadata={
-                'content_type': content_type,
-                'created_at': timestamp,
-                'file_hash': file_hash,
-                'metadata': document_metadata,
+                'type': doc_type,
+                'original_file': original_file,
+                'file_format': file_format,
             }
         )
-
+        
+        # Store in metadata DB
         stored = metadata_db.insert(
-            content_id=content_id,
-            content_type=content_type,
+            document_id=document_id,
+            type=doc_type,
             file_hash=file_hash,
+            original_file=original_file,
+            file_format=file_format,
             file_size=len(content_bytes),
+            processed_data=processed_data,
+            metadata=params.get('metadata', {}),
+            app_data=params.get('app_data', {}),
+            created_by=created_by,
             provider_id=provider_id,
             storage_location=location,
-            metadata=document_metadata,
             signature=params.get('signature'),
-            tags=params.get('tags', {}),
+            tags=params.get('tags'),
         )
-
+        
         return {
-            'content_id': stored.content_id,
-            'provider': 'pala-storage-provider',
-            'storage_provider': stored.provider_id,
-            'backend': _backend_name(stored.provider_id),
-            'path': stored.storage_location,
-            'version': stored.version,
-            'file_hash': stored.file_hash,
-            'size': stored.file_size,
+            'document_id': stored.document_id,
+            'type': stored.type,
+            'original_file': stored.original_file,
+            'file_format': stored.file_format,
+            'created_by': stored.created_by,
             'created_at': stored.created_at,
+            'version': stored.version,
+            'deduplication': False,
+            'message': 'Document stored successfully'
+        }
             'deduplication': False,
             'message': 'Content stored successfully'
         }
@@ -159,35 +165,36 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
 
 async def tool_retrieve_document(params: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Retrieve document by content ID
+    Retrieve document by document ID with unified schema
     
     Params:
-    - content_id: Content identifier
+    - document_id: Document identifier
     """
     try:
-        content_id = params.get('content_id')
-        if not content_id:
-            raise ValueError('content_id is required')
+        document_id = params.get('document_id')
+        if not document_id:
+            raise ValueError('document_id is required')
 
-        metadata = metadata_db.get_metadata(content_id)
+        metadata = metadata_db.get_metadata(document_id)
         if not metadata:
-            raise ValueError(f'Content not found: {content_id}')
+            raise ValueError(f'Document not found: {document_id}')
 
         provider = providers.get(metadata.provider_id)
         if not provider:
             raise ValueError(f'Provider not available: {metadata.provider_id}')
 
-        content = await provider.read(content_id, metadata.storage_location)
-
+        # provider.read returns bytes, processed_data is already in metadata
         return {
-            'content': content.decode('utf-8', errors='ignore') if isinstance(content, bytes) else str(content),
+            'document_id': metadata.document_id,
+            'type': metadata.type,
+            'original_file': metadata.original_file,
+            'file_format': metadata.file_format,
+            'processed_data': metadata.processed_data,
             'metadata': metadata.metadata,
-            'content_id': metadata.content_id,
-            'backend': _backend_name(metadata.provider_id),
-            'storage_provider': metadata.provider_id,
+            'app_data': metadata.app_data,
+            'created_by': metadata.created_by,
+            'created_at': metadata.created_at,
             'version': metadata.version,
-            'file_hash': metadata.file_hash,
-            'created_at': metadata.created_at
         }
 
     except Exception as e:
@@ -197,42 +204,40 @@ async def tool_retrieve_document(params: Dict[str, Any]) -> Dict[str, Any]:
 
 async def tool_list_documents(params: Dict[str, Any]) -> Dict[str, Any]:
     """
-    List stored documents
+    List stored documents with unified schema
     
     Params:
-    - content_type: Filter by content type (optional)
-    - backend: Filter by backend (optional)
+    - type: Filter by document type (optional)
+    - created_by: Filter by creator (optional)
     - limit: Max results (default: 100)
     - offset: Pagination offset (default: 0)
     """
     try:
-        provider_filter = None
-        if params.get('provider') or params.get('provider_id') or params.get('backend'):
-            provider_filter = _resolve_provider_id(params)
-
         items = metadata_db.list_all(
-            content_type=params.get('content_type'),
-            provider_id=provider_filter,
+            type=params.get('type'),
+            created_by=params.get('created_by'),
             limit=int(params.get('limit', 100)),
             offset=int(params.get('offset', 0))
         )
 
         return {
-            'items': [
+            'documents': [
                 {
-                    'content_id': item.content_id,
-                    'backend': _backend_name(item.provider_id),
-                    'storage_provider': item.provider_id,
-                    'content_type': item.content_type,
-                    'file_hash': item.file_hash[:16] + '...',
-                    'size': item.file_size,
-                    'version': item.version,
+                    'document_id': item.document_id,
+                    'type': item.type,
+                    'original_file': item.original_file,
+                    'file_format': item.file_format,
+                    'created_by': item.created_by,
                     'created_at': item.created_at,
-                    'metadata': item.metadata
+                    'version': item.version,
+                    'file_hash': item.file_hash[:16] + '...',
+                    'metadata': item.metadata,
+                    'app_data': item.app_data,
                 }
                 for item in items
             ],
-            'count': len(items)
+            'total': len(items)
+        }
         }
 
     except Exception as e:
@@ -606,6 +611,19 @@ async def register_tools(ws: websockets.WebSocketClientProtocol, agent_id: str) 
         )
     )
     logger.info(f"Registered {len(tool_defs)} storage tools")
+
+
+# Tool dispatch table
+TOOLS = {
+    "store_document": tool_store_document,
+    "retrieve_document": tool_retrieve_document,
+    "list_documents": tool_list_documents,
+    "list_backends": tool_list_backends,
+    "list_storage_providers": tool_list_storage_providers,
+    "get_stats": tool_get_stats,
+    "delete_all_documents": tool_delete_all_documents,
+    "answer_content_query": tool_answer_content_query,
+}
 
 
 async def handle_invoke(method: str, params: Dict[str, Any]) -> Dict[str, Any]:

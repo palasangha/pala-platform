@@ -5,10 +5,11 @@ Stateless AI-powered agent for extracting structured metadata from OCR text. Par
 ## Features
 
 - **Claude AI Integration**: Uses Anthropic's Claude for high-accuracy metadata extraction
+- **Ollama Integration**: Local LLM support for offline metadata extraction (no API key required)
 - **Multiple Output Schemas**: Supports Pala metadata format v1.0.0 and Archipelago Commons
 - **Confidence Scoring**: All extracted fields include 0.0-1.0 confidence scores
 - **Schema Versioning**: Pin to specific schema versions for consistency
-- **Extensible Architecture**: Easy to add support for other providers (Ollama, Gemini, OpenAI)
+- **Extensible Architecture**: Easy to add support for other providers
 - **MCP Integration**: Exposes metadata extraction as an MCP tool
 
 ## Setup
@@ -25,14 +26,15 @@ pip install -r requirements.txt
 Create a `.env` file in this directory:
 
 ```bash
-# Required: Anthropic API Key
+# Claude Provider (Optional)
 ANTHROPIC_API_KEY=your-anthropic-api-key-here
-
-# Optional: Claude model to use (default: claude-3-5-sonnet-20241022)
 CLAUDE_MODEL=claude-3-5-sonnet-20241022
-
-# Optional: Enable/disable Claude provider (default: true)
 CLAUDE_ENABLED=true
+
+# Ollama Provider (Optional - for local LLM)
+OLLAMA_ENABLED=true
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama2
 
 # MCP Server Connection
 MCP_SERVER_URL=ws://mcp-server:3000
@@ -43,7 +45,11 @@ MCP_AGENT_TOKEN=optional-auth-token
 LOG_LEVEL=INFO
 ```
 
-Get your Anthropic API key at: https://console.anthropic.com/
+**Provider Setup:**
+- **Claude**: Get API key at https://console.anthropic.com/
+- **Ollama**: Install from https://ollama.ai and run `ollama serve`
+
+See [OLLAMA_SETUP.md](./OLLAMA_SETUP.md) for detailed Ollama configuration.
 
 ### 3. Run the Agent
 

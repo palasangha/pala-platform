@@ -7,7 +7,7 @@
 
 import { MCPServer } from '../index.js';
 
-const port = parseInt(process.env.PORT || '3000', 10);
+const port = parseInt(process.env.PORT || '4000', 10);
 const jwtSecret = process.env.MCP_JWT_SECRET;
 
 const server = new MCPServer({

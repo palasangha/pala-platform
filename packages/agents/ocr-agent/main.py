@@ -18,6 +18,7 @@ import logging
 import os
 import sys
 import uuid
+import tempfile
 import websockets
 import importlib
 from datetime import datetime, timezone
@@ -33,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 AGENT_ID = "ocr-agent"
-MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "ws://localhost:3000")
+MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "ws://localhost:4000")
 
 # Dynamically import job registry from shared
 sys.path.insert(0, str(Path(__file__).parent.parent / "shared"))
@@ -54,6 +55,7 @@ job_registry = JobRegistry(persist_dir=str(data_dir / 'jobs'))
 from providers.tesseract_provider import TesseractOCRProvider
 from providers.ollama_provider import OllamaProvider
 from providers.lmstudio_provider import LMStudioProvider
+from services.pdf_service import PDFService
 
 # Tool definitions
 TOOLS = [
@@ -65,7 +67,11 @@ TOOLS = [
             "properties": {
                 "image_path": {
                     "type": "string",
-                    "description": "Path to the image file to process"
+                    "description": "Path to the image file to process (optional if image_data provided)"
+                },
+                "image_data": {
+                    "type": "string",
+                    "description": "Base64-encoded image data (optional if image_path provided)"
                 },
                 "provider": {
                     "type": "string",
@@ -79,7 +85,7 @@ TOOLS = [
                     "default": "eng"
                 }
             },
-            "required": ["image_path"]
+            "required": []
         }
     },
     {
@@ -144,21 +150,30 @@ TOOLS = [
             "required": ["job_id"]
         }
     }
+]
 
 
 def _get_provider(provider_name: str):
     """Get OCR provider instance by name"""
+    logger.info(f"[TRACE] _get_provider called with provider_name: {provider_name}")
+    
     provider_map = {
         "tesseract": TesseractOCRProvider,
         "ollama": OllamaProvider,
         "lmstudio": LMStudioProvider,
     }
     
+    logger.info(f"[TRACE] Available providers: {list(provider_map.keys())}")
+    
     provider_class = provider_map.get(provider_name.lower())
     if not provider_class:
+        logger.error(f"[TRACE] Unknown provider: {provider_name}")
         raise ValueError(f"Unknown provider: {provider_name}")
     
-    return provider_class()
+    logger.info(f"[TRACE] Creating instance of provider class: {provider_class.__name__}")
+    instance = provider_class()
+    logger.info(f"[TRACE] Provider instance created successfully: {instance}")
+    return instance
 
 
 def _get_image_files(folder_path: str, pattern: str = "*.*") -> list:
@@ -175,6 +190,76 @@ def _get_image_files(folder_path: str, pattern: str = "*.*") -> list:
             files.append(file)
     
     return sorted(files)
+
+
+async def _extract_text_for_file(provider, file_path: str, language: str) -> Dict[str, Any]:
+    """
+    Extract text for one file, with explicit PDF page conversion support.
+    """
+    source_path = Path(file_path)
+    
+    logger.info(f"[TRACE] _extract_text_for_file called: file_path={file_path}, language={language}")
+    logger.info(f"[TRACE] Provider type: {type(provider).__name__}")
+    logger.info(f"[TRACE] File exists: {source_path.exists()}")
+
+    if PDFService.is_pdf(str(source_path)):
+        logger.info(f"[TRACE] PDF detected, converting pages before OCR: {source_path}")
+        images = PDFService.pdf_to_images(str(source_path))
+        if not images:
+            raise ValueError(f"Failed to convert PDF to images: {source_path}")
+
+        page_texts = []
+        confidences = []
+
+        with tempfile.TemporaryDirectory(prefix="ocr_pdf_") as temp_dir:
+            for page_index, image in enumerate(images, start=1):
+                page_path = Path(temp_dir) / f"page_{page_index}.jpg"
+                image.convert("RGB").save(page_path, format="JPEG", quality=95)
+                
+                logger.info(f"[TRACE] Processing PDF page {page_index}, saved to: {page_path}")
+                page_result = await provider.extract_text(str(page_path), language)
+                page_text = (page_result.get("text") or "").strip()
+                logger.info(f"[TRACE] Page {page_index} extraction result - text_length={len(page_text)}, confidence={page_result.get('confidence')}")
+                if page_text:
+                    page_texts.append(f"--- Page {page_index} ---\n{page_text}")
+                confidences.append(float(page_result.get("confidence", 0.0) or 0.0))
+
+        combined_text = "\n\n".join(page_texts).strip()
+        if not combined_text:
+            raise ValueError(
+                f"OCR returned empty text for PDF: {source_path.name}. "
+                "Check model/provider support for document OCR."
+            )
+
+        avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
+        provider_name = provider.__class__.__name__.replace("Provider", "").lower()
+        logger.info(f"[TRACE] PDF processing complete - pages={len(images)}, combined_text_length={len(combined_text)}, provider={provider_name}")
+        return {
+            "text": combined_text,
+            "confidence": avg_confidence,
+            "word_confidence": [],
+            "language": language,
+            "metadata": {
+                "provider": provider_name,
+                "source_file": str(source_path),
+                "source_type": "pdf",
+                "pages": len(images),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        }
+
+    logger.info(f"[TRACE] Image file detected (not PDF), calling provider.extract_text()")
+    result = await provider.extract_text(str(source_path), language)
+    text = (result.get("text") or "").strip()
+    provider_used = result['metadata'].get('provider', 'unknown')
+    logger.info(f"[TRACE] Image extraction result - text_length={len(text)}, confidence={result.get('confidence')}, provider={provider_used}")
+    logger.info(f"[TRACE] TEXT CONTENT (first 200 chars): {text[:200]}")
+    if not text:
+        raise ValueError(
+            f"OCR returned empty text for file: {source_path.name}. "
+            "Try a different provider/model or higher-quality input."
+        )
+    return result
 
 
 def make_request(method: str, params: Dict[str, Any], request_id: str) -> str:
@@ -196,13 +281,38 @@ def make_error(code: int, message: str, request_id: str) -> str:
     )
 
 
+async def _progress_wrapper(coro, operation_name: str):
+    """Wrap async operation with periodic progress logging"""
+    import asyncio
+    
+    logger.info(f"[PROGRESS] Starting: {operation_name}")
+    
+    task = asyncio.create_task(coro)
+    start_time = asyncio.get_event_loop().time()
+    
+    # Log progress every 30 seconds
+    while not task.done():
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=30)
+        except asyncio.TimeoutError:
+            elapsed = asyncio.get_event_loop().time() - start_time
+            logger.info(f"[PROGRESS] {operation_name} still processing... ({elapsed:.0f} seconds elapsed)")
+            continue
+    
+    elapsed = asyncio.get_event_loop().time() - start_time
+    logger.info(f"[PROGRESS] Completed: {operation_name} (took {elapsed:.1f} seconds)")
+    
+    return await task
+
+
 async def handle_extract_text(params: Dict[str, Any]) -> Dict[str, Any]:
     """
     Extract text from a single image
     
     Args:
         params: Dictionary containing:
-            - image_path: Path to image file
+            - image_path: Path to image file OR
+            - image_data: Base64-encoded image data
             - provider: OCR provider (default: 'tesseract')
             - language: Language code (default: 'eng')
     
@@ -210,18 +320,62 @@ async def handle_extract_text(params: Dict[str, Any]) -> Dict[str, Any]:
         Dictionary containing extracted text and metadata
     """
     image_path = params.get("image_path")
+    image_data = params.get("image_data")
+    file_name = params.get("file_name", "document")
     provider_name = params.get("provider", "tesseract")
     language = params.get("language", "eng")
     
-    if not image_path:
-        raise ValueError("image_path is required")
+    logger.info(f"[TRACE] handle_extract_text called with params keys: {list(params.keys())}")
+    logger.info(f"[TRACE] Parsed - has_image_path={bool(image_path)}, has_image_data={bool(image_data)}, file_name={file_name}, provider={provider_name}, language={language}")
+    
+    if not image_path and not image_data:
+        raise ValueError("Either image_path or image_data is required")
+    
+    # If base64 data provided, save to temp file
+    if image_data and not image_path:
+        import base64
+        import os as os_module
+        logger.info(f"[TRACE] Decoding base64 image data (length: {len(image_data)})")
+        try:
+            # Remove data URL prefix if present
+            if ',' in image_data:
+                image_data = image_data.split(',', 1)[1]
+            
+            decoded = base64.b64decode(image_data)
+            logger.info(f"[TRACE] Decoded image size: {len(decoded)} bytes")
+            
+            # Get file extension from file_name or use default
+            _, ext = os_module.path.splitext(file_name)
+            if not ext:
+                ext = '.png'
+            logger.info(f"[TRACE] Using file extension: {ext}")
+            
+            # Create temp file with proper extension
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
+            temp_file.write(decoded)
+            temp_file.close()
+            image_path = temp_file.name
+            logger.info(f"[TRACE] Saved to temp file: {image_path}")
+        except Exception as e:
+            logger.error(f"[TRACE] Failed to decode base64 image: {e}")
+            raise ValueError(f"Failed to decode base64 image data: {e}")
     
     try:
+        logger.info(f"[TRACE] Getting provider instance for: {provider_name}")
         provider = _get_provider(provider_name)
-        result = await provider.extract_text(image_path, language)
+        logger.info(f"[TRACE] Provider instance created: {type(provider).__name__}")
+        
+        logger.info(f"[TRACE] Starting extraction from file: {image_path}")
+        # Wrap extraction with progress logging every 30 seconds
+        result = await _progress_wrapper(
+            _extract_text_for_file(provider, image_path, language),
+            f"OCR extraction using {provider_name}"
+        )
+        logger.info(f"[TRACE] Extraction successful, extracted text length: {len(result.get('text', ''))}")
+        logger.info(f"[TRACE] Result metadata: provider={result['metadata'].get('provider')}, confidence={result.get('confidence')}")
         return result
     except Exception as e:
-        logger.error(f"Error in extract_text: {e}", exc_info=True)
+        logger.error(f"[TRACE] Error in extract_text: {e}", exc_info=True)
         raise
 
 
@@ -307,7 +461,7 @@ async def _process_folder_background(job_id: str, files: list, provider_name: st
                 
                 logger.info(f"Processing {file_path.name} for job {job_id}")
                 
-                result = await provider.extract_text(str(file_path), language)
+                result = await _extract_text_for_file(provider, str(file_path), language)
                 
                 await job_registry.append_result(
                     job_id,
@@ -386,13 +540,17 @@ async def handle_get_ocr_results(params: Dict[str, Any]) -> Dict[str, Any]:
 
 async def handle_tools_invoke(params: Dict[str, Any], request_id: str) -> str:
     """Handle tools/invoke requests"""
-    tool_name = params.get("toolName")
+    tool_name = params.get("name") or params.get("toolName")
     arguments = params.get("arguments", {})
     
+    logger.info(f"[TRACE] handle_tools_invoke called - tool_name={tool_name}")
+    logger.info(f"[TRACE] Full params received: {params}")
+    logger.info(f"[TRACE] Arguments: {arguments}")
     logger.info(f"Invoking tool: {tool_name} with args: {arguments}")
     
     try:
         if tool_name == "extract_text":
+            logger.info(f"[TRACE] Calling handle_extract_text with arguments: {arguments}")
             result = await handle_extract_text(arguments)
         elif tool_name == "process_folder":
             result = await handle_process_folder(arguments)
@@ -412,36 +570,19 @@ async def handle_tools_invoke(params: Dict[str, Any], request_id: str) -> str:
 
 async def register_agent(websocket):
     """Register this agent with the MCP server"""
-    registration = {
-        "agentId": AGENT_ID,
-        "tools": TOOLS,
-        "metadata": {
-            "name": "OCR Agent",
-            "version": "2.0.0",
-            "description": "Extract text from images and scanned documents with multi-provider support",
-            "author": "Pala Platform",
-            "capabilities": [
-                "single_image_ocr",
-                "batch_folder_processing",
-                "job_status_tracking",
-                "multi_provider_support"
-            ]
-        }
-    }
-    
-    request = make_request("agents/register", registration, str(uuid.uuid4()))
+    tool_defs = []
+    for tool in TOOLS:
+        tool_def = dict(tool)
+        tool_def["agentId"] = AGENT_ID
+        tool_defs.append(tool_def)
+
+    request = make_request(
+        "tools/register",
+        {"tools": tool_defs},
+        f"reg-{uuid.uuid4()}"
+    )
     await websocket.send(request)
-    logger.info(f"Sent registration for agent: {AGENT_ID}")
-    
-    # Wait for registration response
-    response = await websocket.recv()
-    response_data = json.loads(response)
-    
-    if "error" in response_data:
-        logger.error(f"Registration failed: {response_data['error']}")
-        raise Exception(f"Registration failed: {response_data['error']['message']}")
-    
-    logger.info(f"Agent {AGENT_ID} registered successfully")
+    logger.info(f"Registered {len(tool_defs)} OCR tools")
 
 
 async def handle_message(websocket, message: str):

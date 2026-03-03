@@ -10,7 +10,7 @@ from pathlib import Path
 import sys
 
 root_dir = Path(__file__).parent
-storage_agent_dir = root_dir / "agents" / "storage-agent"
+storage_agent_dir = root_dir / "PalaAgents" / "storage-agent"
 sys.path.insert(0, str(storage_agent_dir))
 
 
