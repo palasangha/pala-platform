@@ -1,0 +1,53 @@
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+README.md
+SETUP.md
+docs/
+
+# Test files
+tests/
+test_*.py
+*_test.py
+
+# Node (for any frontend tools)
+node_modules/
+npm-debug.log
+
+# Database backups
+*.db.bak
+*.sqlite.bak

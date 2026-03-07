@@ -1,0 +1,42 @@
+[Unit]
+Description=SSHFS mount to main server for OCR workers
+After=network-online.target
+Wants=network-online.target
+Documentation=file:///mnt/sda1/mango1_home/gvpocr/SSHFS_SETUP.md
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+# Configuration - set these environment variables before running the service
+# or modify them directly in this file
+Environment="MAIN_SERVER_IP=172.12.0.132"
+Environment="SSH_USER=gvpocr"
+Environment="SSH_PORT=2222"
+Environment="MOUNT_DIR=/mnt/sshfs/main-server"
+
+# Mount SSHFS with connection pooling, keep-alive, and caching
+ExecStart=/bin/bash -c '\
+  mkdir -p ${MOUNT_DIR} && \
+  sshfs -o allow_other,default_permissions,reconnect,ServerAliveInterval=15,ServerAliveCountMax=3,cache_timeout=3600,StrictHostKeyChecking=no,UserKnownHostsFile=/dev/null \
+        -p ${SSH_PORT} \
+        ${SSH_USER}@${MAIN_SERVER_IP}:/home/gvpocr \
+        ${MOUNT_DIR} || \
+  (echo "Failed to mount SSHFS; will retry on next boot" && exit 1)'
+
+# Unmount on service stop
+ExecStop=/bin/bash -c 'fusermount -u ${MOUNT_DIR} 2>/dev/null || umount ${MOUNT_DIR} 2>/dev/null || true'
+
+# Restart policy
+Restart=on-failure
+RestartSec=30
+StartLimitInterval=120
+StartLimitBurst=3
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sshfs-mount
+
+[Install]
+WantedBy=multi-user.target

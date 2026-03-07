@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  # Ollama - The LLM backend
+  ollama:
+    image: ollama/ollama:latest
+    container_name: langchain-ollama
+    ports:
+      - "11434:11434"
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - langchain-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 15s
+      retries: 10
+      start_period: 30s
+    command: serve
+
+  # Open WebUI - Web interface for Ollama/LangChain
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:latest
+    container_name: langchain-webui
+    ports:
+      - "8080:8080"
+    environment:
+      - OLLAMA_API_BASE_URL=http://ollama:11434/api
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - WEBUI_SECRET_KEY=your-secret-key-here
+    volumes:
+      - open_webui_data:/app/backend/data
+    networks:
+      - langchain-net
+    depends_on:
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  langchain-net:
+    driver: bridge
+
+volumes:
+  ollama_data:
+    driver: local
+  open_webui_data:
+    driver: local
+

@@ -1,0 +1,659 @@
+name: prod
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: prod-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-gvpocr_admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: gvpocr
+    # MongoDB is internal only - no host port mapping
+    volumes:
+      - prod_mongodb_data:/data/db
+      - prod_mongodb_config:/data/configdb
+    networks:
+      - prod-network
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: prod-backend
+    container_name: prod-backend
+    restart: unless-stopped
+    networks:
+      prod-network:
+        aliases:
+          - backend
+    # Backend is internal only - no host port mapping
+    env_file:
+      - .env.prod
+    dns:
+      - 172.12.0.5
+      - 8.8.8.8
+    extra_hosts:
+      - host.docker.internal:172.12.0.1
+      - host:172.12.0.1
+    environment:
+      - FLASK_ENV=production
+      - DEBUG=False
+      - PORT=5000
+      - MONGO_URI=mongodb://gvpocr_admin:gvp%40123@mongodb:27017/gvpocr?authSource=admin
+      - MONGO_USERNAME=${MONGO_ROOT_USERNAME:-gvpocr_admin}
+      - MONGO_PASSWORD=${MONGO_ROOT_PASSWORD}
+      - SECRET_KEY=${SECRET_KEY}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}
+      - DEFAULT_OCR_PROVIDER=${DEFAULT_OCR_PROVIDER:-google_vision}
+      - GOOGLE_VISION_ENABLED=${GOOGLE_VISION_ENABLED:-true}
+      - AZURE_ENABLED=${AZURE_ENABLED:-false}
+      - OLLAMA_ENABLED=${OLLAMA_ENABLED:-true}
+      - VLLM_ENABLED=${VLLM_ENABLED:-false}
+      - TESSERACT_ENABLED=${TESSERACT_ENABLED:-true}
+      - EASYOCR_ENABLED=${EASYOCR_ENABLED:-false}
+      - LLAMACPP_ENABLED=${LLAMACPP_ENABLED:-true}
+      - LLAMACPP_HOST=http://llamacpp:8000
+      - LLAMACPP_MODEL=${LLAMACPP_MODEL:-gemma-3-12b}
+      - AZURE_VISION_ENDPOINT=${AZURE_VISION_ENDPOINT}
+      - AZURE_VISION_KEY=${AZURE_VISION_KEY}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2-vision}
+      - LANGCHAIN_ENABLED=${LANGCHAIN_ENABLED:-true}
+      - LANGCHAIN_OLLAMA_HOST=${LANGCHAIN_OLLAMA_HOST:-http://ollama:11434}
+      - LANGCHAIN_MODEL=${LANGCHAIN_MODEL:-llama3.2-vision:11b}
+      - LANGCHAIN_EMBEDDING_MODEL=${LANGCHAIN_EMBEDDING_MODEL:-nomic-embed-text}
+      - LANGCHAIN_TEMPERATURE=${LANGCHAIN_TEMPERATURE:-0.7}
+      - VLLM_HOST=http://vllm:8000
+      - VLLM_MODEL=${VLLM_MODEL_NAME:-llama-vision}
+      - VLLM_API_KEY=${VLLM_API_KEY:-vllm-secret-token}
+      - TESSERACT_CMD=${TESSERACT_CMD:-/usr/bin/tesseract}
+      - EASYOCR_GPU=${EASYOCR_GPU:-False}
+      - LMSTUDIO_ENABLED=${LMSTUDIO_ENABLED:-true}
+      - LMSTUDIO_HOST=${LMSTUDIO_HOST:-http://lmstudio:1234}
+      - LMSTUDIO_MODEL=${LMSTUDIO_MODEL:-google/gemma-3-12b}
+      - LMSTUDIO_API_KEY=${LMSTUDIO_API_KEY:-lm-studio}
+      - LMSTUDIO_TIMEOUT=${LMSTUDIO_TIMEOUT:-600}
+      - LMSTUDIO_MAX_TOKENS=${LMSTUDIO_MAX_TOKENS:-8192}
+      - LMSTUDIO_SKIP_AVAILABILITY_CHECK=${LMSTUDIO_SKIP_AVAILABILITY_CHECK:-true}
+      - SERPAPI_API_KEY=${SERPAPI_API_KEY}
+      - SERPAPI_GOOGLE_LENS_ENABLED=${SERPAPI_GOOGLE_LENS_ENABLED:-false}
+      - GOOGLE_GENERATIVE_AI_API_KEY=${GOOGLE_GENERATIVE_AI_API_KEY}
+      - USE_LOCAL_LENS_PROCESSING=${USE_LOCAL_LENS_PROCESSING:-false}
+      - ARCHIPELAGO_ENABLED=${ARCHIPELAGO_ENABLED:-true}
+      - ARCHIPELAGO_BASE_URL=${ARCHIPELAGO_BASE_URL:-https://172.12.0.120}
+      - ARCHIPELAGO_USERNAME=${ARCHIPELAGO_USERNAME}
+      - ARCHIPELAGO_PASSWORD=${ARCHIPELAGO_PASSWORD}
+      - GVPOCR_PATH=/app/Bhushanji
+      - NEWSLETTERS_PATH=/app/newsletters
+      - GVPOCR_ROOT=/app
+      - CORS_ORIGINS=https://docgenai.com,http://localhost:3000,http://localhost:9000,https://localhost:9001
+      - BULK_PARALLEL_WORKERS=5
+      - USE_NSQ=${USE_NSQ:-true}
+      - NSQD_ADDRESS=${NSQD_ADDRESS:-nsqd:4150}
+      - NSQLOOKUPD_ADDRESSES=${NSQLOOKUPD_ADDRESSES:-nsqlookupd:4161}
+      - ENRICHMENT_ENABLED=true
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/run.py:/app/run.py
+      - ./backend/uploads:/app/uploads
+      - ./data:/app/data
+      - ./backend/google-credentials.json:/app/google-credentials/:ro
+      - ./enrichment_service:/app/enrichment_service
+      - prod_bhushanji_shared:/app/Bhushanji:ro
+      - /mnt/sda1/mango1_home/newsletters_local:/app/newsletters:ro
+      - ./ssh_keys:/app/ssh_keys:ro
+      - ./docker-compose.prod.yml:/app/docker-compose.prod.yml:ro
+      - ./worker.Dockerfile:/app/worker.Dockerfile:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - mongodb
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: prod-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - prod-network
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: prod-caddy
+    restart: unless-stopped
+    ports:
+      - 9000:80
+      - 9001:443
+    volumes:
+      - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - ${CERTS_PATH:-./certs}:/certs:ro
+      - prod_caddy_data:/data
+      - prod_caddy_config:/config
+      - prod_caddy_logs:/var/log/caddy
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - prod-network
+    logging:
+      driver: none
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: prod-ollama
+    restart: unless-stopped
+    runtime: nvidia
+    ports:
+      - 9030:11434
+    volumes:
+      - prod_ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_ORIGINS=*
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - OLLAMA_NUM_GPU=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities:
+                - gpu
+    networks:
+      - prod-network
+    healthcheck:
+      test: [CMD, ollama, list]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: prod-qdrant
+    restart: unless-stopped
+    ports:
+      - 9020:6333
+      - 9021:6334
+    volumes:
+      - prod_qdrant_storage:/qdrant/storage
+    networks:
+      - prod-network
+    healthcheck:
+      test: [CMD, curl, -f, http://localhost:6333/healthz]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  llamacpp:
+    build:
+      context: .
+      dockerfile: llama.cpp.Dockerfile
+    container_name: prod-llamacpp
+    restart: unless-stopped
+    ports:
+      - 9033:8000
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+    volumes:
+      - ./models:/models
+      - ~/.cache/huggingface/hub:/root/.cache/huggingface/hub:ro
+    command:
+      - -m
+      - /root/.cache/huggingface/hub/models--abetlen--Phi-3.5-vision-instruct-gguf/snapshots/39c8650873918d40fa529518eadc3680268a4e1b/Phi-3.5-3.8B-vision-instruct-Q8_0.gguf
+      - --mmproj
+      - /root/.cache/huggingface/hub/models--abetlen--Phi-3.5-vision-instruct-gguf/snapshots/39c8650873918d40fa529518eadc3680268a4e1b/Phi-3.5-3.8B-vision-instruct-mmproj-F16.gguf
+      - --host
+      - 0.0.0.0
+      - --port
+      - '8000'
+    networks:
+      - prod-network
+    healthcheck:
+      test: [CMD, curl, -f, http://localhost:8000/health]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  lmstudio:
+    build:
+      context: .
+      dockerfile: lmstudio.Dockerfile
+    container_name: prod-lmstudio
+    restart: unless-stopped
+    ports:
+      - 9031:1234
+    environment:
+      - DISPLAY=:0
+      - XAUTHORITY=/tmp/.Xauthority
+      - QT_X11_NO_MITSHM=1
+      - QT_DEBUG_PLUGINS=0
+      - QT_QPA_PLATFORM=xcb
+      - LIBGL_ALWAYS_INDIRECT=0
+      - LIBGL_ALWAYS_SOFTWARE=1
+      - MESA_GL_VERSION_OVERRIDE=4.5
+      - GALLIUM_DRIVER=llvmpipe
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
+      - LMSTUDIO_API_BASE=http://lmstudio:1234
+      - LMSTUDIO_PORT=1234
+    volumes:
+      - /mnt/sda1/mango1_home/Downloads/LM-Studio-0.3.31-7-x64.AppImage:/app/lmstudio.AppImage
+      - /mnt/sda1/mango1_home/.lmstudio:/root/.lmstudio
+      - /mnt/sda1/mango1_home/.cache:/root/.cache
+      - /mnt/sda1/mango1_home/.Xauthority:/tmp/.Xauthority:ro
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /run/dbus:/run/dbus:rw
+      - prod_bhushanji_shared:/app/Bhushanji:ro
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+    devices:
+      - /dev/fuse
+      - /dev/nvidia0:/dev/nvidia0
+      - /dev/nvidia-uvm:/dev/nvidia-uvm
+      - /dev/nvidiactl:/dev/nvidiactl
+      - /dev/dri:/dev/dri
+    security_opt:
+      - apparmor=unconfined
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities:
+                - gpu
+    networks:
+      prod-network:
+        aliases:
+          - lmstudio
+    healthcheck:
+      test: [CMD, curl, -f, http://localhost:1234/v1/models]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    command:
+      - /app/entrypoint.sh
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:latest
+    container_name: prod-open-webui
+    restart: unless-stopped
+    ports:
+      - 9032:8080
+    environment:
+      - OLLAMA_API_BASE_URL=http://ollama:11434/api
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-your-secret-key-here}
+      - ENABLE_OLLAMA_API=true
+    volumes:
+      - prod_open_webui_data:/app/backend/data
+    networks:
+      - prod-network
+    depends_on:
+      - ollama
+    healthcheck:
+      test: [CMD, curl, -f, http://localhost:8080]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  nsqlookupd:
+    image: nsqio/nsq:v1.2.1
+    container_name: prod-nsqlookupd
+    command: /nsqlookupd
+    ports:
+      - 9012:4160
+      - 9013:4161
+    networks:
+      - prod-network
+    restart: unless-stopped
+
+  nsqd:
+    image: nsqio/nsq:v1.2.1
+    container_name: prod-nsqd
+    command: /nsqd --lookupd-tcp-address=nsqlookupd:4160 --broadcast-address=nsqd
+    ports:
+      - 9010:4150
+      - 9011:4151
+    depends_on:
+      - nsqlookupd
+    networks:
+      - prod-network
+    restart: unless-stopped
+
+  nsqadmin:
+    image: nsqio/nsq:v1.2.1
+    container_name: prod-nsqadmin
+    command: /nsqadmin --lookupd-http-address=nsqlookupd:4161
+    ports:
+      - 9014:4171
+    depends_on:
+      - nsqlookupd
+    networks:
+      - prod-network
+    restart: unless-stopped
+
+  ssh-server:
+    image: alpine:latest
+    container_name: prod-ssh-server
+    restart: unless-stopped
+    ports:
+      - 9060:22
+    volumes:
+      - ./shared/Bhushanji:/home/gvpocr/Bhushanji:ro
+      - ./shared/temp-images:/home/gvpocr/temp-images
+      - ./shared/uploads:/home/gvpocr/uploads
+      - ./shared/newsletters:/home/gvpocr/newsletters:ro
+      - ${GVPOCR_PATH}:/home/gvpocr/source:ro
+      - ~/.cache/huggingface/hub:/home/gvpocr/.cache/huggingface/hub:ro
+      - ./models:/home/gvpocr/models:ro
+    environment:
+      - INITIAL_PASSWORD=mango1
+    command: >
+      sh -c "
+        apk add --no-cache openssh openssh-server &&
+        mkdir -p /home/gvpocr/.ssh &&
+        mkdir -p /home/gvpocr/.cache/huggingface/hub &&
+        ssh-keygen -A &&
+        adduser -D -h /home/gvpocr gvpocr 2>/dev/null || true &&
+        echo 'gvpocr:mango1' | chpasswd &&
+        echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILL6HUFbr721h+ceF27JnDN8UGbdb4yOHZrR+uM2NUYp gvpocr@sshfs' > /home/gvpocr/.ssh/authorized_keys &&
+        chmod 700 /home/gvpocr/.ssh &&
+        chmod 600 /home/gvpocr/.ssh/authorized_keys &&
+        chown -R gvpocr:gvpocr /home/gvpocr/.ssh &&
+        echo 'PermitRootLogin no' >> /etc/ssh/sshd_config &&
+        echo 'PubkeyAuthentication yes' >> /etc/ssh/sshd_config &&
+        echo 'PasswordAuthentication no' >> /etc/ssh/sshd_config &&
+        echo 'AllowUsers gvpocr' >> /etc/ssh/sshd_config &&
+        echo 'MaxAuthTries 6' >> /etc/ssh/sshd_config &&
+        echo 'LoginGraceTime 30' >> /etc/ssh/sshd_config &&
+        echo 'TCPKeepAlive yes' >> /etc/ssh/sshd_config &&
+        echo 'Compression yes' >> /etc/ssh/sshd_config &&
+        /usr/sbin/sshd -D
+      "
+    networks:
+      - prod-network
+    healthcheck:
+      test: [CMD, nc, -z, 127.0.0.1, '22']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  file-server:
+    image: python:3.11-alpine
+    container_name: prod-file-server
+    restart: unless-stopped
+    ports:
+      - 9061:8010
+    volumes:
+      - ${GVPOCR_PATH}:/files/Bhushanji:ro
+      - /mnt/sda1/mango1_home/newsletters:/files/newsletters:ro
+    working_dir: /files
+    command: python -m http.server 8010
+    networks:
+      - prod-network
+
+  registry:
+    image: registry:2
+    container_name: prod-registry
+    restart: unless-stopped
+    ports:
+      - 9062:5000
+    environment:
+      - REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY=/var/lib/registry
+      - REGISTRY_STORAGE_DELETE_ENABLED=true
+    volumes:
+      - prod_registry_data:/var/lib/registry
+    networks:
+      - prod-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prod-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.listen-address=:3200'
+    ports:
+      - 9050:3200
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prod_prometheus_data:/prometheus
+    networks:
+      - prod-network
+    healthcheck:
+      test: [CMD, wget, --quiet, --tries=1, --spider, http://localhost:3200/-/healthy]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: prod-grafana
+    restart: unless-stopped
+    ports:
+      - 9051:3100
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=redis-datasource
+      - GF_SERVER_HTTP_PORT=3100
+    volumes:
+      - prod_grafana_data:/var/lib/grafana
+      - prod_grafana_provisioning:/etc/grafana/provisioning
+    networks:
+      - prod-network
+    depends_on:
+      - prometheus
+    healthcheck:
+      test: [CMD, wget, --quiet, --tries=1, --spider, http://localhost:3100/api/health]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: prod-alertmanager
+    restart: unless-stopped
+    ports:
+      - 9052:9093
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - prod_alertmanager_data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    networks:
+      - prod-network
+    healthcheck:
+      test: [CMD, wget, --quiet, --tries=1, --spider, http://localhost:9093/-/healthy]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  mcp-server:
+    build:
+      context: /mnt/sda1/mango1_home/pala-platform/packages/mcp-server
+      dockerfile: Dockerfile
+    container_name: prod-mcp-server
+    restart: unless-stopped
+    ports:
+      - 9070:3003
+    environment:
+      - PORT=3003
+      - JWT_SECRET=${MCP_JWT_SECRET:-mcp_production_secret}
+      - LOG_LEVEL=info
+      - ENVIRONMENT=production
+    networks:
+      - prod-network
+    healthcheck:
+      test: [CMD, curl, -f, http://localhost:3003/health]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  ocr-worker:
+    build:
+      context: .
+      dockerfile: worker.Dockerfile
+    command: python run_worker.py --worker-id $${HOSTNAME} --nsqlookupd nsqlookupd:4161
+    env_file:
+      - .env.prod
+    environment:
+      - NSQD_ADDRESS=nsqd:4150
+      - NSQLOOKUPD_ADDRESSES=nsqlookupd:4161
+      - MONGO_URI=mongodb://mongodb:27017/gvpocr
+      - MONGO_USERNAME=${MONGO_ROOT_USERNAME:-gvpocr_admin}
+      - MONGO_PASSWORD=${MONGO_ROOT_PASSWORD}
+      - GVPOCR_PATH=/app/Bhushanji
+      - GVPOCR_SERVER_URL=http://backend:5000
+      - NEWSLETTERS_PATH=/app/newsletters
+      - OLLAMA_HOST=http://ollama:11434
+      - VLLM_HOST=http://vllm:8000
+      - LLAMACPP_ENABLED=${LLAMACPP_ENABLED:-true}
+      - LLAMACPP_HOST=http://llamacpp:8000
+      - LLAMACPP_MODEL=${LLAMACPP_MODEL:-gemma3-vision}
+      - LMSTUDIO_ENABLED=${LMSTUDIO_ENABLED:-true}
+      - LMSTUDIO_HOST=${LMSTUDIO_HOST:-http://lmstudio:1234}
+      - LMSTUDIO_MODEL=${LMSTUDIO_MODEL:-google/gemma-3-12b}
+      - LMSTUDIO_TIMEOUT=${LMSTUDIO_TIMEOUT:-600}
+    volumes:
+      - ./backend/uploads:/app/uploads
+      - ./data:/app/data
+      - ./backend/google-credentials.json:/app/google-credentials/:ro
+      - prod_bhushanji_shared:/app/Bhushanji:ro
+      - /mnt/sda1/mango1_home/newsletters_local:/app/newsletters:ro
+    depends_on:
+      - mongodb
+      - nsqd
+      - ollama
+    deploy:
+      replicas: 1
+    networks:
+      - prod-network
+    restart: unless-stopped
+
+  result-aggregator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: prod-backend
+    container_name: prod-result-aggregator
+    command: python run_aggregator.py
+    env_file:
+      - .env.prod
+    environment:
+      - NSQD_ADDRESS=nsqd:4150
+      - NSQLOOKUPD_ADDRESSES=nsqlookupd:4161
+      - MONGO_URI=mongodb://gvpocr_admin:gvp%40123@mongodb:27017/gvpocr?authSource=admin
+      - MONGO_USERNAME=${MONGO_ROOT_USERNAME:-gvpocr_admin}
+      - MONGO_PASSWORD=${MONGO_ROOT_PASSWORD}
+      - ENRICHMENT_ENABLED=true
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/run_aggregator.py:/app/run_aggregator.py
+      - ./backend/uploads:/app/uploads
+      - ./backend/google-credentials.json:/app/google-credentials/:ro
+      - ./enrichment_service:/app/enrichment_service
+      - ${GVPOCR_PATH}:/app/Bhushanji:ro
+      - /mnt/sda1/mango1_home/newsletters:/app/newsletters:ro
+    depends_on:
+      - mongodb
+      - nsqd
+    networks:
+      - prod-network
+    restart: unless-stopped
+
+  zip-regeneration-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: prod-backend
+    container_name: prod-zip-worker
+    command: python -u /app/app/workers/zip_regeneration_worker.py
+    restart: unless-stopped
+    volumes:
+      - ./backend:/app
+      - ./enrichment_service:/app/enrichment_service
+    environment:
+      - FLASK_ENV=production
+      - LOG_LEVEL=INFO
+      - MONGO_URI=mongodb://mongodb:27017/gvpocr
+      - MONGO_USERNAME=${MONGO_ROOT_USERNAME:-gvpocr_admin}
+      - MONGO_PASSWORD=${MONGO_ROOT_PASSWORD}
+      - NSQD_HOST=nsqd
+      - NSQD_PORT=4150
+      - NSQLOOKUPD_ADDRESSES=nsqlookupd:4161
+    networks:
+      - prod-network
+    depends_on:
+      - mongodb
+      - nsqd
+
+volumes:
+  prod_mongodb_data:
+  prod_mongodb_config:
+  prod_registry_data:
+    driver: local
+  prod_ollama_data:
+    driver: local
+  prod_llamacpp_models:
+    driver: local
+  prod_vllm_cache:
+    driver: local
+  prod_caddy_data:
+    driver: local
+  prod_caddy_config:
+    driver: local
+  prod_caddy_logs:
+    driver: local
+  prod_bhushanji_shared:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${GVPOCR_PATH}
+  prod_prometheus_data:
+    driver: local
+  prod_grafana_data:
+    driver: local
+  prod_grafana_provisioning:
+    driver: local
+  prod_alertmanager_data:
+    driver: local
+  prod_open_webui_data:
+    driver: local
+  prod_qdrant_storage:
+    driver: local
+  prod_enrichment_logs:
+    driver: local
+
+networks:
+  prod-network:
+    driver: bridge

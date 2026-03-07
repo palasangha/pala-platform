@@ -1,0 +1,606 @@
+================================================================================
+OCR PROCESSOR CODE EXPLANATION
+================================================================================
+
+Generated: January 22, 2026
+Location: /pala-platform/packages/processors/OCR_metadata_extraction/
+Purpose: Comprehensive explanation of the OCR + AI enrichment platform
+
+================================================================================
+OVERVIEW
+================================================================================
+
+This is a sophisticated, production-grade OCR and AI enrichment platform for
+historical document digitization. The system processes scanned documents through
+multiple OCR engines, then uses AI agents to extract structured metadata.
+
+================================================================================
+1. SYSTEM ARCHITECTURE OVERVIEW
+================================================================================
+
+High-Level Components
+---------------------
+
+The system consists of 30+ Docker containers organized into these main services:
+
+1. Backend API (Flask/Python) - Port 5000
+2. Frontend UI (React/TypeScript) - Port 3000
+3. OCR Workers (3 replicas) - Distributed processing
+4. Enrichment Pipeline (Coordinator + 2 Workers)
+5. MCP Server + 5 Specialized Agents
+6. Message Queue (NSQ)
+7. Database (MongoDB)
+8. Monitoring (Prometheus + Grafana)
+9. Supporting Services (Caddy, MinIO, SSH, etc.)
+
+Technology Stack
+----------------
+
+Languages:
+  - Python (backend/workers)
+  - TypeScript/React (frontend)
+  - Node.js (MCP server)
+
+Framework:
+  - Flask (API)
+  - React 18 (UI)
+  - gNSQ (message queue)
+
+Database: MongoDB (all persistence)
+
+Queue: NSQ (distributed job processing)
+
+AI/ML:
+  - Ollama
+  - Claude API
+  - LangChain
+  - Vision models
+
+Infrastructure:
+  - Docker
+  - Docker Swarm
+  - SSHFS
+
+Monitoring:
+  - Prometheus
+  - Grafana
+  - AlertManager
+
+================================================================================
+2. CORE FUNCTIONALITY
+================================================================================
+
+A. OCR Processing Pipeline
+---------------------------
+
+Purpose: Extract text from historical document images/PDFs using multiple OCR
+engines.
+
+Supported OCR Providers (14 total):
+1. Google Cloud Vision - Cloud-based, high accuracy
+2. Google Lens - Enhanced document metadata
+3. Tesseract - Open-source, local, multi-language
+4. EasyOCR - Neural network-based
+5. Azure Computer Vision - Microsoft cloud
+6. Claude AI - Anthropic vision model, excellent for handwriting
+7. Ollama - Self-hosted vision models (minicpm-v)
+8. vLLM - High-performance LLM inference
+9. LlamaCpp - C++-based LLM inference
+10. LM Studio - Desktop LLM hosting
+11. Chrome Lens - Browser-based Google Lens
+12. SerpAPI Google Lens - Third-party API
+13. LangChain - Framework integration
+14. Custom Chain - Multi-provider sequential processing
+
+Processing Modes:
+- Single Mode: One OCR provider per document
+- Chain Mode: Sequential processing through multiple providers
+  (e.g., Tesseract → Claude for correction)
+
+Key Files:
+- backend/app/services/ocr_service.py - Main OCR orchestration
+- backend/app/services/ocr_chain_service.py - Chain processing
+- backend/app/services/ocr_providers/ - 14 provider implementations
+- backend/app/workers/ocr_worker.py - Distributed worker
+- backend/app/workers/result_aggregator.py - Result merging
+
+B. Enrichment Pipeline
+-----------------------
+
+Purpose: Transform raw OCR text into fully structured historical document
+metadata using AI agents.
+
+3-Phase Pipeline:
+
+Phase 1 - Parallel Extraction (5-15s, FREE):
+  - metadata-agent (Ollama llama3.2): Document type, storage info, access level
+  - entity-agent (Ollama): People, organizations, locations, events
+  - structure-agent (Ollama mixtral): Letter structure (salutation, body,
+    closing, signature)
+
+Phase 2 - Content Analysis (10-20s, ~$0.045/doc):
+  - content-agent (Claude Sonnet): Summary, keywords, subjects, dates
+
+Phase 3 - Historical Context (20-30s, ~$0.15/doc, OPTIONAL):
+  - context-agent (Claude Opus): Historical background, significance, biographies
+  - Budget-controlled: Disabled when >25% daily budget spent
+
+Quality Control:
+- Schema validation (95% completeness threshold)
+- Human review queue for incomplete results
+- Confidence scoring and tracking
+- Data source tracking (actual vs fallback)
+
+Key Files:
+- enrichment_service/coordinator/enrichment_coordinator.py - Job monitoring
+- enrichment_service/workers/enrichment_worker.py - NSQ consumer
+- enrichment_service/workers/agent_orchestrator.py - 3-phase orchestration
+- enrichment_service/mcp_client/client.py - MCP WebSocket client
+- enrichment_service/schema/validator.py - Completeness validation
+
+================================================================================
+3. DATA FLOW
+================================================================================
+
+Complete Workflow
+-----------------
+
+User Upload → Backend API → MongoDB
+    ↓
+Bulk Job Creation → NSQ Queue (topic: bulk_ocr_file_tasks)
+    ↓
+OCR Workers (3 replicas) consume from NSQ
+    ↓
+Parallel OCR Processing (5 files/worker concurrently)
+    ↓
+Result Aggregator merges results → MongoDB (status: completed)
+    ↓
+AUTOMATIC TRIGGER: Enrichment Coordinator creates enrichment_job
+    ↓
+Publishes to NSQ (topic: enrichment)
+    ↓
+Enrichment Workers (2 replicas) consume from NSQ
+    ↓
+3-Phase Agent Pipeline via MCP Server:
+    Phase 1 (Parallel): metadata + entity + structure agents
+    Phase 2 (Sequential): content agent (depends on Phase 1)
+    Phase 3 (Optional): context agent (depends on Phases 1&2)
+    ↓
+Schema Validation (calculate completeness score)
+    ↓
+    ├─ ≥95% Complete → Save to enriched_documents (approved)
+    └─ <95% Complete → Review Queue → Human Review → Approved
+    ↓
+Export to Archipelago Commons (Drupal repository)
+
+Message Queue (NSQ)
+-------------------
+
+Topics:
+- bulk_ocr_file_tasks - OCR job distribution
+- bulk_ocr_control - Pause/resume/cancel commands
+- enrichment - Enrichment job distribution
+
+Architecture:
+- nsqd (daemon): Message broker on port 4150
+- nsqlookupd: Service discovery on port 4161
+- Workers: Multiple consumers per topic
+- Exactly-once delivery: Message ID tracking prevents duplicates
+
+================================================================================
+4. KEY TECHNICAL PATTERNS
+================================================================================
+
+A. Distributed Processing
+--------------------------
+
+OCR Workers:
+- 3 replicas processing concurrently
+- NSQ max_in_flight=5 (5 files per worker)
+- Automatic retry with exponential backoff
+- SSHFS for shared file access across workers
+
+Enrichment Workers:
+- 2 replicas processing independently
+- Each processes documents sequentially through 3 phases
+- MCP server handles agent routing
+- Scalable to 4+ workers for higher throughput
+
+B. Error Handling (Recently Improved)
+--------------------------------------
+
+Adaptive Timeouts (enrichment_service/config/timeouts.py):
+- Fast tools: 30s (metadata extraction)
+- Medium tools: 90-120s (entity recognition, content analysis)
+- Slow tools: 180-240s (structure parsing, historical context)
+
+Error Classification (enrichment_service/errors/error_types.py):
+- 7 error types: TIMEOUT, CONNECTION, INVALID_DATA, AUTHENTICATION,
+  OVERLOADED, EVENT_LOOP, UNKNOWN
+- Different retry strategies per error type
+- Non-retryable errors (invalid data, auth) fail immediately
+- Retryable errors use intelligent backoff
+
+Retry Strategies (enrichment_service/errors/retry_strategy.py):
+- TIMEOUT: 3 retries (1s, 2s, 4s backoff)
+- CONNECTION: 5 retries (1.5s, 3s, 6s, 12s, 24s backoff)
+- OVERLOADED: 5 retries (3s, 9s, 27s, 81s backoff)
+- INVALID_DATA/AUTH: 0 retries (fail fast)
+
+C. MCP (Model Context Protocol) Architecture
+---------------------------------------------
+
+Components:
+
+1. MCP Server (/packages/mcp-server/, Node.js/TypeScript)
+   - WebSocket JSON-RPC 2.0 hub on port 3003
+   - Routes tool invocations to appropriate agents
+   - Handles registration, heartbeats, error recovery
+
+2. MCP Client (enrichment_service/mcp_client/client.py)
+   - WebSocket client with auto-reconnection
+   - Request/response correlation via unique IDs
+   - Thread-safe pending request tracking
+   - Connection pooling
+
+3. 5 Specialized Agents (/packages/agents/)
+   - Each agent registers its tools with MCP server
+   - Runs independently as Docker container
+   - Communicates via WebSocket to MCP server
+   - Powered by different AI models (Ollama or Claude)
+
+Communication Flow:
+EnrichmentWorker → MCPClient → MCP Server → Agent
+                ←             ←            ←
+
+D. Cost Optimization
+--------------------
+
+Strategy:
+- Use free local models (Ollama) for Phase 1 & 2 when possible
+- Use paid models (Claude) only for Phase 2 content analysis
+- Optional Phase 3 (Claude Opus) for premium historical context
+- Budget tracking: Daily budget limits with auto-disabling
+
+Current Costs (per document):
+- Phase 1 (Ollama): $0
+- Phase 2 (Claude Sonnet): ~$0.045
+- Phase 3 (Claude Opus, optional): ~$0.15
+- Total: $0.045-$0.20 per document
+
+Future Optimization:
+- Hybrid approach documented in LOCAL_MODELS_ANALYSIS.md
+- Could reduce costs by 60-70% using local models for more tasks
+
+================================================================================
+5. DATABASE SCHEMA (MongoDB)
+================================================================================
+
+Collections
+-----------
+
+users:
+- User authentication (email/password, Google OAuth)
+- Projects ownership
+
+projects:
+- Project metadata
+- Image groupings
+- Export configurations
+
+images:
+- Individual image records for project-based workflow
+- OCR results for single images
+
+bulk_jobs:
+- Batch OCR job tracking
+- File-level results array
+- Progress metrics (processed_count, error_count)
+- Chain configuration (for multi-provider chains)
+- Checkpoint data for pause/resume
+
+enrichment_jobs:
+- Enrichment job tracking
+- Links to OCR job via ocr_job_id
+- Cost tracking (total_cost_usd, per-model costs)
+- Progress metrics (success_count, review_count)
+
+enriched_documents:
+- Fully structured document metadata
+- Merged OCR + enrichment data
+- Quality metrics (completeness_score, missing_fields)
+- Review status (approved/pending/not_required)
+
+review_queue:
+- Documents requiring human review
+- Reason codes (completeness_below_threshold, etc.)
+- Reviewer assignments
+- Corrections and notes
+
+ocr_chain_templates:
+- Saved chain configurations
+- Multi-provider sequential processing templates
+
+================================================================================
+6. API ENDPOINTS
+================================================================================
+
+Authentication (/api/auth/)
+----------------------------
+- POST /register - Email registration
+- POST /login - Email login
+- POST /google-login - Google OAuth
+
+Projects (/api/projects/)
+--------------------------
+- GET / - List projects
+- POST / - Create project
+- GET /:id - Get project
+- PUT /:id - Update project
+- DELETE /:id - Delete project
+
+OCR (/api/ocr/)
+---------------
+- POST /process - Process single image
+- POST /process-pdf - Process PDF
+- GET /providers - List available providers
+- GET /languages - Supported languages
+
+Bulk Processing (/api/bulk/)
+-----------------------------
+- POST /process - Create bulk job
+- GET /jobs - List jobs
+- GET /jobs/:id - Get job status
+- POST /jobs/:id/pause - Pause job
+- POST /jobs/:id/resume - Resume job
+- POST /jobs/:id/cancel - Cancel job
+- GET /jobs/:id/export - Export results (JSON/CSV/TXT)
+
+OCR Chains (/api/ocr-chains/)
+------------------------------
+- GET /templates - List templates
+- POST /templates - Create template
+- POST /execute - Execute chain
+
+Workers (/api/workers/)
+-----------------------
+- GET /status - Worker health
+- POST /deploy - Deploy remote worker
+- GET /deployments - List deployments
+
+Enrichment (Internal APIs)
+---------------------------
+- Review API on port 5001 (currently disabled)
+- Cost API on port 5002 (currently disabled)
+
+================================================================================
+7. DIRECTORY STRUCTURE BREAKDOWN
+================================================================================
+
+OCR_metadata_extraction/
+├── backend/
+│   ├── app/
+│   │   ├── routes/          # 15+ API endpoints
+│   │   ├── services/        # 30+ business logic services
+│   │   │   ├── ocr_providers/  # 14 OCR engine integrations
+│   │   │   └── ...
+│   │   ├── models/          # MongoDB models
+│   │   ├── workers/         # OCR worker, result aggregator
+│   │   └── config.py        # Configuration
+│   ├── run.py              # Backend API entry point
+│   └── run_worker.py       # OCR worker entry point
+│
+├── frontend/
+│   ├── src/
+│   │   ├── components/     # React components
+│   │   ├── pages/          # Page components
+│   │   ├── services/       # API client
+│   │   └── main.tsx        # Frontend entry point
+│   └── package.json
+│
+├── enrichment_service/
+│   ├── coordinator/        # EnrichmentCoordinator
+│   ├── workers/            # EnrichmentWorker, AgentOrchestrator
+│   ├── mcp_client/         # MCP WebSocket client
+│   ├── schema/             # JSON schema, validator
+│   ├── review/             # Review queue, API
+│   ├── utils/              # Cost tracker, budget manager
+│   ├── errors/             # Error handling (NEW)
+│   ├── config/             # Timeouts config (NEW)
+│   └── models/             # Enrichment job models
+│
+├── packages/
+│   ├── mcp-server/         # MCP Server (Node.js)
+│   └── agents/             # 5 specialized agents
+│       ├── metadata-agent/
+│       ├── entity-agent/
+│       ├── structure-agent/
+│       ├── content-agent/
+│       └── context-agent/
+│
+├── scripts/                # Deployment scripts
+├── docs/                   # 100+ documentation files
+├── tests/                  # End-to-end tests
+├── docker-compose.yml      # 30+ services
+└── .env.example            # Configuration template
+
+================================================================================
+8. RECENT IMPROVEMENTS (Phase 1 Error Handling)
+================================================================================
+
+Problem Identified
+------------------
+- Fixed 60s timeout for all tools caused premature failures
+- No error classification (all errors treated the same)
+- Completeness only 27.8% (should be 60%+)
+
+Solution Implemented
+--------------------
+
+1. Adaptive Timeouts (enrichment_service/config/timeouts.py)
+   - Tool-specific timeouts based on complexity (30-240s)
+   - Fast metadata extraction: 30s
+   - Complex parsing/context: 180-240s
+
+2. Error Classification (enrichment_service/errors/error_types.py)
+   - 7 error types with intelligent handling
+   - Non-retryable errors fail immediately (save 180+ seconds)
+   - Retryable errors use appropriate backoff strategies
+
+3. Data Source Tracking
+   - Mark results with _source: "actual" or _source: "fallback"
+   - Track quality metrics (actual vs fallback percentage)
+
+Expected Impact
+---------------
+- Completeness: 27.8% → 60%+ (116% improvement)
+- Processing time: Optimized (eliminated wasted retries)
+- Error handling: Intelligent per error type
+
+Documentation Created
+----------------------
+- DEPLOYMENT_GUIDE.md - Step-by-step deployment
+- MONITORING_SETUP.md - Metrics and alerting
+- ROLLBACK_PROCEDURES.md - Quick recovery
+- PHASE1_IMPLEMENTATION.md - Complete details
+
+================================================================================
+9. MONITORING & OBSERVABILITY
+================================================================================
+
+Prometheus Metrics
+------------------
+- OCR processing rates
+- Enrichment pipeline metrics
+- Error counts by type
+- Cost tracking
+- Worker health
+
+Grafana Dashboards
+------------------
+- Job status overview
+- Processing throughput
+- Error distribution
+- Cost trends
+- System health
+
+AlertManager
+------------
+- Budget alerts (cost thresholds)
+- Error rate alerts
+- Worker health alerts
+- Queue depth alerts
+
+Logging
+-------
+- Structured logging (JSON format)
+- ELK stack integration (Filebeat → Logstash → Elasticsearch)
+- Log aggregation from all containers
+
+================================================================================
+10. INTEGRATION POINTS
+================================================================================
+
+Archipelago Commons
+-------------------
+Purpose: Final destination for digitized historical documents
+
+Integration:
+- Data mapper transforms enriched documents to Archipelago schema
+- AMI file uploads
+- Metadata synchronization
+- Repository ingest
+
+Files:
+- backend/app/services/archipelago_service.py
+- backend/app/services/data_mapper.py
+- backend/app/services/ami_service.py
+
+External Services
+-----------------
+- Google Cloud Vision: OCR API
+- Azure Computer Vision: OCR API
+- Anthropic Claude: Vision & text analysis
+- SerpAPI: Google Lens access
+- MinIO: S3-compatible storage
+
+Local AI Services
+-----------------
+- Ollama: Self-hosted LLMs (port 11434)
+- LlamaCpp: Local inference (port 8007)
+- vLLM: Optimized inference (port 8000)
+- LM Studio: Desktop hosting (port 1234)
+
+================================================================================
+11. SECURITY & AUTHENTICATION
+================================================================================
+
+User Authentication
+-------------------
+- Email/password (bcrypt hashing)
+- Google OAuth 2.0
+- JWT tokens for API access
+
+Service Authentication
+----------------------
+- MongoDB authentication (admin credentials)
+- Google Cloud service accounts
+- API keys for external services
+
+Network Security
+----------------
+- Internal Docker network (172.12.0.0/16)
+- Caddy reverse proxy with TLS
+- CORS configuration
+- SSH server (port 2222) for remote workers
+
+================================================================================
+12. SCALABILITY FEATURES
+================================================================================
+
+Horizontal Scaling
+------------------
+- OCR workers: Scale to N replicas
+- Enrichment workers: Scale to N replicas
+- Docker Swarm support for multi-machine deployment
+
+Distributed Processing
+----------------------
+- NSQ message queue for job distribution
+- SSHFS for shared file access
+- Result aggregation from multiple workers
+
+Performance Optimizations
+--------------------------
+- Concurrent processing (5 files/worker)
+- Image optimization and preprocessing
+- Connection pooling (MCP, MongoDB)
+- Caching (MCP client, 15-minute cache)
+
+================================================================================
+SUMMARY
+================================================================================
+
+This is a production-grade, enterprise-level OCR and AI enrichment platform
+designed for historical document digitization at scale. Key characteristics:
+
+✓ Multi-provider OCR (14 engines)
+✓ AI-powered enrichment (5 specialized agents, 3-phase pipeline)
+✓ Distributed processing (NSQ + Docker)
+✓ Cost-optimized (free local models + budget controls)
+✓ Quality-focused (95% completeness threshold, human review)
+✓ Production-ready (monitoring, logging, error handling)
+✓ Well-documented (100+ markdown files)
+✓ Scalable (horizontal scaling, Docker Swarm)
+
+The architecture demonstrates excellent separation of concerns, thoughtful AI
+cost optimization, and comprehensive error handling for reliable production
+operation.
+
+================================================================================
+END OF DOCUMENT
+================================================================================
+
+Generated: January 22, 2026
+Location: /pala-platform/packages/processors/OCR_metadata_extraction/
+File: OCR_CODEBASE_EXPLANATION.txt

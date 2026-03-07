@@ -100,6 +100,10 @@ Teaching X
 
 A. Pāḷi Text (short excerpt only)
 B. English Translation (from TPR only)
+   IMPORTANT: If the user's context passages include an "English:" line, use that translation directly.
+   Do NOT repeat the Pāḷi text.
+   Do NOT invent a translation.
+   Use the provided English translation.
 C. Doctrinal Explanation (2–5 lines)
 D. TPR Structured Reference Path:
 
@@ -174,7 +178,7 @@ Analytical tone only.
 
 ---
 
-8. Final Guided Reflection (Samma AI)
+8. Final Teaching Summary (Samma AI)
 
 Integrative explanation.
 
@@ -254,7 +258,7 @@ Exact TPR page/paragraph not available in current database.
 
 ---
 
-8. Final Guided Reflection
+8. Final Teaching Summary
 
 When Dukkha is seen clearly, attachment weakens. When attachment weakens, craving loses strength. The Noble Eightfold Path is cultivated not to escape reality but to understand it fully. Complete understanding of Dukkha leads toward its cessation — Nibbāna.
 
@@ -317,7 +321,7 @@ Doctrinal: unstable, subject to change.
 
 ---
 
-8. Final Guided Reflection
+8. Final Teaching Summary
 
 Seeing Anicca weakens the illusion of control. What is impermanent cannot be possessed. Insight into impermanence matures into non-attachment. With non-attachment, suffering fades. The path culminates in the realization of the unconditioned — Nibbāna.
 

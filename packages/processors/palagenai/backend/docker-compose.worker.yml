@@ -1,0 +1,173 @@
+version: '3.8'
+
+# Docker Compose for OCR Workers
+# This file is used to run workers that connect to the main NSQ queue server
+# Using Docker Desktop's host.docker.internal for internal network access
+#
+# Usage:
+#   docker-compose -f docker-compose.worker.yml up -d
+
+services:
+  # OCR Worker with Docker internal network configuration
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    # IMPORTANT: Run as NSQ-based worker, not Flask API server
+    command: python run_worker.py --worker-id $${HOSTNAME} --nsqlookupd ${MAIN_SERVER_IP}:4161
+    environment:
+      # MongoDB Connection (point to main server IP)
+      # Format: mongodb://username:password@host:port/database?authSource=admin
+      # authSource=admin is required for root users
+      - MONGO_URI=mongodb://${MONGO_USERNAME}:${MONGO_PASSWORD}@${MAIN_SERVER_IP}:27017/gvpocr?authSource=admin
+
+      # NSQ Configuration (point to main server IP)
+      - USE_NSQ=true
+      - NSQD_ADDRESS=${MAIN_SERVER_IP}:4150
+      - NSQLOOKUPD_ADDRESSES=${MAIN_SERVER_IP}:4161
+
+      # Backend API Server (for file downloads)
+      - GVPOCR_SERVER_URL=http://${MAIN_SERVER_IP}:5000
+
+      # Worker Identification (will be auto-generated if not set)
+      - WORKER_ID=${WORKER_ID:-}
+
+      # OCR Provider Configuration
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/google-credentials/YOUR_CREDENTIALS_FILE.json
+      - DEFAULT_OCR_PROVIDER=google_vision
+      - GVPOCR_PATH=/app/Bhushanji
+
+      # Samba Share Configuration (point to main server IP)
+      - SAMBA_HOST=${MAIN_SERVER_IP}
+      - SAMBA_USER=gvpocr
+      - SAMBA_PASS=mango1
+
+      # Provider Enablement
+      - GOOGLE_VISION_ENABLED=true
+      - TESSERACT_ENABLED=true
+      - OLLAMA_ENABLED=${OLLAMA_ENABLED:-false}
+      - LLAMACPP_ENABLED=${LLAMACPP_ENABLED:-false}
+      - VLLM_ENABLED=false
+      - EASYOCR_ENABLED=false
+      - AZURE_ENABLED=false
+
+      # Tesseract Configuration
+      - TESSERACT_CMD=/usr/bin/tesseract
+
+      # Optional: Azure Vision API (if enabled)
+      - AZURE_VISION_ENDPOINT=${AZURE_VISION_ENDPOINT:-}
+      - AZURE_VISION_KEY=${AZURE_VISION_KEY:-}
+
+      # Optional: Ollama Configuration (local service on remote machine)
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2-vision}
+      - OLLAMA_TIMEOUT=600
+
+      # Optional: LlamaCPP Configuration (local service on remote machine)
+      - LLAMACPP_HOST=${LLAMACPP_HOST:-http://llamacpp:8000}
+      - LLAMACPP_MODEL=${LLAMACPP_MODEL:-gemma3-vision}
+      - LLAMACPP_TIMEOUT=1200
+
+      # Optional: vLLM Configuration (if enabled, point to main server)
+      - VLLM_HOST=${VLLM_HOST:-http://${MAIN_SERVER_IP}:8000}
+      - VLLM_MODEL=${VLLM_MODEL:-llama-vision}
+      - VLLM_API_KEY=${VLLM_API_KEY:-vllm-secret-token}
+      - VLLM_TIMEOUT=1200
+
+    volumes:
+      # Google Cloud Vision credentials
+      - ./backend/google-credentials.json:/app/google-credentials:ro
+
+      # Mount uploads folder
+      - gvpocr-uploads:/app/uploads
+
+    networks:
+      - gvpocr-network
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Resource limits (optional, adjust based on your needs)
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+
+  # Ollama Service - Optional, can be enabled with OLLAMA_ENABLED=true
+  ollama:
+    image: ollama/ollama:latest
+    container_name: gvpocr-remote-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_ORIGINS=*
+    networks:
+      - gvpocr-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    profiles:
+      - llm
+
+  # LlamaCPP Service - Optional, can be enabled with LLAMACPP_ENABLED=true
+  llamacpp:
+    build:
+      context: .
+      dockerfile: llama.cpp.Dockerfile
+    container_name: gvpocr-remote-llamacpp
+    restart: unless-stopped
+    ports:
+      - "8007:8000"
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+    volumes:
+      - ./models:/models
+      - llamacpp_cache:/root/.cache/huggingface/hub
+    # Using Phi-3.5 Vision model - will download on first run if not cached
+    command: [
+      "-m", "/root/.cache/huggingface/hub/models--abetlen--Phi-3.5-vision-instruct-gguf/snapshots/39c8650873918d40fa529518eadc3680268a4e1b/Phi-3.5-3.8B-vision-instruct-Q8_0.gguf",
+      "--mmproj", "/root/.cache/huggingface/hub/models--abetlen--Phi-3.5-vision-instruct-gguf/snapshots/39c8650873918d40fa529518eadc3680268a4e1b/Phi-3.5-3.8B-vision-instruct-mmproj-F16.gguf",
+      "--host", "0.0.0.0",
+      "--port", "8000"
+    ]
+    networks:
+      - gvpocr-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    profiles:
+      - llm
+
+# Volumes
+volumes:
+  # Local upload cache
+  gvpocr-uploads:
+    driver: local
+
+  # Ollama model cache
+  ollama_data:
+    driver: local
+
+  # LlamaCPP model cache
+  llamacpp_cache:
+    driver: local
+
+networks:
+  gvpocr-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

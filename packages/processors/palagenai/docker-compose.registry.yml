@@ -1,0 +1,36 @@
+# Docker Compose Override for Private Registry
+# This file configures GVPOCR to use images from a private Docker registry
+#
+# Usage:
+#   1. Set REGISTRY_URL environment variable:
+#      export REGISTRY_URL=192.168.1.100:5000
+#
+#   2. Run with this override:
+#      docker-compose -f docker-compose.yml -f docker-compose.registry.yml up -d
+#
+#   Or create a .env file with:
+#      REGISTRY_URL=192.168.1.100:5000
+#      IMAGE_TAG=latest
+
+version: '3.8'
+
+services:
+  backend:
+    image: ${REGISTRY_URL}/gvpocr/backend:${IMAGE_TAG:-latest}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+
+  frontend:
+    image: ${REGISTRY_URL}/gvpocr/frontend:${IMAGE_TAG:-latest}
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=/api
+
+  ocr-worker:
+    image: ${REGISTRY_URL}/gvpocr/ocr-worker:${IMAGE_TAG:-latest}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.worker

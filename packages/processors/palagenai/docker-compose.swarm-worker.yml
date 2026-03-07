@@ -1,0 +1,84 @@
+version: '3.8'
+
+# Docker Stack for OCR Workers on Docker Swarm
+# Deploy with: docker stack deploy -c docker-compose.swarm-worker.yml ocr-workers
+
+services:
+  worker:
+    image: gvpocr-worker-updated:latest
+
+    # Run as NSQ-based worker
+    # Use shell to expand HOSTNAME, with fallback to custom worker ID
+    command: sh -c 'python run_worker.py --worker-id "$${WORKER_ID:-swarm-worker-$${HOSTNAME}}" --nsqlookupd 172.12.0.132:4161'
+
+    environment:
+      # Worker ID (will use hostname if not set)
+      - WORKER_ID=
+
+      # MongoDB Connection (use IP address from .env.worker)
+      - MONGO_URI=mongodb://gvpocr_admin:gvp%40123@172.12.0.132:27017/gvpocr?authSource=admin
+
+      # NSQ Configuration (use IP addresses)
+      - USE_NSQ=true
+      - NSQD_ADDRESS=172.12.0.132:4150
+      - NSQLOOKUPD_ADDRESSES=172.12.0.132:4161
+
+      # Backend API Server (use IP address)
+      - GVPOCR_SERVER_URL=http://172.12.0.132:5000
+
+      # OCR Provider Configuration
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/google-credentials/google-credentials.json
+      - DEFAULT_OCR_PROVIDER=google_vision
+      - GVPOCR_PATH=/app/Bhushanji
+      - NEWSLETTERS_PATH=/app/newsletters
+
+      # Provider Enablement
+      - GOOGLE_VISION_ENABLED=true
+      - TESSERACT_ENABLED=true
+      - OLLAMA_ENABLED=false
+      - LLAMACPP_ENABLED=false
+      - VLLM_ENABLED=false
+      - EASYOCR_ENABLED=false
+      - AZURE_ENABLED=false
+
+      # Tesseract Configuration
+      - TESSERACT_CMD=/usr/bin/tesseract
+
+    volumes:
+      # Google credentials (mount as directory, file is inside)
+      - gvpocr_google-credentials:/app/google-credentials:ro
+
+      # Shared Bhushanji folder
+      - bhushanji_shared:/app/Bhushanji:ro
+
+    networks:
+      - gvpocr-network
+
+    # Swarm deployment configuration
+    deploy:
+      mode: replicated
+      replicas: 2
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+      labels:
+        - "app=gvpocr"
+        - "worker_type=ocr_worker"
+
+# Use existing volumes
+volumes:
+  gvpocr_google-credentials:
+    external: true
+  bhushanji_shared:
+    external: true
+    name: gvpocr_bhushanji_shared
+
+# Use swarm overlay network
+networks:
+  gvpocr-network:
+    external: true
+    name: gvpocr-swarm-network

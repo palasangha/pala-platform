@@ -1,0 +1,46 @@
+# Worker-specific Dockerfile
+# Optimized for OCR workers - lighter than the full backend
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies for OCR processing
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    tesseract-ocr-hin \
+    tesseract-ocr-spa \
+    tesseract-ocr-fra \
+    tesseract-ocr-deu \
+    libtesseract-dev \
+    poppler-utils \
+    libgl1 \
+    libglib2.0-0 \
+    chromium \
+    chromium-driver \
+    wget \
+    unzip \
+    smbclient \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install Python dependencies
+COPY requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
+
+# Copy only the necessary application code for workers
+COPY app/ ./app/
+COPY run_worker.py .
+
+# Create uploads directory
+RUN mkdir -p uploads
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+
+# Default command runs the worker
+# Worker ID and NSQ lookup address should be passed via environment or command override
+CMD ["python", "run_worker.py"]

@@ -1,0 +1,136 @@
+version: '3.8'
+
+services:
+  # ─── MongoDB (App Data) ────────────────────────────────────
+  mongodb:
+    image: mongo:latest
+    container_name: samma-mongodb
+    ports:
+      - "27018:27017"  # Custom port 27018 (internal 27017)
+    environment:
+      MONGO_INITDB_DATABASE: samma_ai
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - samma-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ─── Qdrant (Vector Database) ──────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: samma-qdrant
+    ports:
+      - "6334:6333"  # Custom port 6334 (internal 6333)
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-qdrant_key}
+    networks:
+      - samma-network
+    healthcheck:
+      test: curl -f http://localhost:6333/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ─── Backend (Flask) ────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: samma-backend
+    ports:
+      - "5001:5001"
+    environment:
+      FLASK_ENV: ${FLASK_ENV:-development}
+      FLASK_APP: run.py
+      PORT: 5001
+
+      # Database URLs (use Docker service names)
+      TIPITAKA_DB_PATH: /app/database/tipitaka_ultimate.db
+      MONGO_URI: mongodb://mongodb:27017/samma_ai
+
+      # Vector Database (Qdrant uses internal port 6333)
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      QDRANT_COLLECTION: tipitaka_mula
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-qdrant_key}
+      EMBEDDING_MODEL: intfloat/multilingual-e5-large
+      EMBEDDING_BATCH_SIZE: 64
+      VECTOR_SEARCH_TOP_K: 5
+
+      # API Keys & Configuration
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-4-20250514}
+      OLLAMA_ENABLED: ${OLLAMA_ENABLED:-true}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-deepseek-r1:32b}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
+      COPILOT_ENDPOINT: ${COPILOT_ENDPOINT}
+      COPILOT_API_KEY: ${COPILOT_API_KEY}
+      COPILOT_MODEL: ${COPILOT_MODEL:-gpt-4o-mini}
+
+      # CORS
+      CORS_ORIGINS: http://localhost:8080,http://localhost:3000,http://frontend:80
+
+      # Secret Key
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
+
+    volumes:
+      - ./database:/app/database:ro
+      - ./backend/app:/app/app
+      - ./backend/config:/app/config
+      - ./backend/run.py:/app/run.py
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    networks:
+      - samma-network
+    healthcheck:
+      test: curl -f http://localhost:5001/api/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ─── Frontend (Flutter Web via Nginx) ───────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        BACKEND_URL: http://backend:5001
+    container_name: samma-frontend
+    ports:
+      - "8080:80"
+    environment:
+      BACKEND_API_URL: http://backend:5001/api
+    depends_on:
+      - backend
+    networks:
+      - samma-network
+    healthcheck:
+      test: curl -f http://localhost:80 || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  mongodb_data:
+    driver: local
+  qdrant_data:
+    driver: local
+
+networks:
+  samma-network:
+    driver: bridge

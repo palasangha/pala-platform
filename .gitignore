@@ -16,6 +16,24 @@ out/
 # Misc
 .DS_Store
 *.pem
+*.key
+
+# Images and binary media
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.webp
+*.tiff
+*.ico
+*.svg
+
+# Documents and archives
+*.pdf
+*.zip
+*.tar.gz
+*.tar
 .env
 .env.local
 .env.development.local

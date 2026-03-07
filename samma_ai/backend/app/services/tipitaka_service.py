@@ -3,12 +3,20 @@ Tipitaka Service - Interface to the Tipitaka SQLite database
 
 This service provides access to the canonical Buddhist texts stored in
 tipitaka_ultimate.db (1.1 GB, 73,765 Pali passages, 74,050 English translations).
+
+Search strategy (hybrid):
+  1. semantic_search() — vector similarity via Qdrant (multilingual-e5-large)
+  2. _fts5_search()     — exact Pali terms via SQLite FTS5 (paragraphs_fts)
+  3. _reciprocal_rank_fusion() — merge both result lists into a single ranking
 """
 
 import sqlite3
+import logging
 from flask import current_app
 from typing import List, Dict, Optional
 import re
+
+logger = logging.getLogger(__name__)
 
 
 class TipitakaService:
@@ -33,44 +41,368 @@ class TipitakaService:
 
     def search_relevant_passages(self, query: str, limit: int = 10) -> List[Dict]:
         """
-        Search for passages relevant to a query.
-        Handles Pali diacritical marks and alternative spellings.
+        Hybrid search: vector (Qdrant) + FTS5 (SQLite), merged via Reciprocal Rank Fusion.
 
-        Args:
-            query: The search query
-            limit: Maximum number of results
-
-        Returns:
-            List of passage dictionaries with pali_text, english_translation, references
+        Falls back to keyword LIKE search if Qdrant is unavailable.
         """
+        import traceback
+        logger.info(
+            "[TipitakaService.search_relevant_passages] query=%.80r  limit=%d",
+            query, limit,
+        )
+
+        # Step 1: Semantic vector search via Qdrant
+        vector_results = []
+        try:
+            vector_results = self.semantic_search(query, limit=5)
+            logger.info(
+                "[TipitakaService.search_relevant_passages] Vector search returned %d results.",
+                len(vector_results),
+            )
+        except Exception as exc:
+            logger.warning(
+                "[TipitakaService.search_relevant_passages] Vector search FAILED — "
+                "falling back to keyword search.  error=%s\n%s",
+                exc, traceback.format_exc(),
+            )
+            keyword_results = self._keyword_search(query, limit=limit)
+            logger.info(
+                "[TipitakaService.search_relevant_passages] Keyword fallback returned %d results.",
+                len(keyword_results),
+            )
+            return keyword_results
+
+        # Step 2: FTS5 exact-term search
+        fts_results = self._fts5_search(query, limit=5)
+        logger.info(
+            "[TipitakaService.search_relevant_passages] FTS5 search returned %d results.",
+            len(fts_results),
+        )
+
+        # Step 3: Hybrid merge, or last-resort keyword search
+        if not vector_results and not fts_results:
+            logger.warning(
+                "[TipitakaService.search_relevant_passages] Both vector and FTS5 returned "
+                "zero results — falling back to keyword LIKE search.  query=%.80r", query,
+            )
+            keyword_results = self._keyword_search(query, limit=limit)
+            logger.info(
+                "[TipitakaService.search_relevant_passages] Keyword fallback returned %d results.",
+                len(keyword_results),
+            )
+            return keyword_results
+
+        merged = self._reciprocal_rank_fusion(vector_results, fts_results)
+        final = merged[:limit]
+        logger.info(
+            "[TipitakaService.search_relevant_passages] Hybrid merge: "
+            "vector=%d  fts5=%d  merged=%d  returning=%d",
+            len(vector_results), len(fts_results), len(merged), len(final),
+        )
+        return final
+
+    def semantic_search(self, query: str, limit: int = 5) -> List[Dict]:
+        """
+        Pure vector search: embed query → Qdrant cosine similarity → fetch full rows.
+        """
+        import traceback
+        logger.debug(
+            "[TipitakaService.semantic_search] query=%.80r  limit=%d", query, limit,
+        )
+
+        qdrant = current_app.extensions.get('qdrant')
+        embedding_service = current_app.extensions.get('embedding_service')
+        collection = current_app.config.get('QDRANT_COLLECTION', 'tipitaka_mula')
+
+        if qdrant is None:
+            logger.error(
+                "[TipitakaService.semantic_search] qdrant extension is None — "
+                "Qdrant was not initialised (check startup logs for connection errors)."
+            )
+            raise RuntimeError("Qdrant client not initialised in app.extensions['qdrant']")
+
+        if embedding_service is None:
+            logger.error(
+                "[TipitakaService.semantic_search] embedding_service extension is None — "
+                "EmbeddingService was not initialised (check startup logs)."
+            )
+            raise RuntimeError("EmbeddingService not initialised in app.extensions['embedding_service']")
+
+        # Encode the query
+        try:
+            query_vector = embedding_service.encode_query(query)
+            logger.debug(
+                "[TipitakaService.semantic_search] Query encoded — vector dim=%d",
+                len(query_vector),
+            )
+        except Exception as exc:
+            logger.error(
+                "[TipitakaService.semantic_search] Query encoding FAILED — "
+                "query=%.80r  error=%s\n%s", query, exc, traceback.format_exc(),
+            )
+            raise
+
+        # Search Qdrant
+        try:
+            result = qdrant.query_points(
+                collection_name=collection,
+                query=query_vector,
+                limit=limit,
+                with_payload=True,
+            )
+            hits = result.points
+            logger.debug(
+                "[TipitakaService.semantic_search] Qdrant returned %d hits for collection='%s'",
+                len(hits), collection,
+            )
+        except Exception as exc:
+            logger.error(
+                "[TipitakaService.semantic_search] Qdrant search FAILED — "
+                "collection=%s  error=%s\n%s", collection, exc, traceback.format_exc(),
+            )
+            raise
+
+        if not hits:
+            logger.warning(
+                "[TipitakaService.semantic_search] Qdrant returned 0 hits — "
+                "collection may be empty.  query=%.80r", query,
+            )
+            return []
+
+        # Log top-3 hit scores for diagnostics
+        for i, h in enumerate(hits[:3]):
+            logger.debug(
+                "[TipitakaService.semantic_search] Hit %d: passage_id=%s  score=%.4f  "
+                "pali_snippet=%.60s",
+                i + 1, h.payload.get('passage_id'), h.score,
+                h.payload.get('pali_text', ''),
+            )
+
+        # Fetch full rows from SQLite by passage_id
+        passage_ids = [h.payload['passage_id'] for h in hits]
+        try:
+            passages = self._fetch_passages_by_ids(passage_ids)
+        except Exception as exc:
+            logger.error(
+                "[TipitakaService.semantic_search] _fetch_passages_by_ids FAILED — "
+                "ids=%s  error=%s\n%s", passage_ids, exc, traceback.format_exc(),
+            )
+            raise
+
+        if len(passages) != len(passage_ids):
+            logger.warning(
+                "[TipitakaService.semantic_search] Qdrant returned %d hits but only %d "
+                "found in SQLite — some passage_ids may be stale.  missing=%s",
+                len(passage_ids), len(passages),
+                set(passage_ids) - {p['id'] for p in passages},
+            )
+
+        # Preserve Qdrant ranking order
+        id_order = {pid: idx for idx, pid in enumerate(passage_ids)}
+        passages.sort(key=lambda p: id_order.get(p['id'], 999))
+        return passages
+
+    def _fts5_search(self, query: str, limit: int = 5) -> List[Dict]:
+        """
+        FTS5 search using the paragraphs_fts virtual table.
+        Good for exact Pali term matches and diacritical-normalised queries.
+        """
+        import traceback
+        logger.debug(
+            "[TipitakaService._fts5_search] query=%.80r  limit=%d", query, limit,
+        )
+
+        conn = self._get_connection()
+        conn.row_factory = self._dict_factory
+        try:
+            cursor = conn.cursor()
+
+            # Build a simple FTS5 query from the first few terms
+            terms = self._extract_search_terms(query)
+            if not terms:
+                logger.debug(
+                    "[TipitakaService._fts5_search] No search terms extracted from query=%.80r "
+                    "— returning empty.", query,
+                )
+                return []
+
+            fts_query = ' OR '.join(f'"{t}"' for t in terms[:3])
+            logger.debug(
+                "[TipitakaService._fts5_search] terms=%s  fts_query=%r",
+                terms, fts_query,
+            )
+
+            try:
+                cursor.execute("""
+                    SELECT
+                        par.id,
+                        par.pali_text,
+                        par.html_content,
+                        par.xml_source_file,
+                        par.paragraph_number,
+                        par.book_id,
+                        par.sutta_id,
+                        pk.name_english  AS pitaka_name,
+                        n.name_english   AS nikaya_name,
+                        b.name_english   AS book_name,
+                        s.name_english   AS sutta_name
+                    FROM paragraphs par
+                    JOIN paragraphs_fts f ON par.id = f.paragraph_id
+                    LEFT JOIN books b     ON par.book_id = b.id
+                    LEFT JOIN nikayas n   ON b.nikaya_id = n.id
+                    LEFT JOIN pitakas pk  ON b.pitaka_id = pk.id
+                    LEFT JOIN suttas s    ON par.sutta_id = s.id
+                    WHERE paragraphs_fts MATCH ?
+                      AND par.text_layer = 'mula'
+                    ORDER BY rank
+                    LIMIT ?
+                """, [fts_query, limit])
+                passages = cursor.fetchall()
+                logger.debug(
+                    "[TipitakaService._fts5_search] FTS5 returned %d passages for fts_query=%r",
+                    len(passages), fts_query,
+                )
+            except sqlite3.OperationalError as exc:
+                logger.warning(
+                    "[TipitakaService._fts5_search] FTS5 query FAILED — "
+                    "fts_query=%r  error=%s\n%s", fts_query, exc, traceback.format_exc(),
+                )
+                return []
+
+            for passage in passages:
+                passage['reference'] = self._build_reference(passage)
+                passage['english_translation'] = self._fetch_translation(
+                    cursor, passage['book_id'], passage['paragraph_number']
+                )
+            return passages
+        finally:
+            conn.close()
+
+    def _fetch_passages_by_ids(self, passage_ids: List[str]) -> List[Dict]:
+        """Fetch full passage rows from SQLite given a list of paragraph IDs."""
+        import traceback
+        if not passage_ids:
+            logger.debug("[TipitakaService._fetch_passages_by_ids] Called with empty id list.")
+            return []
+
+        logger.debug(
+            "[TipitakaService._fetch_passages_by_ids] Fetching %d passages: %s",
+            len(passage_ids), passage_ids,
+        )
+        conn = self._get_connection()
+        conn.row_factory = self._dict_factory
+        try:
+            cursor = conn.cursor()
+            placeholders = ','.join('?' * len(passage_ids))
+            cursor.execute(f"""
+                SELECT
+                    par.id,
+                    par.pali_text,
+                    par.html_content,
+                    par.xml_source_file,
+                    par.paragraph_number,
+                    par.book_id,
+                    par.sutta_id,
+                    pk.name_english  AS pitaka_name,
+                    n.name_english   AS nikaya_name,
+                    b.name_english   AS book_name,
+                    s.name_english   AS sutta_name
+                FROM paragraphs par
+                LEFT JOIN books b     ON par.book_id = b.id
+                LEFT JOIN nikayas n   ON b.nikaya_id = n.id
+                LEFT JOIN pitakas pk  ON b.pitaka_id = pk.id
+                LEFT JOIN suttas s    ON par.sutta_id = s.id
+                WHERE par.id IN ({placeholders})
+            """, passage_ids)
+            passages = cursor.fetchall()
+            logger.debug(
+                "[TipitakaService._fetch_passages_by_ids] SQLite returned %d/%d passages.",
+                len(passages), len(passage_ids),
+            )
+
+            for passage in passages:
+                passage['reference'] = self._build_reference(passage)
+                passage['english_translation'] = self._fetch_translation(
+                    cursor, passage['book_id'], passage['paragraph_number']
+                )
+            return passages
+        except Exception as exc:
+            logger.error(
+                "[TipitakaService._fetch_passages_by_ids] FAILED — "
+                "ids=%s  error=%s\n%s", passage_ids, exc, traceback.format_exc(),
+            )
+            raise
+        finally:
+            conn.close()
+
+    def _reciprocal_rank_fusion(self, *result_lists, k: int = 60) -> List[Dict]:
+        """
+        Merge multiple ranked result lists using Reciprocal Rank Fusion.
+        score(d) = Σ 1/(rank(d) + k)
+        """
+        scores: Dict[str, float] = {}
+        id_to_passage: Dict[str, Dict] = {}
+
+        for list_idx, result_list in enumerate(result_lists):
+            for rank, passage in enumerate(result_list):
+                pid = passage['id']
+                contrib = 1.0 / (rank + k)
+                scores[pid] = scores.get(pid, 0.0) + contrib
+                if pid not in id_to_passage:
+                    id_to_passage[pid] = passage
+                logger.debug(
+                    "[TipitakaService._reciprocal_rank_fusion] list=%d  rank=%d  "
+                    "passage_id=%s  contrib=%.5f  total_score=%.5f",
+                    list_idx, rank, pid, contrib, scores[pid],
+                )
+
+        sorted_ids = sorted(scores, key=lambda pid: scores[pid], reverse=True)
+        logger.debug(
+            "[TipitakaService._reciprocal_rank_fusion] Merged %d unique passages.",
+            len(sorted_ids),
+        )
+        return [id_to_passage[pid] for pid in sorted_ids]
+
+    def _keyword_search(self, query: str, limit: int = 10) -> List[Dict]:
+        """
+        Legacy LIKE-based keyword search — fallback when Qdrant is unavailable.
+        """
+        import traceback
+        logger.info(
+            "[TipitakaService._keyword_search] query=%.80r  limit=%d", query, limit,
+        )
         conn = self._get_connection()
         conn.row_factory = self._dict_factory
 
         try:
             cursor = conn.cursor()
 
-            # Extract key terms from query
             terms = self._extract_search_terms(query)
+            logger.debug(
+                "[TipitakaService._keyword_search] Extracted terms: %s", terms,
+            )
 
-            # Add diacritical mark variations
             expanded_terms = []
             for term in terms:
                 expanded_terms.append(term)
-                # Add common diacritical variations
-                diacritical_variants = self._get_pali_diacritical_variants(term)
-                expanded_terms.extend(diacritical_variants)
+                expanded_terms.extend(self._get_pali_diacritical_variants(term))
 
-            # Build search query with OR conditions
+            logger.debug(
+                "[TipitakaService._keyword_search] Expanded terms (with diacritics): %s",
+                expanded_terms,
+            )
+
             where_clauses = []
             params = []
-
             for term in expanded_terms:
-                where_clauses.append(
-                    "(pali_text LIKE ? OR html_content LIKE ?)"
-                )
+                where_clauses.append("(pali_text LIKE ? OR html_content LIKE ?)")
                 params.extend([f'%{term}%', f'%{term}%'])
 
             if not where_clauses:
+                logger.warning(
+                    "[TipitakaService._keyword_search] No where_clauses built — "
+                    "terms=%s  query=%.80r", terms, query,
+                )
                 return []
 
             sql = f"""
@@ -83,23 +415,46 @@ class TipitakaService:
                     par.book_id,
                     par.sutta_id,
                     pk.name_english as pitaka_name,
-                    n.name_english as nikaya_name,
-                    b.name_english as book_name,
-                    s.name_english as sutta_name
+                    n.name_english  as nikaya_name,
+                    b.name_english  as book_name,
+                    s.name_english  as sutta_name,
+                    CASE
+                        WHEN b.pitaka_id = 'sutta'  THEN 0
+                        WHEN b.pitaka_id = 'vinaya' THEN 1
+                        ELSE 2
+                    END as pitaka_priority
                 FROM paragraphs par
-                LEFT JOIN books b ON par.book_id = b.id
-                LEFT JOIN nikayas n ON b.nikaya_id = n.id
+                LEFT JOIN books b    ON par.book_id = b.id
+                LEFT JOIN nikayas n  ON b.nikaya_id = n.id
                 LEFT JOIN pitakas pk ON b.pitaka_id = pk.id
-                LEFT JOIN suttas s ON par.sutta_id = s.id
-                WHERE {' OR '.join(where_clauses)}
+                LEFT JOIN suttas s   ON par.sutta_id = s.id
+                WHERE par.text_layer = 'mula' AND ({' OR '.join(where_clauses)})
+                ORDER BY pitaka_priority ASC, par.id ASC
                 LIMIT ?
             """
             params.append(limit)
 
-            cursor.execute(sql, params)
-            passages = cursor.fetchall()
+            try:
+                cursor.execute(sql, params)
+                passages = cursor.fetchall()
+            except Exception as exc:
+                logger.error(
+                    "[TipitakaService._keyword_search] SQL execution FAILED — "
+                    "terms=%s  error=%s\n%s", expanded_terms, exc, traceback.format_exc(),
+                )
+                raise
 
-            # Build complete reference and fetch translations
+            logger.info(
+                "[TipitakaService._keyword_search] Keyword search returned %d passages "
+                "for query=%.80r", len(passages), query,
+            )
+            if not passages:
+                logger.warning(
+                    "[TipitakaService._keyword_search] Zero passages found — "
+                    "terms=%s  expanded=%s  query=%.80r",
+                    terms, expanded_terms, query,
+                )
+
             for passage in passages:
                 passage['reference'] = self._build_reference(passage)
                 passage['english_translation'] = self._fetch_translation(
@@ -113,31 +468,46 @@ class TipitakaService:
 
     def _get_translation_book_id(self, pali_book_id: str) -> Optional[str]:
         """Map Pali book ID to translation book ID (anya_pe series)."""
-        # Mapping rules based on observed patterns:
-        # dn1m -> annya_pe_dn1
-        # mn1m -> annya_pe_mn1
-        # sn1m -> annya_pe_sn1
-        # an1m -> annya_pe_an1
-        
-        # Remove 'm' suffix (mula)
+        if not pali_book_id:
+            return None
+
+        # Remove 'm' suffix (mula) for Sutta Pitaka
         base_id = pali_book_id
         if base_id.endswith('m'):
             base_id = base_id[:-1]
-        
-        # Sutta Pitaka prefixing
+
+        # Sutta Pitaka mapping (dn1m -> annya_pe_dn1, etc.)
         if base_id.startswith(('dn', 'mn', 'sn', 'an')):
             return f"annya_pe_{base_id}"
-            
-        # Vinaya Pitaka mapping
+
+        # Vinaya Pitaka mapping (vi1m=Parajika, vi2m=Pacittiya, vi3m=Mahavagga,
+        #                         vi4m=Culavagga, vi5m=Parivara)
         vinaya_map = {
-            'pajm': 'annya_pe_parajika',
-            'pacm': 'annya_pe_pacittiya',
-            'mvm': 'annya_pe_mahavagga',
-            'cvm': 'annya_pe_culavagga',
-            'prm': 'annya_pe_parivara'
+            'vi1m': 'annya_pe_parajika',
+            'vi2m': 'annya_pe_pacittiya',
+            'vi3m': 'annya_pe_mahavagga',
+            'vi4m': 'annya_pe_culavagga',
+            'vi5m': 'annya_pe_parivara'
         }
-        
-        return vinaya_map.get(pali_book_id)
+
+        if pali_book_id in vinaya_map:
+            return vinaya_map[pali_book_id]
+
+        # Abhidhamma Pitaka mapping
+        # Books: abh01 (Dhammasangani), abh02 (Vibhanga), abh03 (Dhatukatha),
+        #        abh04 (Puggalapannatti), abh05 (Kathavatthu), abh06 (Yamaka),
+        #        abh07 (Patthana)
+        abhidhamma_map = {
+            'abh01': 'annya_pe_abh01',  # Dhammasangani
+            'abh02': 'annya_pe_abh02',  # Vibhanga
+            'abh03': 'annya_pe_abh03',  # Dhatukatha
+            'abh04': 'annya_pe_abh04',  # Puggalapannatti
+            'abh05': 'annya_pe_abh05',  # Kathavatthu
+            'abh06': 'annya_pe_abh06',  # Yamaka
+            'abh07': 'annya_pe_abh07',  # Patthana
+        }
+
+        return abhidhamma_map.get(pali_book_id)
 
     def _fetch_translation(self, cursor, pali_book_id: str, para_num: int) -> Optional[str]:
         """Fetch English translation from pages table."""
@@ -145,14 +515,13 @@ class TipitakaService:
         if not trans_book_id:
             return None
 
-        # paranum in pages is often '-N-' or '-N-M-'
-        para_pattern = f'%-{para_num}-%'
-        
+        # paranum in pages is '-N-' — use exact match to avoid false positives
+        # e.g. para_num=1 must not match '-11-' or '-21-'
         cursor.execute("""
-            SELECT content FROM pages 
-            WHERE bookid = ? AND (paranum = ? OR paranum LIKE ?)
+            SELECT content FROM pages
+            WHERE bookid = ? AND paranum = ?
             LIMIT 1
-        """, [trans_book_id, f'-{para_num}-', para_pattern])
+        """, [trans_book_id, f'-{para_num}-'])
         
         result = cursor.fetchone()
         if not result:

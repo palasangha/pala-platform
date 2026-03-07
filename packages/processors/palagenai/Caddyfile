@@ -1,0 +1,42 @@
+# Caddyfile - HTTPS only with mkcert
+# Local certificates for palagenai.com and local IP addresses
+
+{
+    email bhushan0508@gmail.com
+}
+
+# HTTPS with mkcert certificates - supports palagenai.com, www.palagenai.com, registry.palagenai.com, localhost, and local IP
+https://palagenai.com, www.palagenai.com, localhost, 127.0.0.1, 10.10.0.179 {
+    tls /certs/palagenai.com+5.pem /certs/palagenai.com+5-key.pem
+    
+    # Proxy API requests to backend (use service name for Docker DNS resolution)
+    handle /api/* {
+        reverse_proxy backend:5000
+    }
+
+    # Proxy all other requests to frontend
+    handle {
+        reverse_proxy frontend:80
+    }
+
+    encode gzip
+    log
+}
+
+# Docker Registry HTTPS endpoint
+# Serves the registry on registry.palagenai.com:5010 with HTTPS
+https://registry.palagenai.com:5010 {
+    tls /certs/palagenai.com+5.pem /certs/palagenai.com+5-key.pem
+    
+    # Proxy all requests to the Docker registry container
+    # Use the container name since both are on gvpocr-network
+    reverse_proxy gvpocr-registry:5000 {
+        # Preserve host header for registry compatibility
+        header_up Host {host}
+        header_up X-Forwarded-Proto https
+    }
+    
+    encode gzip
+    log
+}
+

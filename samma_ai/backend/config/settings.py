@@ -36,6 +36,34 @@ class Config:
     OLLAMA_BASE_URL = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
     OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'llama3.2-vision:latest')
 
+    # Vector Database (Qdrant)
+    QDRANT_HOST = os.environ.get('QDRANT_HOST', 'localhost')
+    QDRANT_PORT = int(os.environ.get('QDRANT_PORT', 6333))
+    QDRANT_COLLECTION = os.environ.get('QDRANT_COLLECTION', 'tipitaka_mula')
+    EMBEDDING_MODEL = os.environ.get('EMBEDDING_MODEL', 'intfloat/multilingual-e5-large')
+    EMBEDDING_BATCH_SIZE = int(os.environ.get('EMBEDDING_BATCH_SIZE', '64'))
+    VECTOR_SEARCH_TOP_K = int(os.environ.get('VECTOR_SEARCH_TOP_K', '5'))
+
+    # Translation Service (Deepseek via Ollama)
+    OLLAMA_TRANSLATION_ENABLED = os.environ.get(
+        'OLLAMA_TRANSLATION_ENABLED', 'True'
+    ).lower() == 'true'
+    OLLAMA_TRANSLATION_MODEL = os.environ.get(
+        'OLLAMA_TRANSLATION_MODEL', 'deepseek-r1:32b'
+    )
+    OLLAMA_TRANSLATION_ENDPOINT = os.environ.get(
+        'OLLAMA_TRANSLATION_ENDPOINT', 'http://localhost:11434'
+    )
+    OLLAMA_TRANSLATION_TIMEOUT = int(os.environ.get(
+        'OLLAMA_TRANSLATION_TIMEOUT', '90'
+    ))  # 90 seconds max
+    OLLAMA_TRANSLATION_MAX_CONCURRENT = int(os.environ.get(
+        'OLLAMA_TRANSLATION_MAX_CONCURRENT', '1'
+    ))  # Sequential only
+    TRANSLATION_CACHE_TTL = int(os.environ.get(
+        'TRANSLATION_CACHE_TTL', '604800'
+    ))  # 7 days
+
     # CORS
     CORS_ORIGINS = ['http://localhost:8080', 'http://localhost:3000', 'http://localhost:41081', 'http://localhost:12345', '*']
 

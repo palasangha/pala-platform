@@ -1,0 +1,57 @@
+global:
+  resolve_timeout: 5m
+  # slack_api_url: '${SLACK_WEBHOOK_URL}'  # Commented out - configure if needed
+  # pagerduty_url: 'https://events.pagerduty.com/v2/enqueue'  # Commented out - configure if needed
+
+route:
+  receiver: 'default'
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 1h
+
+  routes:
+    - match:
+        severity: critical
+      receiver: 'critical'
+      repeat_interval: 15m
+      group_wait: 10s
+
+    - match:
+        severity: warning
+      receiver: 'warnings'
+      repeat_interval: 1h
+
+receivers:
+  - name: 'default'
+    # Slack integration disabled - configure slack_api_url in global section to enable
+    # slack_configs:
+    #   - channel: '#alerts'
+    #     title: '{{ .GroupLabels.alertname }}'
+    #     text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+    #     send_resolved: true
+
+  - name: 'critical'
+    # Slack and PagerDuty integrations disabled - configure in global section to enable
+    # slack_configs:
+    #   - channel: '#critical-alerts'
+    #     title: '🚨 CRITICAL: {{ .GroupLabels.alertname }}'
+    #     text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+    #     send_resolved: true
+    # pagerduty_configs:
+    #   - service_key: '${PAGERDUTY_SERVICE_KEY}'
+
+  - name: 'warnings'
+    # Slack integration disabled - configure slack_api_url in global section to enable
+    # slack_configs:
+    #   - channel: '#warnings'
+    #     title: '⚠️ WARNING: {{ .GroupLabels.alertname }}'
+    #     text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+    #     send_resolved: true
+
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'dev', 'instance']

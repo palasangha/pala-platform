@@ -1,0 +1,123 @@
+groups:
+  - name: enrichment_alerts
+    interval: 30s
+    rules:
+      # Completeness Alerts
+      - alert: LowCompletenessRate
+        expr: rate(enrichment_completeness_score_bucket{le="0.95"}[1h]) > 0.2
+        for: 10m
+        annotations:
+          summary: "High rate of low completeness scores"
+          description: "More than 20% of documents have completeness < 95%"
+          severity: "warning"
+
+      - alert: CriticalCompletenessFailure
+        expr: rate(enrichment_completeness_score_bucket{le="0.90"}[1h]) > 0.5
+        for: 5m
+        annotations:
+          summary: "Critical completeness failure"
+          description: "More than 50% of documents have completeness < 90%"
+          severity: "critical"
+
+      # Review Queue Alerts
+      - alert: ReviewQueueBacklog
+        expr: enrichment_review_queue_size > 100
+        for: 30m
+        annotations:
+          summary: "Review queue has large backlog"
+          description: "{{ $value }} documents pending review"
+          severity: "warning"
+
+      - alert: ReviewQueueCritical
+        expr: enrichment_review_queue_size > 500
+        for: 10m
+        annotations:
+          summary: "Review queue critical backlog"
+          description: "{{ $value }} documents pending review - imminent overload"
+          severity: "critical"
+
+      # Cost Alerts
+      - alert: HighDailyCost
+        expr: increase(enrichment_claude_cost_usd_total[24h]) > 100
+        annotations:
+          summary: "Daily Claude API cost exceeds $100"
+          description: "Current 24h cost: ${{ $value }}"
+          severity: "warning"
+
+      - alert: CriticalCostOverrun
+        expr: increase(enrichment_claude_cost_usd_total[24h]) > 200
+        for: 5m
+        annotations:
+          summary: "Critical cost overrun detected"
+          description: "24h cost: ${{ $value }} - exceeds 2x budget"
+          severity: "critical"
+
+      # Agent Health Alerts
+      - alert: AgentUnavailable
+        expr: enrichment_agent_available == 0
+        for: 5m
+        annotations:
+          summary: "Agent {{ $labels.agent_id }} is unavailable"
+          description: "Agent has been down for 5 minutes"
+          severity: "critical"
+
+      - alert: AgentSlowResponse
+        expr: histogram_quantile(0.95, enrichment_agent_response_seconds) > 30
+        for: 5m
+        annotations:
+          summary: "Agent {{ $labels.agent_id }} responding slowly"
+          description: "P95 response time: {{ $value }}s"
+          severity: "warning"
+
+      # Queue Depth Alerts
+      - alert: QueueDepthCritical
+        expr: enrichment_nsq_queue_depth > 1000
+        for: 10m
+        annotations:
+          summary: "NSQ queue depth critical"
+          description: "Queue depth: {{ $value }} messages"
+          severity: "critical"
+
+      # Database Alerts
+      - alert: DatabaseConnectionFailed
+        expr: enrichment_database_connection_errors_total > 5
+        for: 5m
+        annotations:
+          summary: "Database connection errors detected"
+          description: "{{ $value }} connection errors in 5 minutes"
+          severity: "critical"
+
+      - alert: MongoDBHighMemory
+        expr: mongodb_mem_resident > 1000
+        for: 10m
+        annotations:
+          summary: "MongoDB using high memory"
+          description: "Memory usage: {{ $value }}MB"
+          severity: "warning"
+
+      # Throughput Alerts
+      - alert: LowThroughput
+        expr: rate(enrichment_documents_total[5m]) < 0.1
+        for: 15m
+        annotations:
+          summary: "Very low document processing throughput"
+          description: "Processing less than 1 doc/minute"
+          severity: "warning"
+
+      # Ollama Model Health
+      - alert: OllamaModelsUnavailable
+        expr: ollama_models_loaded == 0
+        for: 5m
+        annotations:
+          summary: "Ollama has no models loaded"
+          description: "Critical models not available for Phase 1 agents"
+          severity: "critical"
+
+      # NSQ Health
+      - alert: NSQHeartbeatFailure
+        expr: rate(nsq_heartbeat_errors_total[5m]) > 0.1
+        for: 5m
+        annotations:
+          summary: "NSQ heartbeat failures detected"
+          description: "{{ $value }} errors/sec"
+          severity: "warning"

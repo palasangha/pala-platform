@@ -663,6 +663,20 @@ def resume_job(current_user_id, job_id):
         return jsonify({'error': str(e)}), 500
 
 
+def _recreate_nsq_queues():
+    """Delete and recreate all NSQ topics to purge pending tasks"""
+    import requests as req
+    nsqd_http = Config.NSQD_ADDRESS.replace(':4150', ':4151')
+    topics = ['bulk_ocr_file_tasks', 'bulk_ocr_control', 'zip_regeneration']
+    for topic in topics:
+        try:
+            req.post(f'http://{nsqd_http}/topic/delete?topic={topic}', timeout=5)
+            req.post(f'http://{nsqd_http}/topic/create?topic={topic}', timeout=5)
+            logger.info(f'NSQ topic recreated: {topic}')
+        except Exception as e:
+            logger.error(f'Failed to recreate NSQ topic {topic}: {e}')
+
+
 @bulk_bp.route('/stop/<job_id>', methods=['POST'])
 @token_required
 def stop_job(current_user_id, job_id):
@@ -684,7 +698,9 @@ def stop_job(current_user_id, job_id):
             # Use NSQ-based cancellation
             coordinator = NSQJobCoordinator()
             coordinator.cancel_job(job_id)
-            msg = 'Job cancellation request sent to NSQ'
+            # Clear and recreate NSQ queues to purge pending tasks
+            _recreate_nsq_queues()
+            msg = 'Job cancelled and queues cleared'
             state = 'cancelled'
         else:
             return jsonify({'error': 'Job is not currently running'}), 400

@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  # OCR Workers (horizontally scalable via Docker Swarm)
+  ocr-worker:
+    image: 172.12.0.132:5010/gvpocr-worker-updated:latest
+    deploy:
+      mode: replicated
+      replicas: 3  # Start with 3 workers, can be scaled with `docker service scale`
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+      placement:
+        constraints:
+          - node.role == worker  # Run only on worker nodes
+      labels:
+        service: "ocr-worker"
+        version: "1.0"
+    environment:
+      - NSQD_ADDRESS=172.12.0.132:4150
+      - NSQLOOKUPD_ADDRESSES=172.12.0.132:4161
+      - MONGO_URI=mongodb://gvpocr_admin:gvp%40123@172.12.0.132:27017/gvpocr
+      - MONGO_USERNAME=gvpocr_admin
+      - MONGO_PASSWORD=gvp@123
+      - GVPOCR_PATH=/app/Bhushanji
+      - OLLAMA_HOST=http://172.12.0.132:11434
+      - LLAMACPP_ENABLED=true
+      - LLAMACPP_HOST=http://172.12.0.132:8007
+      - LLAMACPP_MODEL=gemma3-vision
+      - TESSERACT_ENABLED=true
+      - EASYOCR_ENABLED=false
+      - SKIP_JOB_RECOVERY=true
+    volumes:
+      - /mnt/sshfs/main-server/Bhushanji:/app/Bhushanji:ro
+      - /mnt/sshfs/main-server/uploads:/app/uploads
+      - /mnt/sshfs/main-server/newsletters:/app/newsletters:ro
+      - /mnt/sshfs/main-server/models:/app/models:ro
+      - /mnt/sshfs/main-server/.cache/huggingface/hub:/root/.cache/huggingface/hub:ro
+    ports:
+      - "5000:5000"
+    command: python run_worker.py --worker-id {{.Task.Slot}} --nsqlookupd 172.12.0.132:4161
+    networks:
+      - gvpocr-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  gvpocr-network:
+    driver: overlay
+    driver_opts:
+      com.docker.network.driver.overlay.vxlanid: "4096"
+    ipam:
+      config:
+        - subnet: 10.0.0.0/24

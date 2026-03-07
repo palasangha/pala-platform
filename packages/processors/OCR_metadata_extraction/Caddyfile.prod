@@ -1,0 +1,43 @@
+# Caddyfile.prod - Production HTTPS reverse proxy
+# HTTP on port 9000, HTTPS on port 9001
+# Target: /mnt/sda1/prod/ocr-prod/Caddyfile.prod
+
+{
+    email bhushan0508@gmail.com
+}
+
+# HTTP redirect to HTTPS
+:9000 {
+    redir https://{host}:9001{uri} permanent
+}
+
+# HTTPS with mkcert certificates
+https://docgenai.com:9001, https://www.docgenai.com:9001, https://localhost:9001, https://127.0.0.1:9001 {
+    tls /certs/docgenai.com+5.pem /certs/docgenai.com+5-key.pem
+
+    # Proxy API requests to backend
+    handle /api/* {
+        reverse_proxy backend:5000
+    }
+
+    # Proxy all other requests to frontend
+    handle {
+        reverse_proxy frontend:80
+    }
+
+    encode gzip
+    log
+}
+
+# Docker Registry HTTPS endpoint
+https://registry.docgenai.com:9001 {
+    tls /certs/docgenai.com+5.pem /certs/docgenai.com+5-key.pem
+
+    reverse_proxy prod-registry:5000 {
+        header_up Host {host}
+        header_up X-Forwarded-Proto https
+    }
+
+    encode gzip
+    log
+}

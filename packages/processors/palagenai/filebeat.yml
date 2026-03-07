@@ -1,0 +1,59 @@
+# Filebeat configuration for enrichment services
+# Collects logs from Docker containers and file system
+
+filebeat.config:
+  modules:
+    path: ${path.config}/modules.d/*.yml
+    reload.enabled: false
+
+filebeat.inputs:
+  # Docker container logs
+  - type: container
+    enabled: true
+    paths:
+      - '/var/lib/docker/containers/*/*.log'
+    processors:
+      - add_docker_metadata: ~
+      - add_kubernetes_metadata: ~
+
+  # Application log files
+  - type: log
+    enabled: true
+    paths:
+      - '/app/logs/enrichment-coordinator.log'
+      - '/app/logs/enrichment-worker.log'
+      - '/app/logs/review-api.log'
+      - '/app/logs/cost-api.log'
+    fields:
+      service: enrichment
+    multiline.pattern: '^\['
+    multiline.negate: true
+    multiline.match: after
+
+# Processors
+processors:
+  - add_host_metadata:
+      when.not.regexp.re: '\.yml$'
+  - add_docker_metadata: ~
+  - add_kubernetes_metadata: ~
+  - drop_event:
+      when.regexp:
+        message: '^ACK'
+
+# Output to Elasticsearch
+output.elasticsearch:
+  enabled: true
+  hosts: ['${ELASTICSEARCH_HOSTS:elasticsearch:9200}']
+  index: 'filebeat-enrichment-%{+yyyy.MM.dd}'
+
+  # Use ingest pipeline for additional processing
+  pipeline: 'filebeat-7.10.0'
+
+# Logging
+logging.level: info
+logging.to_files: true
+logging.files:
+  path: /var/log/filebeat
+  name: filebeat
+  keepfiles: 7
+  permissions: 0640

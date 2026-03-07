@@ -1,0 +1,13 @@
+services:
+  test-worker:
+    image: ubuntu:latest
+    container_name: test-sshfs-worker
+    networks:
+      - gvpocr-network
+    volumes:
+      # If SSHFS was mounted, these would be accessible
+      - /mnt/sshfs/main-server/Bhushanji:/app/Bhushanji:ro
+      - /mnt/sshfs/main-server/newsletters:/app/newsletters:ro
+      - /mnt/sshfs/main-server/models:/app/models:ro
+      - /mnt/sshfs/main-server/.cache/huggingface/hub:/root/.cache/huggingface/hub:ro
+    command: sleep 300

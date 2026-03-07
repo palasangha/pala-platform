@@ -1,5 +1,3 @@
-FROM debian:bookworm-slim
-
 FROM nvidia/cuda:12.6.1-runtime-ubuntu22.04
 
 # Install all necessary libraries for running AppImage-based applications
@@ -51,10 +49,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create app directory with write permissions
 RUN mkdir -p /app && chmod 777 /app
 
+# Copy entrypoint script
+COPY lmstudio_entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 # Set up environment for X11 display
 ENV PATH="/app:$PATH"
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
+ENV QT_X11_NO_MITSHM=1
 
 # Expose the API port
 EXPOSE 1234
@@ -63,8 +66,7 @@ EXPOSE 1234
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
     CMD curl -f http://localhost:1234/v1/models || exit 1
 
-# AppImage will be mounted via docker-compose
-# Run LM Studio with GPU support - connects to host's X11 display
-CMD ["bash", "-c", "chmod +x /app/lmstudio.AppImage && /app/lmstudio.AppImage --no-sandbox"]
+# Run entrypoint script
+CMD ["/app/entrypoint.sh"]
 
 

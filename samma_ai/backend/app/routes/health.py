@@ -52,9 +52,34 @@ def detailed_status():
         'status': 'configured' if api_key else 'not_configured'
     }
 
+    # Check translation service (Ollama + Deepseek)
+    try:
+        translation_service = current_app.extensions.get('translation_service')
+        if translation_service:
+            if translation_service._is_ollama_available():
+                status['checks']['translation_service'] = {
+                    'status': 'healthy',
+                    'model': current_app.config.get('OLLAMA_TRANSLATION_MODEL'),
+                    'endpoint': current_app.config.get('OLLAMA_TRANSLATION_ENDPOINT')
+                }
+            else:
+                status['checks']['translation_service'] = {
+                    'status': 'degraded',  # Optional service
+                    'message': 'Ollama not reachable'
+                }
+        else:
+            status['checks']['translation_service'] = {
+                'status': 'disabled'
+            }
+    except Exception as e:
+        status['checks']['translation_service'] = {
+            'status': 'error',
+            'message': str(e)
+        }
+
     # Overall status
     all_healthy = all(
-        check.get('status') in ['connected', 'configured', 'healthy']
+        check.get('status') in ['connected', 'configured', 'healthy', 'disabled', 'degraded']
         for check in status['checks'].values()
     )
     status['status'] = 'healthy' if all_healthy else 'degraded'
