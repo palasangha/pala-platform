@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import sys
+import time
 import uuid
 import websockets
 from datetime import datetime, timezone
@@ -163,7 +164,7 @@ class MetadataExtractionAgent:
             )
 
         logger.info(
-            f"Extracting metadata: model={model}, output_type={output_type}, text_len={len(text)}"
+            f"[TOOL-START] extract_metadata: model={model}, output_type={output_type}, text_len={len(text)}"
         )
 
         try:
@@ -216,27 +217,32 @@ class MetadataExtractionAgent:
             if output_type == "combined":
                 result["extracted_fields"] = extracted_data
 
-            logger.info(f"Metadata extraction complete in {processing_time_ms}ms")
+            logger.info(f"[TOOL-SUCCESS] extract_metadata completed in {processing_time_ms}ms")
             return result
 
         except Exception as e:
-            logger.error(f"Metadata extraction failed: {e}")
+            processing_time_ms = int(
+                (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+            )
+            logger.error(f"[TOOL-FAILED] extract_metadata failed after {processing_time_ms}ms: {e}")
             raise
 
     @staticmethod
     def _extract_confidence_scores(extracted_data: Dict[str, Any]) -> Dict[str, float]:
         """Extract confidence scores from extracted data"""
-        confidences = {}
+        # Get overall confidence from extracted data
+        overall = extracted_data.get("confidence", 0.0)
+        
+        confidences = {
+            "overall": round(overall, 3)
+        }
+        
+        # Extract per-field confidences
         for field, value in extracted_data.items():
             if isinstance(value, dict) and "confidence" in value:
                 confidences[field] = value["confidence"]
 
-        # Calculate overall confidence
-        if confidences:
-            overall = sum(confidences.values()) / len(confidences)
-            confidences["overall"] = round(overall, 3)
-        else:
-            confidences["overall"] = 0.0
+        return confidences
 
         return confidences
 

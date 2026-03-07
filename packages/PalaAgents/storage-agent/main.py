@@ -615,15 +615,25 @@ async def register_tools(ws: websockets.WebSocketClientProtocol, agent_id: str) 
 
 async def handle_invoke(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
     """Handle tool invocation"""
+    import time
     name = params.get("name")
     arguments = params.get("arguments", {})
     
     if name not in TOOLS:
         raise ValueError(f"Unknown tool: {name}")
     
-    logger.info(f"Invoking tool: {name}")
-    result = await TOOLS[name](arguments)
-    return {"result": result}
+    start_time = time.time()
+    logger.info(f"[TOOL-START] {name}")
+    
+    try:
+        result = await TOOLS[name](arguments)
+        duration_ms = int((time.time() - start_time) * 1000)
+        logger.info(f"[TOOL-SUCCESS] {name} completed in {duration_ms}ms")
+        return {"result": result}
+    except Exception as e:
+        duration_ms = int((time.time() - start_time) * 1000)
+        logger.error(f"[TOOL-FAILED] {name} failed after {duration_ms}ms: {e}")
+        raise
 
 
 async def run_agent():

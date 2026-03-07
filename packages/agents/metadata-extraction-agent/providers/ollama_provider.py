@@ -132,6 +132,7 @@ class OllamaMetadataProvider(BaseMetadataProvider):
                 json={
                     "model": self.model,
                     "prompt": prompt,
+                    "format": "json",  # Force JSON output format
                     "stream": False,
                     "temperature": 0.3,  # Lower temperature for more structured output
                 },
@@ -162,66 +163,170 @@ class OllamaMetadataProvider(BaseMetadataProvider):
         """Build the extraction prompt for Ollama"""
         lang_hint = f" in {language}" if language else ""
         context_hint = f" The document appears to be a {document_context}." if document_context else ""
+        lang_value = language or "en"
 
-        prompt = f"""Extract structured metadata from the following OCR text{lang_hint}. {context_hint}
+        prompt = f"""You are an expert document analyst. Extract comprehensive structured metadata from the following document text{lang_hint}.{context_hint}
 
-OCR Text:
+Analyze the document carefully and extract ALL available information. Be thorough and precise.
+
+Document text:
 {ocr_text}
 
-Extract and return a JSON object with the following fields (use null for missing values):
+Extract and return ONLY a valid JSON object (no markdown, no explanation, no extra text) with EVERY field below. Use null for missing values:
 {{
-  "document_type": "type of document (letter, report, invoice, etc)",
-  "document_date": "date if present (YYYY-MM-DD format or null)",
-  "summary": "brief summary of the document",
-  "key_topics": ["list", "of", "topics"],
+  "document_type": "letter|report|memo|contract|notice|email|formal_correspondence|research_document|historical_document|other",
+  "document_date": "Extract date in YYYY-MM-DD format if present, otherwise null",
+  "summary": "2-3 sentence summary of the document's main purpose and content",
+  "key_topics": ["topic1", "topic2", "topic3", "topic4", "topic5"],
   "parties": {{
     "people": [
-      {{"name": "Person Name", "role": "their role if identifiable"}}
+      {{"name": "Full Name", "role": "Sender|Recipient|Author|Director|Department|Organization|Other", "affiliation": "Organization"}}
     ],
     "organizations": [
-      {{"name": "Organization Name"}}
+      {{"name": "Organization Name", "role": "Sender|Recipient|Institution|Department|Other"}}
     ]
   }},
   "places": [
-    {{"name": "Location", "context": "how it appears in document"}}
+    {{"name": "Location", "context": "Where mentioned in document", "role": "Origin|Destination|Mentioned|Historical|Other"}}
   ],
-  "tone": "formal/informal/academic/etc",
-  "language": "{language or 'detected'}",
-  "confidence": 0.7
+  "tone": "formal|informal|academic|legal|professional|respectful|urgent|other",
+  "language": "{lang_value}",
+  "confidence": 0.0-1.0
 }}
 
-Return ONLY the JSON object, no other text."""
+IMPORTANT INSTRUCTIONS:
+- Extract EVERY mention of people with their full names and roles
+- Extract EVERY mention of organizations/institutions
+- Extract EVERY geographic location mentioned (cities, centers, departments, etc.)
+- For document_date, extract any date mentioned (in body or header)
+- For summary, provide 2-3 sentences about the main topic
+- For key_topics, list 3-5 main themes (e.g., Buddha, Vipassana, meditation, monastery, etc.)
+- Confidence: Use 0.8-1.0 if information is explicit, 0.5-0.7 if inferred, 0.0-0.4 if uncertain
+- ALL fields required - use null only if truly not mentioned
+- Return ONLY valid JSON, no other text"""
 
         return prompt
 
     def _parse_response(self, response_text: str) -> Dict[str, Any]:
         """Parse Ollama response to extract metadata"""
         try:
-            # Try to extract JSON from the response
-            # Look for JSON object pattern
-            json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response_text, re.DOTALL)
+            # Clean up the response text - sometimes Ollama includes escape sequences
+            response_text = response_text.strip()
             
-            if json_match:
-                json_str = json_match.group(0)
-                metadata = json.loads(json_str)
-            else:
-                # If no JSON found, create basic structure
-                logger.warning("Could not parse JSON from Ollama response")
-                metadata = {
-                    "summary": response_text[:500],
-                    "confidence": 0.3,
-                    "note": "Partial extraction - Ollama response parsing incomplete"
-                }
-
-            # Ensure confidence score exists
-            if "confidence" not in metadata:
-                metadata["confidence"] = 0.6
-
+            # Try to parse as JSON directly first
+            try:
+                metadata = json.loads(response_text)
+                metadata = self._normalize_ollama_response(metadata)
+                return metadata
+            except json.JSONDecodeError:
+                pass
+            
+            # If direct parsing fails, try to extract JSON from the text
+            # Find the first '{' and then find its matching '}'
+            start_idx = response_text.find('{')
+            if start_idx == -1:
+                raise RuntimeError("No JSON object found in Ollama response")
+            
+            # Find the matching closing brace by counting braces
+            brace_count = 0
+            end_idx = start_idx
+            in_string = False
+            escape_next = False
+            
+            for i in range(start_idx, len(response_text)):
+                char = response_text[i]
+                
+                if escape_next:
+                    escape_next = False
+                    continue
+                    
+                if char == '\\':
+                    escape_next = True
+                    continue
+                    
+                if char == '"' and not escape_next:
+                    in_string = not in_string
+                    continue
+                
+                if not in_string:
+                    if char == '{':
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            end_idx = i + 1
+                            break
+            
+            if brace_count != 0:
+                raise RuntimeError("Unmatched braces in JSON response")
+            
+            json_str = response_text[start_idx:end_idx]
+            metadata = json.loads(json_str)
+            metadata = self._normalize_ollama_response(metadata)
+            
             return metadata
 
         except json.JSONDecodeError as e:
             logger.error(f"JSON parsing error: {e}")
+            logger.error(f"Response text (first 500 chars): {response_text[:500]}")
             raise RuntimeError(f"Failed to parse metadata JSON from Ollama: {str(e)}")
         except Exception as e:
             logger.error(f"Error parsing Ollama response: {str(e)}")
             raise
+
+    def _normalize_ollama_response(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Normalize Ollama response to ensure consistent field names and structure.
+        
+        Ollama may return capitalized field names (e.g., "People" instead of "people")
+        that need to be normalized to lowercase for the mapper.
+        """
+        # Handle parties capitalization (Ollama returns "People"/"Organizations")
+        if "parties" in data and isinstance(data["parties"], dict):
+            parties = data["parties"]
+            
+            # Normalize People -> people
+            if "People" in parties and "people" not in parties:
+                parties["people"] = parties.pop("People")
+            
+            # Normalize Organizations -> organizations
+            if "Organizations" in parties and "organizations" not in parties:
+                parties["organizations"] = parties.pop("Organizations")
+        
+        # Ensure confidence exists - calculate from available data
+        if "confidence" not in data:
+            data["confidence"] = self._calculate_confidence(data)
+        
+        logger.info(f"Normalized Ollama response keys: {list(data.keys())}")
+        return data
+
+    def _calculate_confidence(self, data: Dict[str, Any]) -> float:
+        """Calculate overall confidence score based on extracted data"""
+        field_weights = {
+            "document_type": 0.15,
+            "document_date": 0.15,
+            "summary": 0.15,
+            "key_topics": 0.15,
+            "parties": 0.25,
+            "places": 0.10,
+            "tone": 0.05,
+        }
+        
+        confidence = 0.0
+        total_weight = 0.0
+        
+        for field, weight in field_weights.items():
+            if field in data and data[field]:
+                # Field present and non-empty
+                if isinstance(data[field], dict):
+                    confidence += 0.85 * weight  # 85% confidence for nested objects
+                elif isinstance(data[field], (list, str)):
+                    if data[field]:  # Non-empty list/string
+                        confidence += 0.85 * weight
+                total_weight += weight
+        
+        # Normalize by total weight
+        if total_weight > 0:
+            confidence = confidence / total_weight
+        
+        return round(min(confidence, 1.0), 2)

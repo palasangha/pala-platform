@@ -16,6 +16,14 @@ class ArchipelagoMapper:
     SCHEMA_VERSION = "1.0.0"
 
     @staticmethod
+    def _as_dict(value: Any) -> Dict[str, Any]:
+        return value if isinstance(value, dict) else {}
+
+    @staticmethod
+    def _as_list(value: Any) -> List[Any]:
+        return value if isinstance(value, list) else []
+
+    @staticmethod
     def map_extracted_data(extracted_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Map extracted data to Archipelago Commons schema.
@@ -57,7 +65,8 @@ class ArchipelagoMapper:
     @staticmethod
     def _extract_title(data: Dict[str, Any]) -> str:
         """Extract title for Archipelago"""
-        summary = data.get("summary", {}).get("value", "")
+        summary_data = ArchipelagoMapper._as_dict(data.get("summary"))
+        summary = summary_data.get("value", "")
         if summary:
             # Use first sentence or truncate at 200 chars
             title = summary.split(".")[0][:200]
@@ -67,13 +76,16 @@ class ArchipelagoMapper:
     @staticmethod
     def _extract_description(data: Dict[str, Any]) -> str:
         """Extract description"""
-        return data.get("summary", {}).get("value", "No description available")
+        summary_data = ArchipelagoMapper._as_dict(data.get("summary"))
+        return summary_data.get("value", "No description available")
 
     @staticmethod
     def _extract_subjects(data: Dict[str, Any]) -> List[str]:
         """Extract subjects/topics"""
-        topics = data.get("key_topics", {}).get("topics", [])
-        doc_type = data.get("document_type", {}).get("value", "")
+        topics_data = ArchipelagoMapper._as_dict(data.get("key_topics"))
+        topics = ArchipelagoMapper._as_list(topics_data.get("topics"))
+        doc_type_data = ArchipelagoMapper._as_dict(data.get("document_type"))
+        doc_type = doc_type_data.get("value", "")
         subjects = list(topics)
         if doc_type:
             subjects.insert(0, doc_type)
@@ -83,8 +95,10 @@ class ArchipelagoMapper:
     def _extract_creators(data: Dict[str, Any]) -> List[str]:
         """Extract creators (senders/authors)"""
         creators = []
-        parties = data.get("parties", {})
-        for person in parties.get("people", []):
+        parties = ArchipelagoMapper._as_dict(data.get("parties"))
+        for person in ArchipelagoMapper._as_list(parties.get("people")):
+            if not isinstance(person, dict):
+                continue
             if person.get("role") in ["sender", "author", "creator"]:
                 creators.append(person.get("name", "Unknown"))
         return creators
@@ -93,11 +107,15 @@ class ArchipelagoMapper:
     def _extract_contributors(data: Dict[str, Any]) -> List[str]:
         """Extract contributors"""
         contributors = []
-        parties = data.get("parties", {})
-        for person in parties.get("people", []):
+        parties = ArchipelagoMapper._as_dict(data.get("parties"))
+        for person in ArchipelagoMapper._as_list(parties.get("people")):
+            if not isinstance(person, dict):
+                continue
             if person.get("role") in ["recipient", "mentioned", "signed"]:
                 contributors.append(person.get("name", "Unknown"))
-        for org in parties.get("organizations", []):
+        for org in ArchipelagoMapper._as_list(parties.get("organizations")):
+            if not isinstance(org, dict):
+                continue
             if org.get("role") in ["recipient", "mentioned"]:
                 contributors.append(org.get("name", "Unknown"))
         return contributors
@@ -105,26 +123,31 @@ class ArchipelagoMapper:
     @staticmethod
     def _extract_date_issued(data: Dict[str, Any]) -> Optional[str]:
         """Extract date issued"""
-        return data.get("document_date", {}).get("value")
+        document_date = ArchipelagoMapper._as_dict(data.get("document_date"))
+        return document_date.get("value")
 
     @staticmethod
     def _extract_date_created(data: Dict[str, Any]) -> Optional[str]:
         """Extract date created"""
-        return data.get("document_date", {}).get("value")
+        document_date = ArchipelagoMapper._as_dict(data.get("document_date"))
+        return document_date.get("value")
 
     @staticmethod
     def _extract_spatial_coverage(data: Dict[str, Any]) -> List[str]:
         """Extract spatial coverage/places"""
         places = []
-        place_data = data.get("places", {})
-        for location in place_data.get("locations", []):
+        place_data = ArchipelagoMapper._as_dict(data.get("places"))
+        for location in ArchipelagoMapper._as_list(place_data.get("locations")):
+            if not isinstance(location, dict):
+                continue
             places.append(location.get("name", ""))
         return [p for p in places if p]
 
     @staticmethod
     def _extract_type(data: Dict[str, Any]) -> str:
         """Extract resource type"""
-        doc_type = data.get("document_type", {}).get("value", "text")
+        document_type = ArchipelagoMapper._as_dict(data.get("document_type"))
+        doc_type = document_type.get("value", "text")
         type_mapping = {
             "letter": "letter",
             "memo": "memo",
@@ -141,8 +164,9 @@ class ArchipelagoMapper:
     @staticmethod
     def _extract_rights(data: Dict[str, Any]) -> str:
         """Extract rights information"""
-        access = data.get("access_level", {}).get("value", "public")
-        reasoning = data.get("access_level", {}).get("reasoning", "")
+        access_level = ArchipelagoMapper._as_dict(data.get("access_level"))
+        access = access_level.get("value", "public")
+        reasoning = access_level.get("reasoning", "")
 
         rights_map = {
             "public": "Public Domain / Open Access",
@@ -158,7 +182,8 @@ class ArchipelagoMapper:
     @staticmethod
     def _extract_access_rights(data: Dict[str, Any]) -> str:
         """Extract access rights URI (COAR standard)"""
-        access = data.get("access_level", {}).get("value", "public")
+        access_level = ArchipelagoMapper._as_dict(data.get("access_level"))
+        access = access_level.get("value", "public")
 
         access_rights_map = {
             "public": "http://purl.org/coar/access_right/c_abf2",  # open access
@@ -171,7 +196,7 @@ class ArchipelagoMapper:
     @staticmethod
     def _extract_collection_info(data: Dict[str, Any]) -> Dict[str, str]:
         """Extract collection/storage information"""
-        storage = data.get("storage_location", {})
+        storage = ArchipelagoMapper._as_dict(data.get("storage_location"))
         return {
             "archive": storage.get("archive", ""),
             "collection": storage.get("collection", ""),

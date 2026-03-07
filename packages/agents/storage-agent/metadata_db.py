@@ -485,8 +485,8 @@ class MetadataDB:
             # Delete versions first (foreign key constraint)
             cursor.execute('DELETE FROM content_versions WHERE content_id = ?', (content_id,))
             
-            # Delete metadata
-            cursor.execute('DELETE FROM content_metadata WHERE content_id = ?', (content_id,))
+            # Backward-compatible hard delete using document_id
+            cursor.execute('DELETE FROM content_metadata WHERE document_id = ?', (content_id,))
             
             deleted = cursor.rowcount > 0
             conn.commit()
@@ -498,6 +498,38 @@ class MetadataDB:
             return deleted
         except Exception as e:
             logger.error(f"Error deleting metadata: {e}")
+            raise
+
+    def delete_document(self, document_id: str) -> bool:
+        """
+        Soft-delete a single document by document_id.
+
+        Args:
+            document_id: Document identifier
+
+        Returns:
+            True if a row was marked deleted, False otherwise
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            deleted_at = datetime.now(timezone.utc).isoformat()
+            cursor.execute(
+                'UPDATE content_metadata SET deleted_at = ? WHERE document_id = ? AND deleted_at IS NULL',
+                (deleted_at, document_id),
+            )
+
+            deleted = cursor.rowcount > 0
+            conn.commit()
+            conn.close()
+
+            if deleted:
+                logger.info(f"Document soft-deleted: {document_id}")
+
+            return deleted
+        except Exception as e:
+            logger.error(f"Error soft-deleting document {document_id}: {e}")
             raise
     
     def delete_all(self) -> int:
@@ -541,9 +573,9 @@ class MetadataDB:
             
             # By content type
             cursor.execute('''
-                SELECT content_type, COUNT(*), COALESCE(SUM(file_size), 0)
+                SELECT type, COUNT(*), COALESCE(SUM(file_size), 0)
                 FROM content_metadata
-                GROUP BY content_type
+                GROUP BY type
             ''')
             by_type = {row[0]: {'count': row[1], 'size': row[2]} for row in cursor.fetchall()}
             

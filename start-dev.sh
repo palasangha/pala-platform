@@ -46,9 +46,16 @@ clear_port() {
     fi
 }
 
-echo -e "${GREEN}[Preflight] Clearing conflicting ports...${NC}"
+echo -e "${GREEN}[Preflight] Clearing conflicting ports and stopping old agents...${NC}"
 clear_port 4000 "MCP Server"
 clear_port 4001 "Web Dashboard"
+
+# Kill any running agent processes from previous sessions
+echo -e "${YELLOW}Stopping any running agent processes...${NC}"
+pkill -f "packages/agents/.*main.py" 2>/dev/null || true
+pkill -f "packages/PalaAgents/.*main.py" 2>/dev/null || true
+sleep 1
+echo -e "${GREEN}✓ Old agent processes stopped${NC}"
 echo ""
 
 # 0. Dependency gate

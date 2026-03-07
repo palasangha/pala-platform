@@ -6,14 +6,22 @@ import { useWebSocket } from '@/hooks/useWebSocket';
 interface StoredContent {
   document_id: string;
   type: string;
+  file_hash?: string;
   original_file: string;
   file_format: string;
+  file_size?: number;
   created_by: string;
   created_at: string;
+  updated_at?: string;
   version: number;
-  processed_data?: Record<string, any>;
+  processed_data?: Record<string, any> | string | null;
   metadata?: Record<string, any>;
   app_data?: Record<string, any>;
+  provider_id?: string;
+  storage_location?: string;
+  signature?: string | null;
+  tags?: Record<string, string> | null;
+  deleted_at?: string | null;
 }
 
 interface PaginationState {
@@ -26,6 +34,7 @@ export function ContentBrowser() {
   const { client, connected } = useWebSocket();
   const [contents, setContents] = useState<StoredContent[]>([]);
   const [loading, setLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pagination, setPagination] = useState<PaginationState>({
     page: 1,
@@ -40,6 +49,22 @@ export function ContentBrowser() {
   const [selectedContent, setSelectedContent] = useState<StoredContent | null>(
     null
   );
+
+  const extractToolResult = (response: any): any => {
+    const candidates = [
+      response?.result?.result?.result,
+      response?.result?.result,
+      response?.result,
+    ];
+
+    for (const candidate of candidates) {
+      if (candidate !== undefined && candidate !== null) {
+        return candidate;
+      }
+    }
+
+    return undefined;
+  };
 
   const fetchContent = useCallback(() => {
     if (!connected || !client) return;
@@ -65,6 +90,7 @@ export function ContentBrowser() {
         },
         id: `list-${Date.now()}`,
       };
+      const requestId = request.id;
 
       console.log('Sending list_documents request:', request);
       client.send(JSON.stringify(request));
@@ -72,9 +98,11 @@ export function ContentBrowser() {
       const handleMessage = (event: MessageEvent) => {
         try {
           const response = JSON.parse(event.data);
+          if (response.id !== requestId) {
+            return;
+          }
           
-          // Response is triple-nested: result.result.result.documents
-          const toolResult = response.result?.result?.result;
+          const toolResult = extractToolResult(response);
           if (toolResult?.documents !== undefined) {
             setContents(toolResult.documents);
             setPagination((p) => ({
@@ -114,6 +142,118 @@ export function ContentBrowser() {
   useEffect(() => {
     fetchContent();
   }, [fetchContent]);
+
+  const viewDocument = useCallback(
+    (documentId: string) => {
+      if (!client || !connected) return;
+
+      setLoading(true);
+      setError(null);
+
+      const requestId = `retrieve-${Date.now()}`;
+      const request = {
+        jsonrpc: '2.0',
+        method: 'tools/invoke',
+        params: {
+          agentId: 'storage-agent',
+          toolName: 'retrieve_document',
+          arguments: { document_id: documentId },
+        },
+        id: requestId,
+      };
+
+      client.send(JSON.stringify(request));
+
+      const handleMessage = (event: MessageEvent) => {
+        try {
+          const response = JSON.parse(event.data);
+          if (response.id !== requestId) {
+            return;
+          }
+
+          if (response.error) {
+            setError(response.error.message || 'Failed to retrieve document');
+          } else {
+            const fullDoc = extractToolResult(response);
+            if (fullDoc?.document_id) {
+              setSelectedContent(fullDoc as StoredContent);
+            } else {
+              setError('Could not find document in response');
+            }
+          }
+        } catch (e) {
+          setError('Failed to parse retrieve response');
+        } finally {
+          setLoading(false);
+          client.removeEventListener('message', handleMessage);
+        }
+      };
+
+      client.addEventListener('message', handleMessage);
+    },
+    [client, connected]
+  );
+
+  const deleteDocument = useCallback(
+    (documentId: string) => {
+      if (!client || !connected) return;
+      const confirmed = window.confirm(
+        `Delete document ${documentId}? This cannot be undone.`
+      );
+      if (!confirmed) return;
+
+      setDeletingId(documentId);
+      setError(null);
+
+      const requestId = `delete-${Date.now()}`;
+      const request = {
+        jsonrpc: '2.0',
+        method: 'tools/invoke',
+        params: {
+          agentId: 'storage-agent',
+          toolName: 'delete_document',
+          arguments: { document_id: documentId },
+        },
+        id: requestId,
+      };
+
+      client.send(JSON.stringify(request));
+
+      const handleMessage = (event: MessageEvent) => {
+        try {
+          const response = JSON.parse(event.data);
+          if (response.id !== requestId) {
+            return;
+          }
+
+          if (response.error) {
+            setError(response.error.message || 'Failed to delete document');
+          } else {
+            const result = extractToolResult(response);
+            if (result?.success) {
+              setContents((prev) =>
+                prev.filter((content) => content.document_id !== documentId)
+              );
+              if (selectedContent?.document_id === documentId) {
+                setSelectedContent(null);
+              }
+              fetchContent();
+            } else {
+              setError(result?.message || 'Delete operation did not succeed');
+            }
+          }
+        } catch (e) {
+          setError('Failed to parse delete response');
+        } finally {
+          setDeletingId(null);
+          client.removeEventListener('message', handleMessage);
+        }
+      };
+
+      client.addEventListener('message', handleMessage);
+    },
+    [client, connected, fetchContent, selectedContent]
+  );
 
   const totalPages = Math.ceil(pagination.total / pagination.pageSize);
 
@@ -258,12 +398,21 @@ export function ContentBrowser() {
                       {new Date(content.created_at).toLocaleDateString()}
                     </td>
                     <td className="px-4 py-2">
-                      <button
-                        onClick={() => setSelectedContent(content)}
-                        className="text-blue-400 hover:text-blue-300 text-xs font-medium"
-                      >
-                        View
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => viewDocument(content.document_id)}
+                          className="text-blue-400 hover:text-blue-300 text-xs font-medium"
+                        >
+                          View
+                        </button>
+                        <button
+                          onClick={() => deleteDocument(content.document_id)}
+                          disabled={deletingId === content.document_id}
+                          className="text-red-400 hover:text-red-300 text-xs font-medium disabled:opacity-50"
+                        >
+                          {deletingId === content.document_id ? 'Deleting...' : 'Delete'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -400,6 +549,19 @@ export function ContentBrowser() {
                 </div>
               )}
 
+              {selectedContent.processed_data !== undefined && selectedContent.processed_data !== null && (
+                <div className="bg-slate-50 p-3 rounded text-sm space-y-2">
+                  <label className="text-xs font-medium text-slate-600">
+                    Processed Data (content)
+                  </label>
+                  <pre className="text-xs text-slate-700 overflow-auto max-h-56 bg-white p-2 rounded border border-slate-200">
+                    {typeof selectedContent.processed_data === 'string'
+                      ? selectedContent.processed_data
+                      : JSON.stringify(selectedContent.processed_data, null, 2)}
+                  </pre>
+                </div>
+              )}
+
               {selectedContent.app_data && Object.keys(selectedContent.app_data).length > 0 && (
                 <div className="bg-slate-50 p-3 rounded text-sm space-y-2">
                   <label className="text-xs font-medium text-slate-600">
@@ -411,6 +573,15 @@ export function ContentBrowser() {
                 </div>
               )}
 
+              <div className="bg-slate-50 p-3 rounded text-sm space-y-2">
+                <label className="text-xs font-medium text-slate-600">
+                  Full Record JSON
+                </label>
+                <pre className="text-xs text-slate-700 overflow-auto max-h-64 bg-white p-2 rounded border border-slate-200">
+                  {JSON.stringify(selectedContent, null, 2)}
+                </pre>
+              </div>
+
               <div className="flex gap-2 pt-4">
                 <button
                   onClick={() => setSelectedContent(null)}
@@ -418,8 +589,12 @@ export function ContentBrowser() {
                 >
                   Close
                 </button>
-                <button className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
-                  Export
+                <button
+                  onClick={() => deleteDocument(selectedContent.document_id)}
+                  disabled={deletingId === selectedContent.document_id}
+                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-50"
+                >
+                  {deletingId === selectedContent.document_id ? 'Deleting...' : 'Delete'}
                 </button>
               </div>
             </div>

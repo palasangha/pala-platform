@@ -154,9 +154,6 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
             'deduplication': False,
             'message': 'Document stored successfully'
         }
-            'deduplication': False,
-            'message': 'Content stored successfully'
-        }
 
     except Exception as e:
         logger.error(f"Error in store_document: {e}", exc_info=True)
@@ -187,14 +184,22 @@ async def tool_retrieve_document(params: Dict[str, Any]) -> Dict[str, Any]:
         return {
             'document_id': metadata.document_id,
             'type': metadata.type,
+            'file_hash': metadata.file_hash,
             'original_file': metadata.original_file,
             'file_format': metadata.file_format,
+            'file_size': metadata.file_size,
             'processed_data': metadata.processed_data,
             'metadata': metadata.metadata,
             'app_data': metadata.app_data,
             'created_by': metadata.created_by,
             'created_at': metadata.created_at,
+            'updated_at': metadata.updated_at,
             'version': metadata.version,
+            'deleted_at': metadata.deleted_at,
+            'provider_id': metadata.provider_id,
+            'storage_location': metadata.storage_location,
+            'signature': metadata.signature,
+            'tags': metadata.tags,
         }
 
     except Exception as e:
@@ -227,17 +232,23 @@ async def tool_list_documents(params: Dict[str, Any]) -> Dict[str, Any]:
                     'type': item.type,
                     'original_file': item.original_file,
                     'file_format': item.file_format,
+                    'file_size': item.file_size,
+                    'processed_data': item.processed_data,
                     'created_by': item.created_by,
                     'created_at': item.created_at,
+                    'updated_at': item.updated_at,
                     'version': item.version,
-                    'file_hash': item.file_hash[:16] + '...',
+                    'file_hash': item.file_hash,
                     'metadata': item.metadata,
                     'app_data': item.app_data,
+                    'provider_id': item.provider_id,
+                    'storage_location': item.storage_location,
+                    'signature': item.signature,
+                    'tags': item.tags,
                 }
                 for item in items
             ],
             'total': len(items)
-        }
         }
 
     except Exception as e:
@@ -326,9 +337,9 @@ async def tool_delete_all_documents(params: Dict[str, Any]) -> Dict[str, Any]:
             if not provider:
                 continue
             try:
-                await provider.delete(item.content_id, item.storage_location)
+                await provider.delete(item.document_id, item.storage_location)
             except Exception as provider_error:
-                logger.warning(f"Failed to delete blob for {item.content_id}: {provider_error}")
+                logger.warning(f"Failed to delete blob for {item.document_id}: {provider_error}")
 
         deleted_count = metadata_db.delete_all()
         return {
@@ -338,6 +349,45 @@ async def tool_delete_all_documents(params: Dict[str, Any]) -> Dict[str, Any]:
         }
     except Exception as e:
         logger.error(f"Error deleting all documents: {e}", exc_info=True)
+        raise
+
+
+async def tool_delete_document(params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Delete a single document by document_id.
+
+    Params:
+    - document_id: Document identifier (required)
+    """
+    try:
+        document_id = params.get('document_id')
+        if not document_id:
+            raise ValueError('document_id is required')
+
+        metadata = metadata_db.get_metadata(document_id)
+        if not metadata:
+            return {
+                'success': False,
+                'document_id': document_id,
+                'message': 'Document not found',
+            }
+
+        provider = providers.get(metadata.provider_id)
+        if provider:
+            try:
+                await provider.delete(metadata.document_id, metadata.storage_location)
+            except Exception as provider_error:
+                logger.warning(f"Failed to delete blob for {metadata.document_id}: {provider_error}")
+
+        deleted = metadata_db.delete_document(document_id)
+
+        return {
+            'success': bool(deleted),
+            'document_id': document_id,
+            'message': 'Document deleted' if deleted else 'Document was already deleted or not found',
+        }
+    except Exception as e:
+        logger.error(f"Error deleting document: {e}", exc_info=True)
         raise
 
 
@@ -471,6 +521,7 @@ TOOLS: Dict[str, Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]] = {
     "store_document": tool_store_document,
     "retrieve_document": tool_retrieve_document,
     "list_documents": tool_list_documents,
+    "delete_document": tool_delete_document,
     "list_backends": tool_list_backends,
     "list_storage_providers": tool_list_storage_providers,
     "get_stats": tool_get_stats,
@@ -506,36 +557,36 @@ async def register_tools(ws: websockets.WebSocketClientProtocol, agent_id: str) 
     tool_defs = [
         {
             "name": "store_document",
-            "description": "Store document content with automatic SHA-256 deduplication",
+            "description": "Store document content with unified schema and deduplication",
             "agentId": agent_id,
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "job_id": {"type": "string"},
-                    "file_index": {"type": "number"},
-                    "ocr_text": {"type": "string"},
-                    "content_type": {"type": "string"},
-                    "original_file_path": {"type": "string"},
-                    "enriched_metadata": {"type": "object"},
-                    "document_metadata": {"type": "object"},
+                    "type": {"type": "string"},
+                    "original_file": {"type": "string"},
+                    "file_format": {"type": "string"},
+                    "processed_data": {"type": ["object", "string"]},
+                    "metadata": {"type": "object"},
+                    "app_data": {"type": "object"},
+                    "created_by": {"type": "string"},
                     "backend": {"type": "string"},
                     "provider": {"type": "string"},
                     "signature": {"type": "string"},
                     "tags": {"type": "object"}
                 },
-                "required": ["ocr_text"]
+                "required": ["type", "original_file", "file_format", "processed_data"]
             }
         },
         {
             "name": "retrieve_document",
-            "description": "Retrieve stored document by content ID",
+            "description": "Retrieve stored document by document ID",
             "agentId": agent_id,
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "content_id": {"type": "string"}
+                    "document_id": {"type": "string"}
                 },
-                "required": ["content_id"]
+                "required": ["document_id"]
             }
         },
         {
@@ -545,12 +596,25 @@ async def register_tools(ws: websockets.WebSocketClientProtocol, agent_id: str) 
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "content_type": {"type": "string"},
+                    "type": {"type": "string"},
+                    "created_by": {"type": "string"},
                     "backend": {"type": "string"},
                     "provider": {"type": "string"},
                     "limit": {"type": "number"},
                     "offset": {"type": "number"}
                 }
+            }
+        },
+        {
+            "name": "delete_document",
+            "description": "Delete a single stored document by document ID",
+            "agentId": agent_id,
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "document_id": {"type": "string"}
+                },
+                "required": ["document_id"]
             }
         },
         {
@@ -618,6 +682,7 @@ TOOLS = {
     "store_document": tool_store_document,
     "retrieve_document": tool_retrieve_document,
     "list_documents": tool_list_documents,
+    "delete_document": tool_delete_document,
     "list_backends": tool_list_backends,
     "list_storage_providers": tool_list_storage_providers,
     "get_stats": tool_get_stats,
