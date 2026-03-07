@@ -43,7 +43,8 @@ class NSQJobCoordinator:
         for file_path in folder_path.glob(pattern):
             if file_path.is_file():
                 if file_path.suffix.lower() in self.SUPPORTED_EXTENSIONS:
-                    image_files.append(str(file_path))
+                    # Convert to absolute path to ensure workers can find the file
+                    image_files.append(str(file_path.absolute()))
 
         # Sort for consistent ordering
         return sorted(image_files)
