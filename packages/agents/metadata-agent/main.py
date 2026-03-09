@@ -64,7 +64,7 @@ class MetadataAgent:
 
     def __init__(self):
         self.agent_id = os.getenv('MCP_AGENT_ID', 'metadata-agent')
-        self.server_url = os.getenv('MCP_SERVER_URL', 'ws://mcp-server:3000')
+        self.server_url = os.getenv('MCP_SERVER_URL', 'ws://mcp-server:3010')
         self.token = os.getenv('MCP_AGENT_TOKEN')
         self.ollama_host = os.getenv('OLLAMA_HOST', 'http://ollama:11434')
         self.ollama_model = os.getenv('OLLAMA_MODEL', 'llama3.2')

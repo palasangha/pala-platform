@@ -26,7 +26,7 @@ export function useWebSocket(url?: string) {
     if (!url && typeof window !== 'undefined') {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.hostname;
-      setWsUrl(`${protocol}//${host}:4000`);
+      setWsUrl(`${protocol}//${host}:3010`);
     }
   }, [url]);
 

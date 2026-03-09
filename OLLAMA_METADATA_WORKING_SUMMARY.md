@@ -113,12 +113,8 @@ curl http://localhost:11434/api/generate -d '{
 ## Integration Points
 
 ### 1. MCP Server Integration
-The metadata-extraction-agent connects to MCP server via WebSocket at:
-- **Server URL**: `ws://mcp-server:3000`
+ **Server URL**: `ws://mcp-server:3000`
 - **Tool**: `extract_metadata`
-- **Parameters**:
-  - `text` (required): OCR extracted text
-  - `model` (required): "ollama" 
   - `output_type` (required): "pala", "archipelago", or "combined"
   - `language` (optional): ISO language code
   - `document_context` (optional): "historical_document", "letter", etc.

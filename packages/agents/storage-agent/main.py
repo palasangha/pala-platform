@@ -706,7 +706,7 @@ async def handle_invoke(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
 
 async def run_agent():
     """Main agent loop"""
-    server_url = os.getenv("MCP_SERVER_URL", "ws://localhost:3000")
+    server_url = os.getenv("MCP_SERVER_URL", "ws://localhost:3010")
     agent_id = os.getenv("MCP_AGENT_ID", "storage-agent")
     
     logger.info(f"Starting Storage Agent - connecting to {server_url}")

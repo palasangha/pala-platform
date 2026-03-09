@@ -37,7 +37,7 @@ OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama2
 
 # MCP Server Connection
-MCP_SERVER_URL=ws://mcp-server:3000
+MCP_SERVER_URL=ws://mcp-server:3010
 MCP_AGENT_ID=metadata-extraction-agent
 MCP_AGENT_TOKEN=optional-auth-token
 

@@ -16,7 +16,7 @@ MCP agent that exposes document storage operations with automatic deduplication.
 ## Usage
 
 ```bash
-export MCP_SERVER_URL="ws://localhost:3000"
+export MCP_SERVER_URL="ws://localhost:3010"
 export MCP_AGENT_ID="storage-agent"
 python main.py
 ```

@@ -58,7 +58,7 @@ class MetadataExtractionAgent:
     def __init__(self):
         """Initialize metadata extraction agent"""
         self.agent_id = os.getenv("MCP_AGENT_ID", "metadata-extraction-agent")
-        self.server_url = os.getenv("MCP_SERVER_URL", "ws://mcp-server:3000")
+        self.server_url = os.getenv("MCP_SERVER_URL", "ws://mcp-server:3010")
         self.token = os.getenv("MCP_AGENT_TOKEN")
 
         # Initialize Claude provider

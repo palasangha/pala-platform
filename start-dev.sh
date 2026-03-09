@@ -47,8 +47,8 @@ clear_port() {
 }
 
 echo -e "${GREEN}[Preflight] Clearing conflicting ports and stopping old agents...${NC}"
-clear_port 4000 "MCP Server"
-clear_port 4001 "Web Dashboard"
+clear_port 3010 "MCP Server"
+clear_port 3020 "Web Dashboard"
 
 # Kill any running agent processes from previous sessions
 echo -e "${YELLOW}Stopping any running agent processes...${NC}"
@@ -118,7 +118,7 @@ if [ ! -f "venv/bin/websockets" ]; then
     echo -e "${YELLOW}Installing dependencies...${NC}"
     pip install -q -r requirements.txt
 fi
-export MCP_SERVER_URL="ws://localhost:4000"
+export MCP_SERVER_URL="ws://localhost:3010"
 export MCP_AGENT_ID="sample-agent"
 python main.py > "$ROOT_DIR/logs/sample-agent.log" 2>&1 &
 SAMPLE_PID=$!
@@ -139,7 +139,7 @@ if [ ! -f "venv/bin/anthropic" ]; then
     echo -e "${YELLOW}Installing dependencies...${NC}"
     pip install -q -r requirements.txt
 fi
-export MCP_SERVER_URL="ws://localhost:4000"
+export MCP_SERVER_URL="ws://localhost:3010"
 export MCP_AGENT_ID="metadata-extraction-agent"
 python main.py > "$ROOT_DIR/logs/metadata-agent.log" 2>&1 &
 METADATA_PID=$!
@@ -160,7 +160,7 @@ if [ ! -f "venv/bin/websockets" ]; then
     echo -e "${YELLOW}Installing dependencies...${NC}"
     pip install -q -r requirements.txt
 fi
-export MCP_SERVER_URL="ws://localhost:4000"
+export MCP_SERVER_URL="ws://localhost:3010"
 export MCP_AGENT_ID="storage-agent"
 python main.py > "$ROOT_DIR/logs/storage-agent.log" 2>&1 &
 STORAGE_PID=$!
@@ -187,11 +187,11 @@ echo -e "${GREEN}✓ All services running!${NC}"
 echo -e "${BLUE}================================================${NC}\n"
 
 echo -e "${YELLOW}Services:${NC}"
-echo -e "  • MCP Server:          ws://localhost:4000"
+echo -e "  • MCP Server:          ws://localhost:3010"
 echo -e "  • Sample Agent:        Connected (echo, sum)"
 echo -e "  • Metadata Agent:      Connected (extract_metadata)"
 echo -e "  • Storage Agent:       Connected (store_document, retrieve_document, list_documents, etc.)"
-echo -e "  • Web Dashboard:       http://localhost:4001\n"
+echo -e "  • Web Dashboard:       http://localhost:3020\n"
 
 echo -e "${YELLOW}Logs:${NC}"
 echo -e "  • MCP Server:          tail -f logs/mcp-server.log"

@@ -602,7 +602,7 @@ function DeveloperPanel() {
             <div>
               <p className="font-medium text-slate-200">1. Connect to MCP Server</p>
               <pre className="mt-1 bg-slate-900 p-2 rounded text-xs text-blue-300 border border-slate-600">
-{`const ws = new WebSocket('ws://localhost:4000');`}
+{`const ws = new WebSocket('ws://localhost:3010');`}
               </pre>
             </div>
 
