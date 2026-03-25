@@ -201,11 +201,33 @@ class SQLiteProvider(StorageProvider):
         created_by: str,
         file_hash: Optional[str] = None,
     ) -> Document:
-        """Store a document with the new unified schema"""
+        """Store a document with deduplication and simulated redundancy"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
         try:
+            # Deduplication: check for existing file_hash
+            if file_hash:
+                cursor.execute('SELECT id FROM documents WHERE file_hash = ? AND deleted_at IS NULL', (file_hash,))
+                existing = cursor.fetchone()
+                if existing:
+                    conn.close()
+                    logger.info(f"Duplicate detected for file_hash {file_hash}, returning existing document.")
+                    # Optionally, fetch and return the existing document
+                    cursor = sqlite3.connect(self.db_path).cursor()
+                    cursor.execute('''
+                        SELECT id, type, original_file, file_format, processed_data, metadata, app_data, created_by, created_at, updated_at, version, deleted_at, file_hash
+                        FROM documents WHERE id = ?
+                    ''', (existing[0],))
+                    row = cursor.fetchone()
+                    cursor.connection.close()
+                    return Document(
+                        id=row[0], type=row[1], original_file=row[2], file_format=row[3],
+                        processed_data=json.loads(row[4]), metadata=json.loads(row[5]),
+                        app_data=json.loads(row[6]), created_by=row[7], created_at=row[8],
+                        updated_at=row[9], version=row[10], deleted_at=row[11], file_hash=row[12]
+                    )
+
             doc_id = f"doc-{uuid.uuid4()}"
             now = datetime.now(timezone.utc).isoformat()
 
@@ -229,6 +251,17 @@ class SQLiteProvider(StorageProvider):
             ))
 
             conn.commit()
+
+            # Simulated redundancy: copy original_file_base64 to a secondary location (e.g., backup folder)
+            # This is a simulation; in production, you would write to another storage backend
+            original_file_base64 = processed_data.get('original_file_base64')
+            if original_file_base64:
+                backup_dir = Path('./redundant_backup')
+                backup_dir.mkdir(exist_ok=True)
+                backup_path = backup_dir / f"{doc_id}.{file_format}.b64"
+                with open(backup_path, 'w') as f:
+                    f.write(original_file_base64)
+                logger.info(f"Redundant copy written to {backup_path}")
 
             # Log the action
             cursor.execute('''
