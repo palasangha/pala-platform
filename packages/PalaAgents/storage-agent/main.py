@@ -16,11 +16,39 @@ import websockets
 from provider_factory import ProviderFactory, get_provider
 from storage_provider import StorageProvider
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+
+
+# Always use DEBUG for development unless overridden by LOGLEVEL env var
+loglevel = os.environ.get('LOGLEVEL', 'DEBUG').upper()
+root_logger = logging.getLogger()
+root_logger.setLevel(getattr(logging, loglevel, logging.DEBUG))
+
+# Console handler
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.DEBUG)
+console_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+root_logger.addHandler(console_handler)
+
+
+# File handler for logs/storage-agent.log (auto-create logs dir)
+logfile_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../logs'))
+os.makedirs(logfile_dir, exist_ok=True)
+logfile_path = os.path.join(logfile_dir, 'storage-agent.log')
+file_handler = logging.FileHandler(logfile_path)
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+root_logger.addHandler(file_handler)
+
+# Remove duplicate handlers if any
+if len(root_logger.handlers) > 2:
+    root_logger.handlers = root_logger.handlers[-2:]
+
+
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+# Top-level debug log to confirm DEBUG output at import time
+logging.getLogger().debug("DEBUG LOG TEST: module import time")
 
 agent_dir = Path(__file__).parent
 storage_dir = agent_dir / 'data'
@@ -37,6 +65,13 @@ except Exception as e:
 
 # Tool implementations
 async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
+    log = logging.getLogger()
+    log.debug(f"DEBUG LOG TEST: tool_store_document called (__file__={__file__})")
+    for h in log.handlers:
+        try:
+            h.flush()
+        except Exception:
+            pass
     """
     Store document using unified schema with automatic deduplication
     
@@ -87,8 +122,8 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
             created_by=created_by,
             file_hash=file_hash
         )
-
-        return {
+        logger.debug(f"tool_store_document: doc.id={doc.id}, storage_location={getattr(doc, 'storage_location', None)}, provider_id={getattr(doc, 'provider_id', None)}, duplicate={duplicate}")
+        result = {
             'document_id': doc.id,
             'type': doc.type,
             'original_file': doc.original_file,
@@ -96,9 +131,13 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
             'created_by': doc.created_by,
             'created_at': doc.created_at,
             'version': doc.version,
+            'storage_location': getattr(doc, 'storage_location', None),
+            'provider_id': getattr(doc, 'provider_id', None),
             'duplicate': duplicate,
             'message': 'Document updated (duplicate)' if duplicate else 'Document stored successfully'
         }
+        logger.debug(f"tool_store_document: returning result={json.dumps(result)}")
+        return result
 
     except Exception as e:
         logger.error(f"Error in store_document: {e}", exc_info=True)
@@ -106,6 +145,13 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def tool_store_extraction(params: Dict[str, Any]) -> Dict[str, Any]:
+    log = logging.getLogger()
+    log.debug("DEBUG LOG TEST: tool_store_extraction called")
+    for h in log.handlers:
+        try:
+            h.flush()
+        except Exception:
+            pass
     """
     Store a generic extraction result to unified table
     
@@ -159,6 +205,13 @@ async def tool_store_extraction(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def tool_retrieve_extraction(params: Dict[str, Any]) -> Dict[str, Any]:
+    log = logging.getLogger()
+    log.debug("DEBUG LOG TEST: tool_retrieve_extraction called")
+    for h in log.handlers:
+        try:
+            h.flush()
+        except Exception:
+            pass
     """Retrieve a single extraction by ID"""
     try:
         extraction_id = params.get('extraction_id')
@@ -187,6 +240,13 @@ async def tool_retrieve_extraction(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def tool_list_extractions(params: Dict[str, Any]) -> Dict[str, Any]:
+    log = logging.getLogger()
+    log.debug("DEBUG LOG TEST: tool_list_extractions called")
+    for h in log.handlers:
+        try:
+            h.flush()
+        except Exception:
+            pass
     """List extractions with optional filters"""
     try:
         source_type = params.get('source_type')
@@ -225,6 +285,13 @@ async def tool_list_extractions(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def tool_retrieve_document(params: Dict[str, Any]) -> Dict[str, Any]:
+    log = logging.getLogger()
+    log.debug(f"DEBUG LOG TEST: tool_retrieve_document called (__file__={__file__})")
+    for h in log.handlers:
+        try:
+            h.flush()
+        except Exception:
+            pass
     """
     Retrieve document by document ID
     
@@ -240,7 +307,8 @@ async def tool_retrieve_document(params: Dict[str, Any]) -> Dict[str, Any]:
         if not doc:
             raise ValueError(f'Document not found: {document_id}')
 
-        return {
+        logger.debug(f"tool_retrieve_document: doc.id={doc.id}, storage_location={getattr(doc, 'storage_location', None)}, provider_id={getattr(doc, 'provider_id', None)}")
+        result = {
             'document_id': doc.id,
             'type': doc.type,
             'original_file': doc.original_file,
@@ -251,8 +319,12 @@ async def tool_retrieve_document(params: Dict[str, Any]) -> Dict[str, Any]:
             'created_by': doc.created_by,
             'created_at': doc.created_at,
             'updated_at': doc.updated_at,
-            'version': doc.version
+            'version': doc.version,
+            'storage_location': getattr(doc, 'storage_location', None),
+            'provider_id': getattr(doc, 'provider_id', None)
         }
+        logger.debug(f"tool_retrieve_document: returning result={json.dumps(result)}")
+        return result
 
     except Exception as e:
         logger.error(f"Error in retrieve_document: {e}", exc_info=True)
@@ -260,6 +332,13 @@ async def tool_retrieve_document(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def tool_list_documents(params: Dict[str, Any]) -> Dict[str, Any]:
+    log = logging.getLogger()
+    log.debug(f"DEBUG LOG TEST: tool_list_documents called (__file__={__file__})")
+    for h in log.handlers:
+        try:
+            h.flush()
+        except Exception:
+            pass
     """
     List stored documents
     
@@ -282,24 +361,30 @@ async def tool_list_documents(params: Dict[str, Any]) -> Dict[str, Any]:
             offset=offset
         )
 
-        return {
+        documents = []
+        for doc in result['documents']:
+            doc_info = {
+                'document_id': doc.id,
+                'type': doc.type,
+                'original_file': doc.original_file,
+                'file_format': doc.file_format,
+                'created_by': doc.created_by,
+                'created_at': doc.created_at,
+                'version': doc.version,
+                'storage_location': getattr(doc, 'storage_location', None),
+                'provider_id': getattr(doc, 'provider_id', None)
+            }
+            logger.debug(f"tool_list_documents: doc.id={doc.id}, storage_location={doc_info['storage_location']}, provider_id={doc_info['provider_id']}")
+            documents.append(doc_info)
+        result_dict = {
             'count': result['count'],
             'total': result['total'],
             'limit': result['limit'],
             'offset': result['offset'],
-            'documents': [
-                {
-                    'document_id': doc.id,
-                    'type': doc.type,
-                    'original_file': doc.original_file,
-                    'file_format': doc.file_format,
-                    'created_by': doc.created_by,
-                    'created_at': doc.created_at,
-                    'version': doc.version
-                }
-                for doc in result['documents']
-            ]
+            'documents': documents
         }
+        logger.debug(f"tool_list_documents: returning result={json.dumps(result_dict)}")
+        return result_dict
 
     except Exception as e:
         logger.error(f"Error in list_documents: {e}", exc_info=True)
@@ -307,6 +392,13 @@ async def tool_list_documents(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def tool_get_stats(params: Dict[str, Any]) -> Dict[str, Any]:
+    log = logging.getLogger()
+    log.debug("DEBUG LOG TEST: tool_get_stats called")
+    for h in log.handlers:
+        try:
+            h.flush()
+        except Exception:
+            pass
     """
     Get storage statistics
     
@@ -322,6 +414,13 @@ async def tool_get_stats(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def tool_delete_all_documents(params: Dict[str, Any]) -> Dict[str, Any]:
+    log = logging.getLogger()
+    log.debug("DEBUG LOG TEST: tool_delete_all_documents called")
+    for h in log.handlers:
+        try:
+            h.flush()
+        except Exception:
+            pass
     """
     Delete all documents from storage.
     """
@@ -338,6 +437,13 @@ async def tool_delete_all_documents(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def tool_answer_content_query(params: Dict[str, Any]) -> Dict[str, Any]:
+    log = logging.getLogger()
+    log.debug("DEBUG LOG TEST: tool_answer_content_query called")
+    for h in log.handlers:
+        try:
+            h.flush()
+        except Exception:
+            pass
     """
     Answer a natural-language query using stored documents with citations.
 
@@ -482,6 +588,7 @@ def make_error(message: str, id: str = None, code: int = -32000) -> str:
 # Agent client
 async def register_tools(ws: websockets.WebSocketClientProtocol, agent_id: str) -> None:
     """Register storage tools with MCP server"""
+    logger.info(f"[AGENT-REGISTER] Registering tools from __file__={__file__} cwd={os.getcwd()} agent_id={agent_id}")
     tool_defs = [
         {
             "name": "store_document",
@@ -643,6 +750,7 @@ async def run_agent():
     server_url = os.getenv("MCP_SERVER_URL", "ws://localhost:4000")
     agent_id = os.getenv("MCP_AGENT_ID", "storage-agent")
     
+    logger.info(f"[AGENT-START] __file__={__file__} cwd={os.getcwd()}")
     logger.info(f"Starting Storage Agent - connecting to {server_url}")
     
     while True:

@@ -214,6 +214,7 @@ class SQLiteProvider(StorageProvider):
                 if existing:
                     conn.close()
                     logger.info(f"Duplicate detected for file_hash {file_hash}, returning existing document.")
+                    logger.debug(f"store_document (DUP): doc.id={existing[0]}, storage_location will be set to row[2], provider_id=sqlite")
                     # Optionally, fetch and return the existing document
                     cursor = sqlite3.connect(self.db_path).cursor()
                     cursor.execute('''
@@ -222,12 +223,14 @@ class SQLiteProvider(StorageProvider):
                     ''', (existing[0],))
                     row = cursor.fetchone()
                     cursor.connection.close()
+                    logger.debug(f"store_document (DUP): row[0]={row[0]}, row[2]={row[2]}")
                     return (
                         Document(
                             id=row[0], type=row[1], original_file=row[2], file_format=row[3],
                             processed_data=json.loads(row[4]), metadata=json.loads(row[5]),
                             app_data=json.loads(row[6]), created_by=row[7], created_at=row[8],
-                            updated_at=row[9], version=row[10], deleted_at=row[11], file_hash=row[12]
+                            updated_at=row[9], version=row[10], deleted_at=row[11], file_hash=row[12],
+                            storage_location=row[2], provider_id='sqlite'
                         ),
                         True
                     )
@@ -276,6 +279,7 @@ class SQLiteProvider(StorageProvider):
             conn.commit()
             conn.close()
 
+            logger.debug(f"store_document: doc.id={doc_id}, storage_location={original_file}, provider_id=sqlite")
             return (
                 Document(
                     id=doc_id,
@@ -288,7 +292,9 @@ class SQLiteProvider(StorageProvider):
                     created_by=created_by,
                     created_at=now,
                     updated_at=now,
-                    file_hash=file_hash
+                    file_hash=file_hash,
+                    storage_location=original_file if original_file else None,
+                    provider_id='sqlite'
                 ),
                 False
             )
@@ -315,7 +321,7 @@ class SQLiteProvider(StorageProvider):
         if not row:
             return None
 
-        return Document(
+        doc = Document(
             id=row[0],
             type=row[1],
             original_file=row[2],
@@ -328,8 +334,12 @@ class SQLiteProvider(StorageProvider):
             updated_at=row[9],
             version=row[10],
             deleted_at=row[11],
-            file_hash=row[12]
+            file_hash=row[12],
+            storage_location=row[2] if row[2] else None,
+            provider_id='sqlite'
         )
+        logger.debug(f"retrieve_document: doc.id={doc.id}, storage_location={doc.storage_location}, provider_id={doc.provider_id}")
+        return doc
 
     async def list_documents(
         self,
@@ -368,7 +378,7 @@ class SQLiteProvider(StorageProvider):
 
         documents = []
         for row in rows:
-            documents.append(Document(
+            doc = Document(
                 id=row[0],
                 type=row[1],
                 original_file=row[2],
@@ -379,8 +389,12 @@ class SQLiteProvider(StorageProvider):
                 created_by=row[7],
                 created_at=row[8],
                 updated_at=row[9],
-                version=row[10]
-            ))
+                version=row[10],
+                storage_location=row[2] if row[2] else None,
+                provider_id='sqlite'
+            )
+            logger.debug(f"list_documents: doc.id={doc.id}, storage_location={doc.storage_location}, provider_id={doc.provider_id}")
+            documents.append(doc)
 
         return {
             'count': len(documents),
@@ -809,5 +823,7 @@ class SQLiteProvider(StorageProvider):
             updated_at=row[9],
             version=row[10],
             deleted_at=row[11],
-            file_hash=row[12]
+            file_hash=row[12],
+            storage_location=row[2],
+            provider_id='sqlite'
         )

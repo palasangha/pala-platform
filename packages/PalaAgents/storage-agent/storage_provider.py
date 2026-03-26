@@ -27,6 +27,8 @@ class Document:
     version: int = 1
     deleted_at: Optional[str] = None
     file_hash: Optional[str] = None  # SHA-256 for deduplication
+    storage_location: Optional[str] = None  # Path or URI where file is stored
+    provider_id: Optional[str] = None  # Storage provider identifier
 
 
 @dataclass
