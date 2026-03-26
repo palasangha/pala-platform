@@ -76,7 +76,8 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
             app_data['file_index'] = params.get('file_index', 0)
 
         # Store the document
-        doc = await provider.store_document(
+        # Patch: detect duplicate and update response accordingly
+        doc, duplicate = await provider.store_document(
             type=doc_type,
             original_file=original_file,
             file_format=file_format,
@@ -95,7 +96,8 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
             'created_by': doc.created_by,
             'created_at': doc.created_at,
             'version': doc.version,
-            'message': 'Document stored successfully'
+            'duplicate': duplicate,
+            'message': 'Document updated (duplicate)' if duplicate else 'Document stored successfully'
         }
 
     except Exception as e:

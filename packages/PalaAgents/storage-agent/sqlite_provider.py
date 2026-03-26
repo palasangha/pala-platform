@@ -190,6 +190,7 @@ class SQLiteProvider(StorageProvider):
         """Calculate SHA-256 hash of content"""
         return hashlib.sha256(content).hexdigest()
 
+
     async def store_document(
         self,
         type: str,
@@ -200,8 +201,8 @@ class SQLiteProvider(StorageProvider):
         app_data: Dict[str, Any],
         created_by: str,
         file_hash: Optional[str] = None,
-    ) -> Document:
-        """Store a document with deduplication and simulated redundancy"""
+    ) -> tuple[Document, bool]:
+        """Store a document with deduplication and simulated redundancy. Returns (Document, duplicate: bool)"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
@@ -221,11 +222,14 @@ class SQLiteProvider(StorageProvider):
                     ''', (existing[0],))
                     row = cursor.fetchone()
                     cursor.connection.close()
-                    return Document(
-                        id=row[0], type=row[1], original_file=row[2], file_format=row[3],
-                        processed_data=json.loads(row[4]), metadata=json.loads(row[5]),
-                        app_data=json.loads(row[6]), created_by=row[7], created_at=row[8],
-                        updated_at=row[9], version=row[10], deleted_at=row[11], file_hash=row[12]
+                    return (
+                        Document(
+                            id=row[0], type=row[1], original_file=row[2], file_format=row[3],
+                            processed_data=json.loads(row[4]), metadata=json.loads(row[5]),
+                            app_data=json.loads(row[6]), created_by=row[7], created_at=row[8],
+                            updated_at=row[9], version=row[10], deleted_at=row[11], file_hash=row[12]
+                        ),
+                        True
                     )
 
             doc_id = f"doc-{uuid.uuid4()}"
@@ -272,18 +276,21 @@ class SQLiteProvider(StorageProvider):
             conn.commit()
             conn.close()
 
-            return Document(
-                id=doc_id,
-                type=type,
-                original_file=original_file,
-                file_format=file_format,
-                processed_data=processed_data or {},
-                metadata=metadata or {},
-                app_data=app_data or {},
-                created_by=created_by,
-                created_at=now,
-                updated_at=now,
-                file_hash=file_hash
+            return (
+                Document(
+                    id=doc_id,
+                    type=type,
+                    original_file=original_file,
+                    file_format=file_format,
+                    processed_data=processed_data or {},
+                    metadata=metadata or {},
+                    app_data=app_data or {},
+                    created_by=created_by,
+                    created_at=now,
+                    updated_at=now,
+                    file_hash=file_hash
+                ),
+                False
             )
 
         except Exception as e:
