@@ -47,6 +47,7 @@ export function useWebSocket(url?: string) {
     };
 
     ws.onmessage = (event) => {
+      console.log('[WS] [RECV] Raw message:', event.data);
       try {
         const message = JSON.parse(event.data);
         if (message.id && messageHandlerRef.current.has(message.id)) {

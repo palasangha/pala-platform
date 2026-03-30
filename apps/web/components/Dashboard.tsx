@@ -602,9 +602,14 @@ export default function Dashboard() {
           backend: selectedBackend,
         },
       };
-      console.log('[MCP] Sending store_document payload:', payload);
-      const result = await send('tools/invoke', payload) as any;
-      console.log('[MCP] Received backend response:', result);
+      console.log('[MCP] [TOOL-REQ] Sending store_document payload:', payload);
+      try {
+        const result = await send('tools/invoke', payload) as any;
+        console.log('[MCP] [TOOL-RESP] Received backend response:', result);
+      } catch (err) {
+        console.error('[MCP] [TOOL-ERR] Error from backend:', err);
+        throw err;
+      }
 
       // Check for backend error or success: false
       if (result?.error || result?.success === false) {
@@ -664,7 +669,7 @@ export default function Dashboard() {
     const startTime = Date.now();
 
     try {
-      const result = await send('tools/invoke', {
+      const payload = {
         name: 'answer_content_query',
         agentId: 'storage-agent',
         arguments: {
@@ -673,9 +678,13 @@ export default function Dashboard() {
           backend: selectedBackend,
           include_web: true,
         },
-      }) as any;
+      };
+      console.log('[MCP] [TOOL-REQ] Sending answer_content_query payload:', payload);
+      const result = await send('tools/invoke', payload) as any;
+      console.log('[MCP] [TOOL-RESP] Received backend response:', result);
 
       if (result?.success === false || result?.error) {
+        console.error('[MCP] [TOOL-ERR] Backend returned error:', result?.error);
         throw new Error(result?.error || 'Search failed');
       }
 

@@ -65,13 +65,14 @@ except Exception as e:
 
 # Tool implementations
 async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
-    log = logging.getLogger()
-    log.debug(f"DEBUG LOG TEST: tool_store_document called (__file__={__file__})")
-    for h in log.handlers:
+    logger.info(f"[TOOL-INVOKE] store_document called with params: {json.dumps(params)[:500]}")
+    print(f"[TOOL-DEBUG] store_document params: {json.dumps(params)[:500]}")
+    for h in logger.handlers:
         try:
             h.flush()
         except Exception:
             pass
+    logger.debug(f"[TOOL-DEBUG] store_document full params: {json.dumps(params)}")
     """
     Store document using unified schema with automatic deduplication
     
@@ -85,6 +86,7 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
     - created_by: User/app that created this (required)
     """
     try:
+        logger.debug(f"[TOOL-DEBUG] Extracting processed_data and required fields")
         # Get content from new or old parameter names for backward compatibility
         processed_data = params.get('processed_data', {})
         if not processed_data and params.get('content'):
@@ -110,6 +112,7 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
             app_data['job_id'] = params.get('job_id')
             app_data['file_index'] = params.get('file_index', 0)
 
+        logger.debug(f"[TOOL-DEBUG] Storing document with type={doc_type}, original_file={original_file}, file_format={file_format}, created_by={created_by}, metadata={metadata}, app_data={app_data}, file_hash={file_hash}")
         # Store the document
         # Patch: detect duplicate and update response accordingly
         doc, duplicate = await provider.store_document(
@@ -122,6 +125,7 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
             created_by=created_by,
             file_hash=file_hash
         )
+        logger.debug(f"[TOOL-DEBUG] Document stored: id={doc.id}, duplicate={duplicate}, storage_location={getattr(doc, 'storage_location', None)}, provider_id={getattr(doc, 'provider_id', None)}")
         logger.debug(f"tool_store_document: doc.id={doc.id}, storage_location={getattr(doc, 'storage_location', None)}, provider_id={getattr(doc, 'provider_id', None)}, duplicate={duplicate}")
         result = {
             'document_id': doc.id,
@@ -136,18 +140,18 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
             'duplicate': duplicate,
             'message': 'Document updated (duplicate)' if duplicate else 'Document stored successfully'
         }
-        logger.debug(f"tool_store_document: returning result={json.dumps(result)}")
+        logger.info(f"[TOOL-RETURN] store_document returned: {json.dumps(result)[:500]}")
+        print(f"[TOOL-DEBUG] store_document result: {json.dumps(result)[:500]}")
         return result
 
     except Exception as e:
-        logger.error(f"Error in store_document: {e}", exc_info=True)
+        logger.error(f"[TOOL-ERROR] store_document exception: {e}", exc_info=True)
         raise
 
 
 async def tool_store_extraction(params: Dict[str, Any]) -> Dict[str, Any]:
-    log = logging.getLogger()
-    log.debug("DEBUG LOG TEST: tool_store_extraction called")
-    for h in log.handlers:
+    logger.info(f"[TOOL-INVOKE] store_extraction called with params: {json.dumps(params)[:500]}")
+    for h in logger.handlers:
         try:
             h.flush()
         except Exception:
@@ -189,7 +193,7 @@ async def tool_store_extraction(params: Dict[str, Any]) -> Dict[str, Any]:
             created_by=created_by
         )
         
-        return {
+        result = {
             'extraction_id': extraction.id,
             'source_type': extraction.source_type,
             'source_id': extraction.source_id,
@@ -199,15 +203,16 @@ async def tool_store_extraction(params: Dict[str, Any]) -> Dict[str, Any]:
             'created_at': extraction.created_at,
             'message': 'Extraction stored successfully'
         }
+        logger.info(f"[TOOL-RETURN] store_extraction returned: {json.dumps(result)[:500]}")
+        return result
     except Exception as e:
         logger.error(f"Error in store_extraction: {e}", exc_info=True)
         raise
 
 
 async def tool_retrieve_extraction(params: Dict[str, Any]) -> Dict[str, Any]:
-    log = logging.getLogger()
-    log.debug("DEBUG LOG TEST: tool_retrieve_extraction called")
-    for h in log.handlers:
+    logger.info(f"[TOOL-INVOKE] retrieve_extraction called with params: {json.dumps(params)[:500]}")
+    for h in logger.handlers:
         try:
             h.flush()
         except Exception:
@@ -222,7 +227,7 @@ async def tool_retrieve_extraction(params: Dict[str, Any]) -> Dict[str, Any]:
         if not extraction:
             return {'error': f'Extraction not found: {extraction_id}'}
         
-        return {
+        result = {
             'extraction_id': extraction.id,
             'source_type': extraction.source_type,
             'source_id': extraction.source_id,
@@ -234,15 +239,16 @@ async def tool_retrieve_extraction(params: Dict[str, Any]) -> Dict[str, Any]:
             'created_by': extraction.created_by,
             'created_at': extraction.created_at
         }
+        logger.info(f"[TOOL-RETURN] retrieve_extraction returned: {json.dumps(result)[:500]}")
+        return result
     except Exception as e:
         logger.error(f"Error in retrieve_extraction: {e}", exc_info=True)
         raise
 
 
 async def tool_list_extractions(params: Dict[str, Any]) -> Dict[str, Any]:
-    log = logging.getLogger()
-    log.debug("DEBUG LOG TEST: tool_list_extractions called")
-    for h in log.handlers:
+    logger.info(f"[TOOL-INVOKE] list_extractions called with params: {json.dumps(params)[:500]}")
+    for h in logger.handlers:
         try:
             h.flush()
         except Exception:
@@ -261,7 +267,7 @@ async def tool_list_extractions(params: Dict[str, Any]) -> Dict[str, Any]:
             offset=offset
         )
         
-        return {
+        result = {
             'count': result['count'],
             'total': result['total'],
             'limit': result['limit'],
@@ -279,15 +285,16 @@ async def tool_list_extractions(params: Dict[str, Any]) -> Dict[str, Any]:
                 for ext in result['extractions']
             ]
         }
+        logger.info(f"[TOOL-RETURN] list_extractions returned: {json.dumps(result)[:500]}")
+        return result
     except Exception as e:
         logger.error(f"Error in list_extractions: {e}", exc_info=True)
         raise
 
 
 async def tool_retrieve_document(params: Dict[str, Any]) -> Dict[str, Any]:
-    log = logging.getLogger()
-    log.debug(f"DEBUG LOG TEST: tool_retrieve_document called (__file__={__file__})")
-    for h in log.handlers:
+    logger.info(f"[TOOL-INVOKE] retrieve_document called with params: {json.dumps(params)[:500]}")
+    for h in logger.handlers:
         try:
             h.flush()
         except Exception:
@@ -323,7 +330,7 @@ async def tool_retrieve_document(params: Dict[str, Any]) -> Dict[str, Any]:
             'storage_location': getattr(doc, 'storage_location', None),
             'provider_id': getattr(doc, 'provider_id', None)
         }
-        logger.debug(f"tool_retrieve_document: returning result={json.dumps(result)}")
+        logger.info(f"[TOOL-RETURN] retrieve_document returned: {json.dumps(result)[:500]}")
         return result
 
     except Exception as e:
@@ -332,9 +339,8 @@ async def tool_retrieve_document(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def tool_list_documents(params: Dict[str, Any]) -> Dict[str, Any]:
-    log = logging.getLogger()
-    log.debug(f"DEBUG LOG TEST: tool_list_documents called (__file__={__file__})")
-    for h in log.handlers:
+    logger.info(f"[TOOL-INVOKE] list_documents called with params: {json.dumps(params)[:500]}")
+    for h in logger.handlers:
         try:
             h.flush()
         except Exception:
@@ -383,7 +389,7 @@ async def tool_list_documents(params: Dict[str, Any]) -> Dict[str, Any]:
             'offset': result['offset'],
             'documents': documents
         }
-        logger.debug(f"tool_list_documents: returning result={json.dumps(result_dict)}")
+        logger.info(f"[TOOL-RETURN] list_documents returned: {json.dumps(result_dict)[:500]}")
         return result_dict
 
     except Exception as e:
@@ -392,9 +398,8 @@ async def tool_list_documents(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def tool_get_stats(params: Dict[str, Any]) -> Dict[str, Any]:
-    log = logging.getLogger()
-    log.debug("DEBUG LOG TEST: tool_get_stats called")
-    for h in log.handlers:
+    logger.info(f"[TOOL-INVOKE] get_stats called with params: {json.dumps(params)[:500]}")
+    for h in logger.handlers:
         try:
             h.flush()
         except Exception:
@@ -406,6 +411,7 @@ async def tool_get_stats(params: Dict[str, Any]) -> Dict[str, Any]:
     """
     try:
         stats = await provider.get_stats()
+        logger.info(f"[TOOL-RETURN] get_stats returned: {json.dumps(stats)[:500]}")
         return stats
 
     except Exception as e:
@@ -414,9 +420,8 @@ async def tool_get_stats(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def tool_delete_all_documents(params: Dict[str, Any]) -> Dict[str, Any]:
-    log = logging.getLogger()
-    log.debug("DEBUG LOG TEST: tool_delete_all_documents called")
-    for h in log.handlers:
+    logger.info(f"[TOOL-INVOKE] delete_all_documents called with params: {json.dumps(params)[:500]}")
+    for h in logger.handlers:
         try:
             h.flush()
         except Exception:
@@ -426,20 +431,23 @@ async def tool_delete_all_documents(params: Dict[str, Any]) -> Dict[str, Any]:
     """
     try:
         deleted_count = await provider.delete_all_documents()
-        return {
+        result = {
             "success": True,
             "deleted_count": deleted_count,
-            "message": "All documents deleted.",
+            "message": "All documents deleted."
         }
+        logger.info(f"[TOOL-RETURN] delete_all_documents returned: {json.dumps(result)[:500]}")
+        print(f"[TOOL-DEBUG] delete_all_documents result: {json.dumps(result)[:500]}")
+        return result
     except Exception as e:
-        logger.error(f"Error deleting all documents: {e}", exc_info=True)
+        logger.error(f"[TOOL-ERROR] delete_all_documents exception: {e}", exc_info=True)
         raise
 
 
 async def tool_answer_content_query(params: Dict[str, Any]) -> Dict[str, Any]:
     log = logging.getLogger()
-    log.debug("DEBUG LOG TEST: tool_answer_content_query called")
-    for h in log.handlers:
+    logger.info(f"[TOOL-INVOKE] answer_content_query called with params: {json.dumps(params)[:500]}")
+    for h in logger.handlers:
         try:
             h.flush()
         except Exception:
@@ -537,13 +545,15 @@ async def tool_answer_content_query(params: Dict[str, Any]) -> Dict[str, Any]:
             'note': 'OpenAI/web search can be plugged in here; currently disabled in this MVP.' if include_web else 'Web search not requested.',
         }
 
-        return {
+        result = {
             'query': query,
             'answer_local': local_answer,
             'references_local': references_local,
             'web_section': web_section,
             'reference_count': len(references_local),
         }
+        logger.info(f"[TOOL-RETURN] answer_content_query returned: {json.dumps(result)[:500]}")
+        return result
     except Exception as e:
         logger.error(f"Error in answer_content_query: {e}", exc_info=True)
         raise
@@ -588,7 +598,7 @@ def make_error(message: str, id: str = None, code: int = -32000) -> str:
 # Agent client
 async def register_tools(ws: websockets.WebSocketClientProtocol, agent_id: str) -> None:
     """Register storage tools with MCP server"""
-    logger.info(f"[AGENT-REGISTER] Registering tools from __file__={__file__} cwd={os.getcwd()} agent_id={agent_id}")
+    logger.info(f"TESTETS [AGENT-REGISTER] Registering tools from __file__={__file__} cwd={os.getcwd()} agent_id={agent_id}")
     tool_defs = [
         {
             "name": "store_document",
@@ -751,6 +761,7 @@ async def run_agent():
     agent_id = os.getenv("MCP_AGENT_ID", "storage-agent")
     
     logger.info(f"[AGENT-START] __file__={__file__} cwd={os.getcwd()}")
+    print("PRINT TEST LINE - AGENT-START")
     logger.info(f"Starting Storage Agent - connecting to {server_url}")
     
     while True:
@@ -761,8 +772,10 @@ async def run_agent():
                 # Register tools
                 await register_tools(ws, agent_id)
                 
+
                 # Message loop
                 async for message in ws:
+                    logger.info(f"[AGENT-RECV] Raw message: {message}")
                     try:
                         msg = json.loads(message)
                         method = msg.get("method")

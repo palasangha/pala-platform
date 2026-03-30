@@ -93,6 +93,11 @@ if [ -z "$ANTHROPIC_API_KEY" ]; then
     exit 1
 fi
 
+echo -e "${GREEN}[Preflight] Killing any running storage-agent processes...${NC}"
+pkill -f "packages/PalaAgents/storage-agent/main.py" 2>/dev/null || true
+sleep 1
+echo -e "${GREEN}✓ Old storage-agent processes stopped${NC}"
+
 # 1. Start MCP Server
 echo -e "${GREEN}[1/6] Starting MCP Server...${NC}"
 cd "$ROOT_DIR/packages/mcp-server"

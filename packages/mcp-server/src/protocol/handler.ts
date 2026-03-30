@@ -44,6 +44,7 @@ export class ProtocolHandler {
    * Process incoming raw message
    */
   async processMessage(rawMessage: string, traceId?: string): Promise<string | null> {
+    console.log('[MCP-DEBUG] processMessage called:', {rawMessage, traceId});
     // Parse message
     const parseResult = this.protocol.parseMessage(rawMessage);
     if (!parseResult.success) {
@@ -60,6 +61,7 @@ export class ProtocolHandler {
 
     // Check if this is a response (has result or error field, not method field)
     if ((data.result !== undefined || data.error) && data.id && !data.method) {
+      console.log('[MCP-DEBUG] Received agent response:', data);
       // This is a response from an agent to a tool invocation request
       if (this.responseHandler) {
         this.responseHandler(data.id, data);
@@ -68,6 +70,7 @@ export class ProtocolHandler {
     }
 
     // Check if notification (no id field, no response needed)
+    console.log('[MCP-DEBUG] Parsed message:', data);
     if (!data.id && this.protocol.validateNotification(data)) {
       await this.handleNotification(data.method, data.params);
       return null; // No response for notifications
