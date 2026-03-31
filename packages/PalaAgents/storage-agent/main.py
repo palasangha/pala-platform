@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 import websockets
+from providers.s3_provider_real import S3ProviderReal
 
 from provider_factory import ProviderFactory, get_provider
 from storage_provider import StorageProvider
@@ -54,7 +55,8 @@ agent_dir = Path(__file__).parent
 storage_dir = agent_dir / 'data'
 storage_dir.mkdir(exist_ok=True)
 
-# Initialize storage provider
+
+# Initialize storage provider and S3 provider with robust logging
 try:
     provider: StorageProvider = get_provider()
     logger.info(f"Storage provider initialized: {type(provider).__name__}")
@@ -62,11 +64,40 @@ except Exception as e:
     logger.error(f"Failed to initialize storage provider: {e}")
     raise
 
+# S3 Provider initialization with detailed config logging
+s3_provider = None
+if os.getenv('FILE_STORAGE_PROVIDER', 's3') == 's3':
+    s3_env = {
+        'S3_ENDPOINT': os.getenv('S3_ENDPOINT'),
+        'S3_ACCESS_KEY': os.getenv('S3_ACCESS_KEY'),
+        'S3_SECRET_KEY': '***MASKED***' if os.getenv('S3_SECRET_KEY') else None,
+        'S3_BUCKET': os.getenv('S3_BUCKET'),
+        'S3_REGION': os.getenv('S3_REGION', 'us-east-1'),
+    }
+    logger.info(f"[S3-INIT] S3 config: "
+                f"endpoint={s3_env['S3_ENDPOINT']}, "
+                f"access_key={s3_env['S3_ACCESS_KEY']}, "
+                f"secret_key={'set' if os.getenv('S3_SECRET_KEY') else 'unset'}, "
+                f"bucket={s3_env['S3_BUCKET']}, "
+                f"region={s3_env['S3_REGION']}")
+    missing = [k for k, v in s3_env.items() if v is None]
+    if missing:
+        logger.error(f"[S3-INIT] Missing S3 config keys: {missing}. S3ProviderReal will NOT be initialized.")
+        s3_provider = None
+    else:
+        try:
+            s3_provider = S3ProviderReal()
+            logger.info("S3ProviderReal initialized for file storage.")
+        except Exception as e:
+            logger.error(f"Failed to initialize S3ProviderReal: {e}")
+            s3_provider = None
+
 
 # Tool implementations
 async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
     logger.info(f"[TOOL-INVOKE] store_document called with params: {json.dumps(params)[:500]}")
     print(f"[TOOL-DEBUG] store_document params: {json.dumps(params)[:500]}")
+    logger.debug(f"[TOOL-DEBUG] Params preview: {json.dumps(params)[:500]}")
     for h in logger.handlers:
         try:
             h.flush()
@@ -112,9 +143,42 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
             app_data['job_id'] = params.get('job_id')
             app_data['file_index'] = params.get('file_index', 0)
 
-        logger.debug(f"[TOOL-DEBUG] Storing document with type={doc_type}, original_file={original_file}, file_format={file_format}, created_by={created_by}, metadata={metadata}, app_data={app_data}, file_hash={file_hash}")
-        # Store the document
-        # Patch: detect duplicate and update response accordingly
+        # Handle file content (base64) from dashboard
+        original_file_data = params.get('original_file_data')
+        original_file_mime = params.get('original_file_mime', '')
+        file_blob = None
+        s3_result = None
+        logger.debug(f"[TOOL-DEBUG] original_file_data present: {bool(original_file_data)}")
+        if original_file_data:
+            import base64
+            # Debug log: print length and preview of actual data received
+            logger.debug(f"[TOOL-DEBUG] About to decode original_file_data: length={len(original_file_data)}, preview={original_file_data[:40]}...")
+            try:
+                file_blob = base64.b64decode(original_file_data)
+                logger.info(f"[TOOL-DEBUG] Decoded file_blob, size: {len(file_blob)} bytes, mime: {original_file_mime}")
+                if s3_provider:
+                    logger.info(f"[TOOL-DEBUG] S3 provider config: endpoint={getattr(s3_provider, 'endpoint_url', None)}, bucket={getattr(s3_provider, 'bucket', None)}")
+                    s3_object_name = original_file or f"file-{uuid.uuid4()}"
+                    logger.info(f"[TOOL-DEBUG] Uploading to S3: object_name={s3_object_name}, content_type={original_file_mime}")
+                    try:
+                        s3_result = s3_provider.upload_file_data(file_blob, s3_object_name, content_type=original_file_mime)
+                        logger.info(f"[TOOL-DEBUG] S3 upload result: {s3_result}")
+                    except Exception as s3e:
+                        logger.error(f"[TOOL-ERROR] S3 upload failed: {s3e}", exc_info=True)
+                        s3_result = {'success': False, 'error': str(s3e)}
+                else:
+                    logger.error("[TOOL-DEBUG] S3 provider is not initialized. S3 upload will not occur. Check S3 config and logs.")
+                    s3_result = {'success': False, 'error': 'S3 provider not initialized. Check S3 config.'}
+            except Exception as e:
+                logger.error(f"[TOOL-ERROR] Failed to decode original_file_data: {e}", exc_info=True)
+                s3_result = {'success': False, 'error': f'Failed to decode original_file_data: {e}'}
+                raise ValueError('Failed to decode original_file_data')
+        else:
+            logger.warning("[TOOL-DEBUG] No original_file_data provided in params")
+            s3_result = None
+
+        logger.debug(f"[TOOL-DEBUG] Storing document with type={doc_type}, original_file={original_file}, file_format={file_format}, created_by={created_by}, metadata={metadata}, app_data={app_data}, file_hash={file_hash}, file_blob={'present' if file_blob else 'absent'}, s3_result={s3_result}")
+        # Store metadata in DB (file_blob can be None if using S3)
         doc, duplicate = await provider.store_document(
             type=doc_type,
             original_file=original_file,
@@ -123,7 +187,9 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
             metadata=metadata,
             app_data=app_data,
             created_by=created_by,
-            file_hash=file_hash
+            file_hash=file_hash,
+            file_blob=None,  # Don't store file blob in DB if using S3
+            file_mime=original_file_mime
         )
         logger.debug(f"[TOOL-DEBUG] Document stored: id={doc.id}, duplicate={duplicate}, storage_location={getattr(doc, 'storage_location', None)}, provider_id={getattr(doc, 'provider_id', None)}")
         logger.debug(f"tool_store_document: doc.id={doc.id}, storage_location={getattr(doc, 'storage_location', None)}, provider_id={getattr(doc, 'provider_id', None)}, duplicate={duplicate}")
@@ -135,13 +201,15 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
             'created_by': doc.created_by,
             'created_at': doc.created_at,
             'version': doc.version,
-            'storage_location': getattr(doc, 'storage_location', None),
-            'provider_id': getattr(doc, 'provider_id', None),
+            'db_storage_location': getattr(doc, 'storage_location', None),
+            'db_provider_id': getattr(doc, 'provider_id', None),
+            's3_result': s3_result,
             'duplicate': duplicate,
             'message': 'Document updated (duplicate)' if duplicate else 'Document stored successfully'
         }
         logger.info(f"[TOOL-RETURN] store_document returned: {json.dumps(result)[:500]}")
         print(f"[TOOL-DEBUG] store_document result: {json.dumps(result)[:500]}")
+        logger.debug(f"[TOOL-DEBUG] Full store_document result: {json.dumps(result)}")
         return result
 
     except Exception as e:
@@ -764,14 +832,14 @@ async def run_agent():
     print("PRINT TEST LINE - AGENT-START")
     logger.info(f"Starting Storage Agent - connecting to {server_url}")
     
+
     while True:
         try:
             async with websockets.connect(server_url) as ws:
                 logger.info(f"Connected to MCP server as {agent_id}")
-                
+
                 # Register tools
                 await register_tools(ws, agent_id)
-                
 
                 # Message loop
                 async for message in ws:
@@ -781,18 +849,18 @@ async def run_agent():
                         method = msg.get("method")
                         params = msg.get("params", {})
                         msg_id = msg.get("id")
-                        
+
                         if method == "tools/invoke":
                             result = await handle_invoke(method, params)
                             await ws.send(make_response(result, msg_id))
                         else:
                             logger.warning(f"Unknown method: {method}")
-                            
+
                     except Exception as e:
                         logger.error(f"Error handling message: {e}", exc_info=True)
                         if msg_id:
                             await ws.send(make_error(str(e), msg_id))
-                            
+
         except websockets.exceptions.ConnectionClosed:
             logger.warning("Connection closed, reconnecting in 5s...")
             await asyncio.sleep(5)

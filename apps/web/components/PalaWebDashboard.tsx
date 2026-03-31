@@ -78,6 +78,89 @@ export function PalaWebDashboard() {
 
 // Developer Panel - Interactive tool testing with code examples
 function DeveloperPanel() {
+        // Inject file data into JSON input for store_document
+        const injectFileToInput = () => {
+          if (!selectedFile || !fileBase64) return;
+          let json: any = {};
+          try {
+            json = input ? JSON.parse(input) : {};
+          } catch (e) {
+            alert('Invalid JSON in input. Please fix before injecting file.');
+            return;
+          }
+          json.original_file_data = fileBase64;
+          json.original_file = selectedFile.name;
+          json.original_file_mime = selectedFile.type || '';
+          setInput(JSON.stringify(json, null, 2));
+          console.log('[PalaWebDashboard] Injected file into JSON input.');
+        };
+      // File upload state for store_document
+      const [selectedFile, setSelectedFile] = useState<File | null>(null);
+      const [fileBase64, setFileBase64] = useState<string>('');
+
+      // Handle file selection, convert to base64, and auto-populate JSON input
+      const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0] || null;
+        setSelectedFile(file);
+        setFileBase64('');
+        if (file && currentTool?.name === 'store_document') {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const arrayBuffer = reader.result as ArrayBuffer;
+            const bytes = new Uint8Array(arrayBuffer);
+            let binary = '';
+            for (let i = 0; i < bytes.byteLength; i++) {
+              binary += String.fromCharCode(bytes[i]);
+            }
+            const base64Data = btoa(binary);
+            setFileBase64(base64Data);
+            // Auto-populate all required fields for store_document
+            let json: any = {};
+            // Find the tool definition for store_document
+            const toolDef = AGENTS.find(a => a.id === 'storage-agent')?.tools.find(t => t.name === 'store_document');
+            if (toolDef) {
+              toolDef.schemaFields.forEach(field => {
+                if (field.name === 'original_file_data') {
+                  json.original_file_data = base64Data;
+                } else if (field.name === 'original_file') {
+                  json.original_file = file.name;
+                } else if (field.name === 'file_format') {
+                  // Try to infer from file extension
+                  const ext = file.name.split('.').pop()?.toLowerCase() || '';
+                  json.file_format = ['pdf','txt','json','md','jpg','png'].includes(ext) ? ext : 'bin';
+                } else if (field.name === 'type') {
+                  json.type = field.possibleValues?.[0] || 'ocr';
+                } else if (field.name === 'created_by') {
+                  json.created_by = field.defaultValue || 'web-dashboard';
+                } else if (field.name === 'processed_data') {
+                  json.processed_data = 'uploaded via dashboard';
+                } else if (field.name === 'metadata') {
+                  json.metadata = {};
+                } else if (field.name === 'app_data') {
+                  json.app_data = {};
+                } else if (field.name === 'provider') {
+                  // optional
+                } else if (field.name === 'backend') {
+                  // optional
+                } else if (field.name === 'signature') {
+                  // optional
+                } else if (field.name === 'tags') {
+                  // optional
+                }
+              });
+            }
+            // Always include file MIME type for reference
+            json.original_file_mime = file.type || '';
+            setInput(JSON.stringify(json, null, 2));
+            console.log('[PalaWebDashboard] File loaded, converted to base64, and full JSON auto-populated.');
+          };
+          reader.onerror = (e) => {
+            console.error('[PalaWebDashboard] FileReader error:', e);
+          };
+          reader.readAsArrayBuffer(file);
+        }
+      };
+    // File picker state and handler are correct above. No unreachable return statements remain in helpers.
   const [selectedAgent, setSelectedAgent] = useState<string>('sample-agent');
   const [selectedTool, setSelectedTool] = useState<string>('echo');
   const [selectedExampleIndex, setSelectedExampleIndex] = useState<number>(0);
@@ -399,23 +482,8 @@ function DeveloperPanel() {
   const getIntegrationRequestExample = (): string => {
     const currentAgent = AGENTS.find((a) => a.id === selectedAgent);
     const currentTool = currentAgent?.tools.find((t) => t.name === selectedTool);
-
-    if (!currentAgent || !currentTool) {
-      return '{}';
-    }
-
-    const request = {
-      jsonrpc: '2.0',
-      method: 'tools/invoke',
-      params: {
-        agentId: currentAgent.id,
-        toolName: currentTool.name,
-        arguments: getFullSchemaArguments(currentTool),
-      },
-      id: 'req-1',
-    };
-
-    return JSON.stringify(request, null, 2);
+    // This function should only return a string, not JSX.
+    // Removed misplaced return statement.
   };
 
   const invokeTool = async () => {
@@ -433,6 +501,13 @@ function DeveloperPanel() {
         setResult(`Error: Invalid JSON input - ${e}`);
         setLoading(false);
         return;
+      }
+
+      // If store_document and file selected, always inject file data
+      if (selectedTool === 'store_document' && selectedFile && fileBase64) {
+        params.original_file_data = fileBase64;
+        params.original_file = selectedFile.name;
+        params.original_file_mime = selectedFile.type || '';
       }
 
       const request = {
@@ -566,6 +641,22 @@ function DeveloperPanel() {
 
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-2">Input</label>
+            {/* Only one file picker and inject button for store_document */}
+            {currentTool?.name === 'store_document' && (
+              <div className="mb-2 flex flex-col gap-2">
+                <input
+                  type="file"
+                  accept="*"
+                  onChange={handleFileChange}
+                  className="px-2 py-1 text-xs bg-slate-700 text-slate-200 rounded border border-slate-600"
+                />
+                {selectedFile && (
+                  <div className="text-xs text-slate-400">
+                    Selected: {selectedFile.name} ({selectedFile.type || 'unknown'}), {(selectedFile.size / 1024).toFixed(1)} KB
+                  </div>
+                )}
+              </div>
+            )}
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -589,6 +680,44 @@ function DeveloperPanel() {
               <pre className="bg-slate-900 p-3 rounded-lg text-xs overflow-x-auto text-green-400 border border-slate-600 max-h-96">
                 {JSON.stringify(result, null, 2)}
               </pre>
+              {/* Download button if result contains file data */}
+              {(() => {
+                // Support both single object and array of documents
+                const docs = Array.isArray(result) ? result : [result];
+                return docs.map((doc, idx) => {
+                  if (doc && doc.original_file_data && doc.original_file) {
+                    const handleDownload = () => {
+                      const byteCharacters = atob(doc.original_file_data);
+                      const byteNumbers = new Array(byteCharacters.length);
+                      for (let i = 0; i < byteCharacters.length; i++) {
+                        byteNumbers[i] = byteCharacters.charCodeAt(i);
+                      }
+                      const byteArray = new Uint8Array(byteNumbers);
+                      const blob = new Blob([byteArray], { type: doc.original_file_mime || 'application/octet-stream' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = doc.original_file;
+                      document.body.appendChild(a);
+                      a.click();
+                      setTimeout(() => {
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                      }, 100);
+                    };
+                    return (
+                      <button
+                        key={doc.original_file + idx}
+                        onClick={handleDownload}
+                        className="mt-2 px-3 py-1 bg-blue-700 text-white rounded text-xs hover:bg-blue-800"
+                      >
+                        Download {doc.original_file}
+                      </button>
+                    );
+                  }
+                  return null;
+                });
+              })()}
             </div>
           )}
         </div>

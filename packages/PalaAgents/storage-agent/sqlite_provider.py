@@ -201,8 +201,10 @@ class SQLiteProvider(StorageProvider):
         app_data: Dict[str, Any],
         created_by: str,
         file_hash: Optional[str] = None,
+        file_blob: Optional[bytes] = None,
+        file_mime: Optional[str] = None,
     ) -> tuple[Document, bool]:
-        """Store a document with deduplication and simulated redundancy. Returns (Document, duplicate: bool)"""
+        """Store a document with file content as BLOB. Returns (Document, duplicate: bool)"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
@@ -238,6 +240,24 @@ class SQLiteProvider(StorageProvider):
             doc_id = f"doc-{uuid.uuid4()}"
             now = datetime.now(timezone.utc).isoformat()
 
+            # Store file as BLOB in a separate table
+            if file_blob is not None:
+                logger.info(f"[SQLITE] Storing file_blob for doc_id={doc_id}, size={len(file_blob)} bytes, mime={file_mime}")
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS document_files (
+                        document_id TEXT PRIMARY KEY,
+                        file_blob BLOB,
+                        file_mime TEXT,
+                        created_at TEXT,
+                        FOREIGN KEY(document_id) REFERENCES documents(id)
+                    )
+                ''')
+                cursor.execute('''
+                    INSERT INTO document_files (document_id, file_blob, file_mime, created_at)
+                    VALUES (?, ?, ?, ?)
+                ''', (doc_id, file_blob, file_mime or '', now))
+                logger.info(f"[SQLITE] File BLOB stored for doc_id={doc_id}")
+
             cursor.execute('''
                 INSERT INTO documents (
                     id, type, original_file, file_format, processed_data,
@@ -258,17 +278,6 @@ class SQLiteProvider(StorageProvider):
             ))
 
             conn.commit()
-
-            # Simulated redundancy: copy original_file_base64 to a secondary location (e.g., backup folder)
-            # This is a simulation; in production, you would write to another storage backend
-            original_file_base64 = processed_data.get('original_file_base64')
-            if original_file_base64:
-                backup_dir = Path('./redundant_backup')
-                backup_dir.mkdir(exist_ok=True)
-                backup_path = backup_dir / f"{doc_id}.{file_format}.b64"
-                with open(backup_path, 'w') as f:
-                    f.write(original_file_base64)
-                logger.info(f"Redundant copy written to {backup_path}")
 
             # Log the action
             cursor.execute('''

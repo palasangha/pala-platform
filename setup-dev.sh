@@ -236,5 +236,107 @@ echo -e "${GREEN}✓ All required dependencies are installed${NC}"
 echo -e "${BLUE}Phase 2/2: Prepare local workspace deps${NC}"
 prepare_workspace
 
+
+# --- S3/MinIO & Storage Agent Automation ---
+
+
+# 1. Ensure .env exists (copy from .env.example if missing)
+if [[ ! -f "$ROOT_DIR/.env" && -f "$ROOT_DIR/.env.example" ]]; then
+    cp "$ROOT_DIR/.env.example" "$ROOT_DIR/.env"
+    echo -e "${GREEN}✓ .env created from .env.example${NC}"
+fi
+
+# 1b. Print info about local S3/MinIO usage for dev
+echo -e "${BLUE}Local development uses MinIO (local S3) and SQLite by default.${NC}"
+echo -e "${BLUE}To use production S3, edit .env and set S3_* variables accordingly.${NC}"
+
+# Print current S3 config for developer clarity
+echo -e "${YELLOW}S3/MinIO config in use:${NC}"
+grep -E '^(S3_|FILE_STORAGE_PROVIDER|STORAGE_PROVIDER)' "$ROOT_DIR/.env" | grep -v '^#' || echo "(No S3 config found in .env)"
+
+# 2. Install boto3 in storage-agent venv
+STORAGE_AGENT_DIR="$ROOT_DIR/packages/agents/storage-agent"
+if [[ -d "$STORAGE_AGENT_DIR/venv" ]]; then
+    source "$STORAGE_AGENT_DIR/venv/bin/activate" >/dev/null 2>&1 || true
+    pip install -q boto3 >/dev/null 2>&1 || true
+    deactivate >/dev/null 2>&1 || true
+    echo -e "${GREEN}✓ boto3 installed in storage-agent venv${NC}"
+fi
+
+# 3. Check/start MinIO server on a free port (3900-4000) if not running
+MINIO_PORT=3900
+MINIO_BIN=$(command -v minio || true)
+if [[ -z "$MINIO_BIN" ]]; then
+    echo -e "${YELLOW}MinIO not found. Installing MinIO...${NC}"
+    if [[ "$OS" == "macos" ]]; then
+        if command_exists brew; then
+            brew install minio/stable/minio || brew upgrade minio || true
+        else
+            curl -O https://dl.min.io/server/minio/release/darwin-amd64/minio && chmod +x minio && sudo mv minio /usr/local/bin/
+        fi
+    elif [[ "$OS" == "linux" ]]; then
+        curl -O https://dl.min.io/server/minio/release/linux-amd64/minio && chmod +x minio && sudo mv minio /usr/local/bin/
+    fi
+    MINIO_BIN=$(command -v minio || true)
+fi
+
+# Install MinIO Client (mc) if missing
+MC_BIN=$(command -v mc || true)
+if [[ -z "$MC_BIN" ]]; then
+    echo -e "${YELLOW}MinIO Client (mc) not found. Installing...${NC}"
+    if [[ "$OS" == "macos" ]]; then
+        if command_exists brew; then
+            brew install minio/stable/mc || brew upgrade mc || true
+        else
+            curl -O https://dl.min.io/client/mc/release/darwin-amd64/mc && chmod +x mc && sudo mv mc /usr/local/bin/
+        fi
+    elif [[ "$OS" == "linux" ]]; then
+        curl -O https://dl.min.io/client/mc/release/linux-amd64/mc && chmod +x mc && sudo mv mc /usr/local/bin/
+    fi
+    MC_BIN=$(command -v mc || true)
+fi
+
+if [[ -n "$MINIO_BIN" ]]; then
+    # Find a free port for MinIO
+    while lsof -i :$MINIO_PORT >/dev/null 2>&1; do
+        ((MINIO_PORT++))
+        if [[ $MINIO_PORT -gt 4000 ]]; then
+            echo -e "${RED}No free port for MinIO in 3900-4000 range${NC}"
+            MINIO_PORT=0
+            break
+        fi
+    done
+    if [[ $MINIO_PORT -ne 0 ]]; then
+        # Check if MinIO is already running on this port
+        if ! lsof -i :$MINIO_PORT >/dev/null 2>&1; then
+            MINIO_DATA_DIR="$ROOT_DIR/.minio-data"
+            mkdir -p "$MINIO_DATA_DIR"
+            nohup "$MINIO_BIN" server --address ":$MINIO_PORT" "$MINIO_DATA_DIR" >/dev/null 2>&1 &
+            sleep 2
+            echo -e "${GREEN}✓ MinIO started on port $MINIO_PORT${NC}"
+        else
+            echo -e "${GREEN}✓ MinIO already running on port $MINIO_PORT${NC}"
+        fi
+
+        # Print endpoint for developer
+        echo -e "${BLUE}MinIO S3 endpoint: http://localhost:$MINIO_PORT${NC}"
+
+        # Auto-create bucket if needed (requires mc CLI)
+        BUCKET_NAME="pala-local"
+        MC_BIN=$(command -v mc || true)
+        if [[ -n "$MC_BIN" ]]; then
+            "$MC_BIN" alias set localminio "http://localhost:$MINIO_PORT" minioadmin minioadmin >/dev/null 2>&1 || true
+            if ! "$MC_BIN" ls localminio/$BUCKET_NAME >/dev/null 2>&1; then
+                "$MC_BIN" mb localminio/$BUCKET_NAME >/dev/null 2>&1 && \
+                echo -e "${GREEN}✓ MinIO bucket '$BUCKET_NAME' created${NC}"
+            else
+                echo -e "${GREEN}✓ MinIO bucket '$BUCKET_NAME' already exists${NC}"
+            fi
+        else
+            echo -e "${YELLOW}MinIO Client (mc) not found. Please install from https://min.io/download#/mc to auto-create buckets.${NC}"
+        fi
+    fi
+fi
+
 echo -e "${GREEN}✓ Setup gate passed${NC}"
 exit 0

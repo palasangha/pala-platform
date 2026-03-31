@@ -60,8 +60,10 @@ class StorageProvider(ABC):
         app_data: Dict[str, Any],
         created_by: str,
         file_hash: Optional[str] = None,
+        file_blob: Optional[bytes] = None,
+        file_mime: Optional[str] = None,
     ) -> Document:
-        """Store a document"""
+        """Store a document, optionally with file content as BLOB"""
         pass
 
     @abstractmethod
