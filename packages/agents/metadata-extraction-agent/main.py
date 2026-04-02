@@ -232,17 +232,20 @@ class MetadataExtractionAgent:
         """Extract confidence scores from extracted data"""
         # Get overall confidence from extracted data
         overall = extracted_data.get("confidence", 0.0)
+        # Handle None values
+        if overall is None:
+            overall = 0.0
         
         confidences = {
-            "overall": round(overall, 3)
+            "overall": round(float(overall), 3) if overall is not None else 0.0
         }
         
         # Extract per-field confidences
         for field, value in extracted_data.items():
             if isinstance(value, dict) and "confidence" in value:
-                confidences[field] = value["confidence"]
-
-        return confidences
+                conf_val = value.get("confidence")
+                if conf_val is not None:
+                    confidences[field] = round(float(conf_val), 3) if isinstance(conf_val, (int, float)) else 0.0
 
         return confidences
 

@@ -3,6 +3,8 @@
 A minimal Python agent that speaks JSON-RPC over WebSocket to the MCP server.
 It registers simple tools and handles `tools/invoke` requests.
 
+Additionally, it includes a sophisticated orchestration tool that chains metadata extraction and document storage.
+
 ## Prerequisites
 - Python 3.10+
 - `websockets` library (`pip install -r requirements.txt`)
@@ -10,7 +12,7 @@ It registers simple tools and handles `tools/invoke` requests.
 
 ## Quick start
 ```bash
-cd packages/agents/sample-agent
+cd packages/PalaAgents/sample-agent
 
 # Create and activate virtual environment
 python3 -m venv venv
@@ -30,12 +32,22 @@ Environment variables:
 - `MCP_AGENT_TOKEN` (optional bearer token for auth; set when server auth is enabled)
 
 ## Tools implemented
-- `echo`: returns the provided `text`
-- `sum`: sums a list of numbers (`numbers` array)
+
+### Simple Tools
+- `echo`: Returns the provided `text`
+- `sum`: Sums a list of numbers (`numbers` array)
+
+### Orchestration Tools
+- `process_and_store_document`: Complete pipeline that:
+  1. Extracts metadata from a file using metadata-extraction-agent
+  2. Stores the document with extracted metadata using storage-agent
+  - Fails fast: If any step fails, the pipeline stops and returns error
+  - Includes full replication status for both S3 and SQLite storage
 
 ## Notes
 - Tool registration payload is sent via `tools/register`; server-side handling
   will be wired to the registry in a future story.
 - The agent responds to `tools/invoke` with JSON-RPC responses and handles
   errors gracefully (invalid JSON, unknown tools, bad arguments).
-- Keep this example minimal and deterministic for easy testing and extension.
+- Cross-agent orchestration enables complex workflows by chaining tools from
+  multiple agents together via the MCP server.

@@ -115,7 +115,7 @@ sleep 3
 
 # 2. Start Sample Agent
 echo -e "${GREEN}[2/6] Starting Sample Agent...${NC}"
-cd "$ROOT_DIR/packages/agents/sample-agent"
+cd "$ROOT_DIR/packages/PalaAgents/sample-agent"
 if [ ! -d "venv" ]; then
     echo -e "${YELLOW}Creating virtual environment...${NC}"
     python3 -m venv venv

@@ -49,7 +49,7 @@ npm run dev
 And at least one agent is connected:
 
 ```bash
-cd packages/agents/sample-agent
+cd packages/PalaAgents/sample-agent
 python main.py
 ``` Portal
 

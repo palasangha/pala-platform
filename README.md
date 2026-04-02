@@ -269,7 +269,7 @@ Tool automatically appears in web dashboard and is callable via `tools/invoke`.
 
 - **[Getting Started - Setup and Usage Guide](docs/Getting%20Started%20-%20Setup%20and%20Usage%20Guide.md)** - Complete setup, troubleshooting, and usage
 - **[packages/mcp-server/README.md](packages/mcp-server/README.md)** - Server implementation details
-- **[packages/agents/sample-agent/README.md](packages/agents/sample-agent/README.md)** - Sample agent guide
+- **[packages/PalaAgents/sample-agent/README.md](packages/PalaAgents/sample-agent/README.md)** - Sample agent guide
 - **[packages/PalaAgents/metadata-extraction-agent/README.md](packages/PalaAgents/metadata-extraction-agent/README.md)** - Metadata extraction agent guide
 - **[apps/web/README.md](apps/web/README.md)** - Dashboard implementation
 

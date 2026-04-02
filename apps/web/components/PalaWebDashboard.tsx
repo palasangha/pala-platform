@@ -103,7 +103,7 @@ function DeveloperPanel() {
         const file = e.target.files?.[0] || null;
         setSelectedFile(file);
         setFileBase64('');
-        if (file && currentTool?.name === 'store_document') {
+        if (file && (currentTool?.name === 'store_document' || currentTool?.name === 'process_and_store_document')) {
           const reader = new FileReader();
           reader.onload = () => {
             const arrayBuffer = reader.result as ArrayBuffer;
@@ -114,45 +114,52 @@ function DeveloperPanel() {
             }
             const base64Data = btoa(binary);
             setFileBase64(base64Data);
-            // Auto-populate all required fields for store_document
+            
+            // Auto-populate fields based on selected tool
             let json: any = {};
-            // Find the tool definition for store_document
-            const toolDef = AGENTS.find(a => a.id === 'storage-agent')?.tools.find(t => t.name === 'store_document');
-            if (toolDef) {
-              toolDef.schemaFields.forEach(field => {
-                if (field.name === 'original_file_data') {
-                  json.original_file_data = base64Data;
-                } else if (field.name === 'original_file') {
-                  json.original_file = file.name;
-                } else if (field.name === 'file_format') {
-                  // Try to infer from file extension
-                  const ext = file.name.split('.').pop()?.toLowerCase() || '';
-                  json.file_format = ['pdf','txt','json','md','jpg','png'].includes(ext) ? ext : 'bin';
-                } else if (field.name === 'type') {
-                  json.type = field.possibleValues?.[0] || 'ocr';
-                } else if (field.name === 'created_by') {
-                  json.created_by = field.defaultValue || 'web-dashboard';
-                } else if (field.name === 'processed_data') {
-                  json.processed_data = 'uploaded via dashboard';
-                } else if (field.name === 'metadata') {
-                  json.metadata = {};
-                } else if (field.name === 'app_data') {
-                  json.app_data = {};
-                } else if (field.name === 'provider') {
-                  // optional
-                } else if (field.name === 'backend') {
-                  // optional
-                } else if (field.name === 'signature') {
-                  // optional
-                } else if (field.name === 'tags') {
-                  // optional
-                }
-              });
+            
+            if (currentTool?.name === 'store_document') {
+              // Auto-populate all required fields for store_document
+              const toolDef = AGENTS.find(a => a.id === 'storage-agent')?.tools.find(t => t.name === 'store_document');
+              if (toolDef) {
+                toolDef.schemaFields.forEach(field => {
+                  if (field.name === 'original_file_data') {
+                    json.original_file_data = base64Data;
+                  } else if (field.name === 'original_file') {
+                    json.original_file = file.name;
+                  } else if (field.name === 'file_format') {
+                    // Try to infer from file extension
+                    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+                    json.file_format = ['pdf','txt','json','md','jpg','png'].includes(ext) ? ext : 'bin';
+                  } else if (field.name === 'type') {
+                    json.type = field.possibleValues?.[0] || 'ocr';
+                  } else if (field.name === 'created_by') {
+                    json.created_by = field.defaultValue || 'web-dashboard';
+                  } else if (field.name === 'processed_data') {
+                    json.processed_data = 'uploaded via dashboard';
+                  } else if (field.name === 'metadata') {
+                    json.metadata = {};
+                  } else if (field.name === 'app_data') {
+                    json.app_data = {};
+                  }
+                });
+              }
+              // Always include file MIME type for reference
+              json.original_file_mime = file.type || '';
+            } else if (currentTool?.name === 'process_and_store_document') {
+              // Auto-populate for orchestration tool
+              const ext = file.name.split('.').pop()?.toLowerCase() || '';
+              json = {
+                original_file: base64Data,
+                original_file_name: file.name,
+                file_format: ['pdf','txt','json','md','jpg','png'].includes(ext) ? ext : 'bin',
+                document_type: 'ocr',
+                created_by: 'web-dashboard',
+              };
             }
-            // Always include file MIME type for reference
-            json.original_file_mime = file.type || '';
+            
             setInput(JSON.stringify(json, null, 2));
-            console.log('[PalaWebDashboard] File loaded, converted to base64, and full JSON auto-populated.');
+            console.log(`[PalaWebDashboard] File loaded and JSON auto-populated for ${currentTool?.name}`);
           };
           reader.onerror = (e) => {
             console.error('[PalaWebDashboard] FileReader error:', e);
@@ -233,6 +240,55 @@ function DeveloperPanel() {
               type: 'number[]',
               required: true,
               description: 'Array of numeric values to sum.',
+            },
+          ],
+        },
+        {
+          name: 'process_and_store_document',
+          description: 'Orchestration: Extract metadata from file and store with metadata',
+          placeholder: 'Enter JSON: {"original_file": "base64...", "original_file_name": "document.pdf", "file_format": "pdf", "document_type": "ocr"}',
+          examples: [
+            {
+              label: 'Process PDF (from file upload)',
+              input: '{"original_file": "[will be populated with file data]", "original_file_name": "document.pdf", "file_format": "pdf", "document_type": "ocr", "created_by": "web-dashboard"}',
+            },
+            {
+              label: 'Process document with custom type',
+              input: '{"original_file": "[base64 encoded file]", "original_file_name": "metadata.json", "file_format": "json", "document_type": "metadata", "created_by": "sample-agent"}',
+            },
+          ],
+          schemaFields: [
+            {
+              name: 'original_file',
+              type: 'string (base64)',
+              required: true,
+              description: 'Base64-encoded file content.',
+            },
+            {
+              name: 'original_file_name',
+              type: 'string',
+              required: true,
+              description: 'Original filename (e.g., "document.pdf").',
+            },
+            {
+              name: 'file_format',
+              type: 'string',
+              required: true,
+              description: 'File format/extension (e.g., "pdf", "json", "txt").',
+              possibleValues: ['pdf', 'txt', 'json', 'jpg', 'png'],
+            },
+            {
+              name: 'document_type',
+              type: 'string',
+              required: true,
+              description: 'Type of document for storage categorization.',
+              possibleValues: ['ocr', 'transcription', 'metadata', 'translation', 'note'],
+            },
+            {
+              name: 'created_by',
+              type: 'string',
+              description: 'Creator identifier for audit trail.',
+              defaultValue: 'sample-agent',
             },
           ],
         },
@@ -643,8 +699,8 @@ function DeveloperPanel() {
 
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-2">Input</label>
-            {/* Only one file picker and inject button for store_document */}
-            {currentTool?.name === 'store_document' && (
+            {/* File picker for store_document and process_and_store_document */}
+            {(currentTool?.name === 'store_document' || currentTool?.name === 'process_and_store_document') && (
               <div className="mb-2 flex flex-col gap-2">
                 <input
                   type="file"
@@ -669,6 +725,19 @@ function DeveloperPanel() {
                   <li>Files are stored redundantly in: SQLite (primary + replica) and S3 (primary + replica)</li>
                   <li>Response includes <code className="text-green-100">replication</code> status showing success/failure of each storage location</li>
                   <li>Use the returned <code className="text-green-100">document_id</code> to retrieve the document later with <code className="text-green-100">retrieve_document</code></li>
+                </ul>
+              </div>
+            )}
+            {selectedTool === 'process_and_store_document' && (
+              <div className="bg-purple-900 bg-opacity-30 border border-purple-700 p-3 rounded text-xs text-purple-200 space-y-2">
+                <p className="font-semibold">Orchestration Tool - Complete Pipeline:</p>
+                <ul className="list-disc list-inside space-y-1">
+                  <li>This tool chains: file → extract_metadata → store_document</li>
+                  <li>Upload a file using the file input above (automatically converted to base64)</li>
+                  <li><strong>Step 1:</strong> Calls <code className="text-purple-100">metadata-extraction-agent.extract_metadata</code> with the file</li>
+                  <li><strong>Step 2:</strong> Calls <code className="text-purple-100">storage-agent.store_document</code> with original file + extracted metadata</li>
+                  <li>Response includes: <code className="text-purple-100">document_id</code>, extracted <code className="text-purple-100">metadata</code>, and full <code className="text-purple-100">storage_result</code> with replication status</li>
+                  <li>Use this for end-to-end document processing pipelines</li>
                 </ul>
               </div>
             )}

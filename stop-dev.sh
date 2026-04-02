@@ -6,7 +6,7 @@ echo "Stopping all services..."
 
 # Kill processes by name
 pkill -f "npm run dev" 2>/dev/null || true
-pkill -f "packages/agents/sample-agent/main.py" 2>/dev/null || true
+pkill -f "packages/PalaAgents/sample-agent/main.py" 2>/dev/null || true
 pkill -f "packages/PalaAgents/metadata-extraction-agent/main.py" 2>/dev/null || true
 pkill -f "packages/PalaAgents/storage-agent/main.py" 2>/dev/null || true
 
