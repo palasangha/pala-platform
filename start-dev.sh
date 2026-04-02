@@ -18,6 +18,8 @@ echo -e "${BLUE}================================================${NC}\n"
 
 # Store the root directory
 ROOT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# Set agent venv dir for all agent launches
+AGENT_VENV_DIR="$(cd "$ROOT_DIR/.." && pwd)/agent-venv"
 cd "$ROOT_DIR"
 
 # Function to cleanup background processes on exit
@@ -155,21 +157,11 @@ sleep 2
 
 # 4. Start Storage Agent
 echo -e "${GREEN}[4/6] Starting Storage Agent...${NC}"
-cd "$ROOT_DIR/packages/PalaAgents/storage-agent"
-if [ ! -d "venv" ]; then
-    echo -e "${YELLOW}Creating virtual environment...${NC}"
-    python3 -m venv venv
-fi
-source venv/bin/activate
-if [ ! -f "venv/bin/websockets" ]; then
-    echo -e "${YELLOW}Installing dependencies...${NC}"
-    pip install -q -r requirements.txt
-fi
+cd "$ROOT_DIR"
 export MCP_SERVER_URL="ws://localhost:3010"
 export MCP_AGENT_ID="storage-agent"
-python main.py > "$ROOT_DIR/logs/storage-agent.log" 2>&1 &
+"$AGENT_VENV_DIR/bin/python" packages/PalaAgents/storage-agent/main.py > "$ROOT_DIR/logs/storage-agent.log" 2>&1 &
 STORAGE_PID=$!
-deactivate
 echo -e "${GREEN}✓ Storage Agent started (PID: $STORAGE_PID)${NC}"
 echo -e "  Logs: logs/storage-agent.log\n"
 sleep 2

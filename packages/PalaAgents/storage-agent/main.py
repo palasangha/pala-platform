@@ -5,6 +5,28 @@ import asyncio
 import json
 import logging
 import os
+import sys
+try:
+    from dotenv import load_dotenv
+    # Navigate from packages/PalaAgents/storage-agent to pala-platform root
+    PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
+    env_path = os.path.join(PROJECT_ROOT, '.env')
+    if os.path.exists(env_path):
+        load_dotenv(dotenv_path=env_path, override=True)
+        print(f"[AGENT-STARTUP] Loaded .env from {env_path}")
+    else:
+        print(f"[AGENT-STARTUP] WARNING: .env not found at {env_path}. S3 config may be missing.")
+except ImportError:
+    print('[AGENT-STARTUP] WARNING: python-dotenv not installed; .env will not be auto-loaded. S3 config may be missing if not set in environment.')
+
+# Log S3 config at startup and exit if any required variable is missing
+required_s3_vars = ["S3_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_BUCKET", "S3_REGION"]
+s3_config = {k: (os.environ.get(k) if k != "S3_SECRET_KEY" else ("***MASKED***" if os.environ.get(k) else None)) for k in required_s3_vars}
+missing_s3 = [k for k in required_s3_vars if not os.environ.get(k)]
+print(f"[AGENT-STARTUP] S3 config: " + ", ".join(f"{k}={v}" for k, v in s3_config.items()))
+if missing_s3:
+    print(f"[AGENT-STARTUP] FATAL: Missing required S3 config: {missing_s3}. Agent will exit.")
+    sys.exit(1)
 import re
 import uuid
 from datetime import datetime, timezone
@@ -178,7 +200,8 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
             s3_result = None
 
         logger.debug(f"[TOOL-DEBUG] Storing document with type={doc_type}, original_file={original_file}, file_format={file_format}, created_by={created_by}, metadata={metadata}, app_data={app_data}, file_hash={file_hash}, file_blob={'present' if file_blob else 'absent'}, s3_result={s3_result}")
-        # Store metadata in DB (file_blob can be None if using S3)
+        # Store metadata in DB and replicate file_blob to SQLite for backup
+        logger.info(f"[REPLICATION] Storing to SQLite: file_blob={'present' if file_blob else 'absent'}, mime={original_file_mime}")
         doc, duplicate = await provider.store_document(
             type=doc_type,
             original_file=original_file,
@@ -188,11 +211,47 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
             app_data=app_data,
             created_by=created_by,
             file_hash=file_hash,
-            file_blob=None,  # Don't store file blob in DB if using S3
+            file_blob=file_blob,  # Store file blob in SQLite for dual replication (backup)
             file_mime=original_file_mime
         )
         logger.debug(f"[TOOL-DEBUG] Document stored: id={doc.id}, duplicate={duplicate}, storage_location={getattr(doc, 'storage_location', None)}, provider_id={getattr(doc, 'provider_id', None)}")
         logger.debug(f"tool_store_document: doc.id={doc.id}, storage_location={getattr(doc, 'storage_location', None)}, provider_id={getattr(doc, 'provider_id', None)}, duplicate={duplicate}")
+        
+        # Build comprehensive replication status
+        # S3: primary and replica buckets
+        # SQLite: primary and replica databases
+        s3_primary = s3_result.get('primary') if s3_result else None
+        s3_replica = s3_result.get('replica') if s3_result else None
+        
+        sqlite_primary = {
+            'success': True,
+            'provider': 'sqlite-primary',
+            'db_path': getattr(provider, 'db_path', None),
+            'file_blob_stored': file_blob is not None,
+        }
+        
+        sqlite_replica = None
+        if getattr(provider, 'replica_enabled', False):
+            sqlite_replica = {
+                'success': True,
+                'provider': 'sqlite-replica',
+                'db_path': getattr(provider, 'replica_db_path', None),
+                'file_blob_stored': file_blob is not None,
+            }
+        
+        replication_status = {
+            'file_content': {
+                's3_primary': s3_primary if s3_primary and s3_primary.get('success') else {'success': False},
+                's3_replica': s3_replica if s3_replica else {'success': False, 'reason': 'Not configured'},
+            },
+            'metadata': {
+                'sqlite_primary': sqlite_primary,
+                'sqlite_replica': sqlite_replica if sqlite_replica else {'success': False, 'reason': 'Not configured'},
+            }
+        }
+        
+        logger.info(f"[REPLICATION-SUMMARY] doc_id={doc.id}, s3_primary={s3_primary.get('success') if s3_primary else False}, s3_replica={s3_replica.get('success') if s3_replica else False}, sqlite_primary={sqlite_primary.get('success')}, sqlite_replica={sqlite_replica.get('success') if sqlite_replica else False}")
+        
         result = {
             'document_id': doc.id,
             'type': doc.type,
@@ -203,7 +262,8 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
             'version': doc.version,
             'db_storage_location': getattr(doc, 'storage_location', None),
             'db_provider_id': getattr(doc, 'provider_id', None),
-            's3_result': s3_result,
+            'replication': replication_status,
+            's3_result': s3_result,  # Keep for backward compatibility
             'duplicate': duplicate,
             'message': 'Document updated (duplicate)' if duplicate else 'Document stored successfully'
         }

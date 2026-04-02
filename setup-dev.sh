@@ -1,3 +1,28 @@
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# --- Python venv for agent ---
+AGENT_VENV_DIR="$ROOT_DIR/agent-venv"
+echo "[setup-dev] Setting up Python venv for agent at $AGENT_VENV_DIR..."
+if [[ ! -d "$AGENT_VENV_DIR" ]]; then
+    python3 -m venv "$AGENT_VENV_DIR"
+    echo "[setup-dev] Created venv at $AGENT_VENV_DIR"
+else
+    echo "[setup-dev] venv already exists at $AGENT_VENV_DIR"
+fi
+
+echo "[setup-dev] Installing agent Python dependencies (python-dotenv, boto3, websockets)..."
+"$AGENT_VENV_DIR/bin/pip" install --upgrade pip >/dev/null 2>&1
+"$AGENT_VENV_DIR/bin/pip" install python-dotenv boto3 websockets >/dev/null 2>&1
+if [[ $? -ne 0 ]]; then
+    echo "[setup-dev] ERROR: Failed to install Python dependencies in venv."
+    exit 1
+fi
+echo "[setup-dev] Python dependencies installed in venv."
+
+echo "[setup-dev] To run the agent, use:"
+echo "  source $AGENT_VENV_DIR/bin/activate"
+echo "  python packages/PalaAgents/storage-agent/main.py"
+echo "Or run directly:"
+echo "  $AGENT_VENV_DIR/bin/python packages/PalaAgents/storage-agent/main.py"
 #!/bin/bash
 
 # Pala Platform - Development Environment Setup Gate
@@ -321,22 +346,34 @@ if [[ -n "$MINIO_BIN" ]]; then
         # Print endpoint for developer
         echo -e "${BLUE}MinIO S3 endpoint: http://localhost:$MINIO_PORT${NC}"
 
-        # Auto-create bucket if needed (requires mc CLI)
+        # Auto-create buckets if needed (requires mc CLI)
         BUCKET_NAME="pala-local"
+        REPLICA_BUCKET_NAME="pala-local-replica"
         MC_BIN=$(command -v mc || true)
         if [[ -n "$MC_BIN" ]]; then
             "$MC_BIN" alias set localminio "http://localhost:$MINIO_PORT" minioadmin minioadmin >/dev/null 2>&1 || true
+            
+            # Create primary bucket
             if ! "$MC_BIN" ls localminio/$BUCKET_NAME >/dev/null 2>&1; then
                 "$MC_BIN" mb localminio/$BUCKET_NAME >/dev/null 2>&1 && \
                 echo -e "${GREEN}✓ MinIO bucket '$BUCKET_NAME' created${NC}"
             else
                 echo -e "${GREEN}✓ MinIO bucket '$BUCKET_NAME' already exists${NC}"
             fi
+            
+            # Create replica bucket
+            if ! "$MC_BIN" ls localminio/$REPLICA_BUCKET_NAME >/dev/null 2>&1; then
+                "$MC_BIN" mb localminio/$REPLICA_BUCKET_NAME >/dev/null 2>&1 && \
+                echo -e "${GREEN}✓ MinIO replica bucket '$REPLICA_BUCKET_NAME' created${NC}"
+            else
+                echo -e "${GREEN}✓ MinIO replica bucket '$REPLICA_BUCKET_NAME' already exists${NC}"
+            fi
         else
             echo -e "${YELLOW}MinIO Client (mc) not found. Please install from https://min.io/download#/mc to auto-create buckets.${NC}"
         fi
     fi
 fi
+
 
 echo -e "${GREEN}✓ Setup gate passed${NC}"
 exit 0

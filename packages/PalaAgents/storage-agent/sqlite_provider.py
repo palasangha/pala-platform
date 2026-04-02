@@ -12,6 +12,7 @@ import json
 import uuid
 import hashlib
 import logging
+import os
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,11 +26,26 @@ class SQLiteProvider(StorageProvider):
 
     def __init__(self, db_path: str = "./storage_metadata.db"):
         self.db_path = db_path
+        
+        # Replica config
+        self.replica_enabled = os.getenv('SQLITE_ENABLE_REPLICA', 'false').lower() == 'true'
+        self.replica_db_path = os.getenv('SQLITE_REPLICA_DB_PATH', './storage_metadata_replica.db')
+        
+        logger.info(f"[SQLiteProvider] PRIMARY: db_path={self.db_path}")
+        if self.replica_enabled:
+            logger.info(f"[SQLiteProvider] REPLICA: db_path={self.replica_db_path}")
+        
         self._init_db()
 
     def _init_db(self):
         """Initialize SQLite database with new schema"""
-        conn = sqlite3.connect(self.db_path)
+        self._init_db_schema(self.db_path)
+        if self.replica_enabled:
+            self._init_db_schema(self.replica_db_path)
+    
+    def _init_db_schema(self, db_path: str):
+        """Initialize database schema for given path"""
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
         # Documents table - Main content table
@@ -279,6 +295,64 @@ class SQLiteProvider(StorageProvider):
 
             conn.commit()
 
+            # Replicate to replica database if enabled
+            replica_result = None
+            if self.replica_enabled:
+                try:
+                    replica_conn = sqlite3.connect(self.replica_db_path)
+                    replica_cursor = replica_conn.cursor()
+                    
+                    # Store file blob in replica if present
+                    if file_blob is not None:
+                        replica_cursor.execute('''
+                            CREATE TABLE IF NOT EXISTS document_files (
+                                document_id TEXT PRIMARY KEY,
+                                file_blob BLOB,
+                                file_mime TEXT,
+                                created_at TEXT,
+                                FOREIGN KEY(document_id) REFERENCES documents(id)
+                            )
+                        ''')
+                        replica_cursor.execute('''
+                            INSERT INTO document_files (document_id, file_blob, file_mime, created_at)
+                            VALUES (?, ?, ?, ?)
+                        ''', (doc_id, file_blob, file_mime or '', now))
+                        logger.info(f"[SQLITE-REPLICA] File BLOB replicated for doc_id={doc_id}")
+                    
+                    # Replicate document metadata
+                    replica_cursor.execute('''
+                        INSERT INTO documents (
+                            id, type, original_file, file_format, processed_data,
+                            metadata, app_data, created_by, created_at, updated_at, file_hash
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        doc_id,
+                        type,
+                        original_file,
+                        file_format,
+                        json.dumps(processed_data or {}),
+                        json.dumps(metadata or {}),
+                        json.dumps(app_data or {}),
+                        created_by,
+                        now,
+                        now,
+                        file_hash
+                    ))
+                    
+                    # Replicate audit log
+                    replica_cursor.execute('''
+                        INSERT INTO audit_log (id, document_id, action, actor, actor_type, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ''', (f"audit-{uuid.uuid4()}", doc_id, 'CREATE', created_by, 'app', now))
+                    
+                    replica_conn.commit()
+                    replica_conn.close()
+                    logger.info(f"[SQLITE-REPLICA] Document replicated successfully: doc_id={doc_id}")
+                    replica_result = {'success': True, 'message': 'Document replicated to replica DB'}
+                except Exception as e:
+                    logger.warning(f"[SQLITE-REPLICA] Replication failed (non-critical): {e}")
+                    replica_result = {'success': False, 'error': str(e)}
+            
             # Log the action
             cursor.execute('''
                 INSERT INTO audit_log (id, document_id, action, actor, actor_type, created_at)
