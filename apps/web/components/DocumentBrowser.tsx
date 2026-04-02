@@ -100,6 +100,8 @@ export default function DocumentBrowser({ wsUrl, connected, send }: DocumentBrow
   // State
   const [documents, setDocuments] = useState<StoredDocument[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<DocumentContent | null>(null);
+  const [documentDetails, setDocumentDetails] = useState<any>(null);
+  const [loadingDetails, setLoadingDetails] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Debug: log loaded documents
@@ -217,13 +219,45 @@ export default function DocumentBrowser({ wsUrl, connected, send }: DocumentBrow
     }
   };
 
-  // View document (optional: show metadata in a modal or side panel)
-  // For now, just highlight selected
+  // View document - retrieve full details from agent
   const viewDocument = (contentId: string) => {
-    setSelectedDocument({
-      storage_metadata: { content_id: contentId, backend: '', size: 0, hash: '', version: 0, created_at: '' },
-      ocr_text: '',
-      enriched_metadata: {},
+    setLoadingDetails(true);
+    console.log(`[DocumentBrowser] Retrieving details for document: ${contentId}`);
+    
+    send('tools/invoke', {
+      name: 'retrieve_document',
+      agentId: 'storage-agent',
+      arguments: {
+        document_id: contentId,
+        include_original_file: false  // Don't download file yet, just metadata
+      }
+    })
+    .then((response: any) => {
+      console.log(`[DocumentBrowser] Retrieved document details:`, response);
+      if (response?.result) {
+        setDocumentDetails(response.result);
+        setSelectedDocument({
+          storage_metadata: {
+            content_id: response.result.document_id,
+            backend: response.result.provider_id || 'unknown',
+            size: 0,
+            hash: response.result.file_hash || '',
+            version: response.result.version || 1,
+            created_at: response.result.created_at || new Date().toISOString()
+          },
+          ocr_text: response.result.processed_data?.text || '',
+          enriched_metadata: response.result.metadata || {}
+        });
+      } else {
+        console.error('[DocumentBrowser] No result in response', response);
+      }
+    })
+    .catch((err: any) => {
+      console.error(`[DocumentBrowser] Failed to retrieve document details:`, err);
+      alert(`Failed to load document: ${err.message || 'Unknown error'}`);
+    })
+    .finally(() => {
+      setLoadingDetails(false);
     });
   };
 
@@ -235,10 +269,52 @@ export default function DocumentBrowser({ wsUrl, connected, send }: DocumentBrow
     }
   }, [backendFilter, connected, contentTypeFilter, loadDocuments]);
 
-  // Load more
-  const loadMore = () => {
-    setPage(p => p + 1);
-    loadDocuments(false);
+  // Download original document
+  const downloadOriginalDocument = async (documentId: string, fileName: string) => {
+    try {
+      console.log(`[DocumentBrowser] Downloading original document: ${documentId}`);
+      setLoadingDetails(true);
+      
+      const response = await send('tools/invoke', {
+        name: 'retrieve_document',
+        agentId: 'storage-agent',
+        arguments: {
+          document_id: documentId,
+          include_original_file: true
+        }
+      }) as any;
+
+      if (response?.result?.original_file_data) {
+        console.log(`[DocumentBrowser] File data retrieved, size: ${response.result.original_file_size} bytes`);
+        
+        // Convert base64 to blob and download
+        const binaryString = atob(response.result.original_file_data);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        const blob = new Blob([bytes], { type: response.result.original_file_mime || 'application/octet-stream' });
+        
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName || `document-${documentId}`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        
+        console.log(`[DocumentBrowser] File downloaded successfully: ${fileName}`);
+      } else {
+        console.error('[DocumentBrowser] No file data in response');
+        alert('No file data available for download');
+      }
+    } catch (err: any) {
+      console.error(`[DocumentBrowser] Failed to download document:`, err);
+      alert(`Failed to download document: ${err.message || 'Unknown error'}`);
+    } finally {
+      setLoadingDetails(false);
+    }
   };
 
   // Format file size
@@ -450,33 +526,140 @@ export default function DocumentBrowser({ wsUrl, connected, send }: DocumentBrow
             </div>
             {/* Storage Info */}
             <div className="bg-white rounded-xl border border-slate-200 p-6">
-              <h3 className="text-lg font-semibold text-slate-900 mb-4">Storage Information</h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-slate-900">Storage Information</h3>
+                {documentDetails?.original_file && (
+                  <button
+                    onClick={() => downloadOriginalDocument(
+                      documentDetails.document_id,
+                      documentDetails.original_file
+                    )}
+                    disabled={loadingDetails}
+                    className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 disabled:bg-slate-400"
+                  >
+                    {loadingDetails ? 'Downloading...' : 'Download Original'}
+                  </button>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <p className="text-xs text-slate-500 mb-1">Content ID</p>
-                  <p className="text-sm font-mono text-slate-900">{selectedDocument.storage_metadata.content_id}</p>
+                  <p className="text-xs text-slate-500 mb-1">Document ID</p>
+                  <p className="text-sm font-mono text-slate-900 break-all">{selectedDocument.storage_metadata.content_id}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500 mb-1">Backend</p>
+                  <p className="text-xs text-slate-500 mb-1">Type</p>
+                  <p className="text-sm text-slate-900">{documentDetails?.type || 'unknown'}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Original File</p>
+                  <p className="text-sm text-slate-900">{documentDetails?.original_file || 'N/A'}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">File Format</p>
+                  <p className="text-sm text-slate-900">{documentDetails?.file_format || 'unknown'}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">File Hash</p>
+                  <p className="text-sm font-mono text-slate-900 truncate">{documentDetails?.file_hash || 'N/A'}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Provider</p>
                   <p className="text-sm text-slate-900">{selectedDocument.storage_metadata.backend}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-slate-500 mb-1">Size</p>
-                  <p className="text-sm text-slate-900">{formatSize(selectedDocument.storage_metadata.size)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-slate-500 mb-1">Version</p>
                   <p className="text-sm text-slate-900">v{selectedDocument.storage_metadata.version}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500 mb-1">Hash</p>
-                  <p className="text-sm font-mono text-slate-900 truncate">{selectedDocument.storage_metadata.hash}</p>
+                  <p className="text-xs text-slate-500 mb-1">Created By</p>
+                  <p className="text-sm text-slate-900">{documentDetails?.created_by || 'unknown'}</p>
                 </div>
                 <div>
                   <p className="text-xs text-slate-500 mb-1">Created</p>
                   <p className="text-sm text-slate-900">{formatDate(selectedDocument.storage_metadata.created_at)}</p>
                 </div>
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Updated</p>
+                  <p className="text-sm text-slate-900">{formatDate(documentDetails?.updated_at || new Date().toISOString())}</p>
+                </div>
               </div>
+
+              {/* Replication Status */}
+              {documentDetails?.replication && (
+                <div className="mt-6 pt-6 border-t border-slate-200">
+                  <h4 className="text-sm font-semibold text-slate-900 mb-4">Replication Status</h4>
+                  
+                  {/* File Content Replication */}
+                  {documentDetails.replication.file_content && (
+                    <div className="mb-4">
+                      <p className="text-xs font-semibold text-slate-700 mb-2">File Content (S3)</p>
+                      <div className="space-y-2 ml-2">
+                        {documentDetails.replication.file_content.s3_primary && (
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs px-2 py-1 rounded ${documentDetails.replication.file_content.s3_primary.success ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                              {documentDetails.replication.file_content.s3_primary.success ? '✓' : '✗'} Primary
+                            </span>
+                            {documentDetails.replication.file_content.s3_primary.bucket && (
+                              <span className="text-xs text-slate-600">Bucket: {documentDetails.replication.file_content.s3_primary.bucket}</span>
+                            )}
+                          </div>
+                        )}
+                        {documentDetails.replication.file_content.s3_replica && (
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs px-2 py-1 rounded ${documentDetails.replication.file_content.s3_replica.success ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                              {documentDetails.replication.file_content.s3_replica.success ? '✓' : '✗'} Replica
+                            </span>
+                            {documentDetails.replication.file_content.s3_replica.bucket && (
+                              <span className="text-xs text-slate-600">Bucket: {documentDetails.replication.file_content.s3_replica.bucket}</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Metadata Replication */}
+                  {documentDetails.replication.metadata && (
+                    <div className="mb-4">
+                      <p className="text-xs font-semibold text-slate-700 mb-2">Metadata (SQLite)</p>
+                      <div className="space-y-2 ml-2">
+                        {documentDetails.replication.metadata.sqlite_primary && (
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs px-2 py-1 rounded ${documentDetails.replication.metadata.sqlite_primary.success ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                              {documentDetails.replication.metadata.sqlite_primary.success ? '✓' : '✗'} Primary
+                            </span>
+                            {documentDetails.replication.metadata.sqlite_primary.file_blob_stored && (
+                              <span className="text-xs text-slate-600">Blob: Yes</span>
+                            )}
+                          </div>
+                        )}
+                        {documentDetails.replication.metadata.sqlite_replica && (
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs px-2 py-1 rounded ${documentDetails.replication.metadata.sqlite_replica.success ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                              {documentDetails.replication.metadata.sqlite_replica.success ? '✓' : '✗'} Replica
+                            </span>
+                            {documentDetails.replication.metadata.sqlite_replica.file_blob_stored && (
+                              <span className="text-xs text-slate-600">Blob: Yes</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* App Data */}
+              {documentDetails?.app_data && Object.keys(documentDetails.app_data).length > 0 && (
+                <details className="mt-6 pt-6 border-t border-slate-200">
+                  <summary className="cursor-pointer text-sm font-medium text-slate-700 hover:text-slate-900">
+                    View App Data
+                  </summary>
+                  <pre className="mt-3 p-4 bg-slate-900 text-slate-100 text-xs rounded-lg overflow-x-auto">
+                    {JSON.stringify(documentDetails.app_data, null, 2)}
+                  </pre>
+                </details>
+              )}
             </div>
           </>
         ) : null}

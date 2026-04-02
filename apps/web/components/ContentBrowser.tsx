@@ -22,6 +22,26 @@ interface StoredContent {
   signature?: string | null;
   tags?: Record<string, string> | null;
   deleted_at?: string | null;
+  // From retrieve_document response
+  original_file_data?: string;
+  original_file_size?: number;
+  original_file_error?: string;
+  // From store_document response
+  db_storage_location?: string;
+  db_provider_id?: string;
+  replication?: {
+    file_content?: {
+      s3_primary?: Record<string, any>;
+      s3_replica?: Record<string, any>;
+    };
+    metadata?: {
+      sqlite_primary?: Record<string, any>;
+      sqlite_replica?: Record<string, any>;
+    };
+  };
+  s3_result?: Record<string, any>;
+  duplicate?: boolean;
+  message?: string;
 }
 
 interface PaginationState {
@@ -144,7 +164,7 @@ export function ContentBrowser() {
   }, [fetchContent]);
 
   const viewDocument = useCallback(
-    (documentId: string) => {
+    (documentId: string, includeOriginalFile: boolean = false) => {
       if (!client || !connected) return;
 
       setLoading(true);
@@ -157,7 +177,70 @@ export function ContentBrowser() {
         params: {
           agentId: 'storage-agent',
           toolName: 'retrieve_document',
-          arguments: { document_id: documentId },
+          arguments: { 
+            document_id: documentId,
+            include_original_file: includeOriginalFile
+          },
+        },
+        id: requestId,
+      };
+
+      console.log('[ContentBrowser] Calling retrieve_document:', { documentId, includeOriginalFile });
+      client.send(JSON.stringify(request));
+
+      const handleMessage = (event: MessageEvent) => {
+        try {
+          const response = JSON.parse(event.data);
+          if (response.id !== requestId) {
+            return;
+          }
+
+          if (response.error) {
+            setError(response.error.message || 'Failed to retrieve document');
+            console.error('[ContentBrowser] Error retrieving document:', response.error);
+          } else {
+            const fullDoc = extractToolResult(response);
+            if (fullDoc?.document_id) {
+              console.log('[ContentBrowser] Document retrieved successfully:', fullDoc);
+              setSelectedContent(fullDoc as StoredContent);
+            } else {
+              setError('Could not find document in response');
+              console.error('[ContentBrowser] Document not found in response');
+            }
+          }
+        } catch (e) {
+          setError('Failed to parse retrieve response');
+          console.error('[ContentBrowser] Failed to parse response:', e);
+        } finally {
+          setLoading(false);
+          client.removeEventListener('message', handleMessage);
+        }
+      };
+
+      client.addEventListener('message', handleMessage);
+    },
+    [client, connected]
+  );
+
+  const downloadOriginalDocument = useCallback(
+    (doc: StoredContent) => {
+      if (!client || !connected) return;
+
+      console.log('[ContentBrowser] Starting download for document:', doc.document_id);
+      setLoading(true);
+      setError(null);
+
+      const requestId = `download-${Date.now()}`;
+      const request = {
+        jsonrpc: '2.0',
+        method: 'tools/invoke',
+        params: {
+          agentId: 'storage-agent',
+          toolName: 'retrieve_document',
+          arguments: { 
+            document_id: doc.document_id,
+            include_original_file: true
+          },
         },
         id: requestId,
       };
@@ -172,17 +255,43 @@ export function ContentBrowser() {
           }
 
           if (response.error) {
-            setError(response.error.message || 'Failed to retrieve document');
+            setError(response.error.message || 'Failed to download document');
+            console.error('[ContentBrowser] Error downloading document:', response.error);
           } else {
-            const fullDoc = extractToolResult(response);
-            if (fullDoc?.document_id) {
-              setSelectedContent(fullDoc as StoredContent);
+            const result = extractToolResult(response);
+            if (result?.original_file_data) {
+              console.log('[ContentBrowser] Download successful, original_file_data present, size:', result.original_file_size);
+              try {
+                // Decode base64 string to binary
+                const binaryString = atob(result.original_file_data);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                  bytes[i] = binaryString.charCodeAt(i);
+                }
+                
+                // Create blob and download
+                const blob = new Blob([bytes], { type: 'application/octet-stream' });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = doc.original_file || `document-${doc.document_id}`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                console.log('[ContentBrowser] File downloaded successfully:', a.download);
+              } catch (decodeError) {
+                setError(`Failed to decode file: ${decodeError}`);
+                console.error('[ContentBrowser] Base64 decode error:', decodeError);
+              }
             } else {
-              setError('Could not find document in response');
+              setError('No file content available for download');
+              console.error('[ContentBrowser] No original_file_data in response:', result);
             }
           }
         } catch (e) {
-          setError('Failed to parse retrieve response');
+          setError('Failed to parse download response');
+          console.error('[ContentBrowser] Failed to parse download response:', e);
         } finally {
           setLoading(false);
           client.removeEventListener('message', handleMessage);
@@ -573,6 +682,55 @@ export function ContentBrowser() {
                 </div>
               )}
 
+              {selectedContent.storage_location && (
+                <div className="bg-blue-50 p-3 rounded text-sm space-y-2 border border-blue-200">
+                  <label className="text-xs font-medium text-blue-700">
+                    Storage Information
+                  </label>
+                  <div className="space-y-1 text-xs text-blue-900">
+                    <p><strong>Location:</strong> {selectedContent.storage_location}</p>
+                    <p><strong>Provider:</strong> {selectedContent.provider_id || 'unknown'}</p>
+                    {selectedContent.file_hash && (
+                      <p><strong>File Hash:</strong> <code className="text-blue-700">{selectedContent.file_hash}</code></p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {selectedContent.replication && (
+                <div className="bg-purple-50 p-3 rounded text-sm space-y-2 border border-purple-200">
+                  <label className="text-xs font-medium text-purple-700">
+                    Replication Status
+                  </label>
+                  <div className="space-y-2">
+                    {selectedContent.replication.file_content && (
+                      <div className="bg-white p-2 rounded border border-purple-100">
+                        <p className="text-xs font-medium text-purple-900 mb-1">File Content (S3)</p>
+                        <div className="space-y-1 text-xs text-purple-800">
+                          <p>Primary: {selectedContent.replication.file_content.s3_primary?.success ? '✓' : '✗'}</p>
+                          <p>Replica: {selectedContent.replication.file_content.s3_replica?.success ? '✓' : selectedContent.replication.file_content.s3_replica?.reason || '✗'}</p>
+                        </div>
+                      </div>
+                    )}
+                    {selectedContent.replication.metadata && (
+                      <div className="bg-white p-2 rounded border border-purple-100">
+                        <p className="text-xs font-medium text-purple-900 mb-1">Metadata (SQLite)</p>
+                        <div className="space-y-1 text-xs text-purple-800">
+                          <p>Primary: {selectedContent.replication.metadata.sqlite_primary?.success ? '✓' : '✗'}</p>
+                          <p>Replica: {selectedContent.replication.metadata.sqlite_replica?.success ? '✓' : selectedContent.replication.metadata.sqlite_replica?.reason || '✗'}</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {selectedContent.message && (
+                <div className="bg-green-50 p-3 rounded text-sm border border-green-200">
+                  <p className="text-xs font-medium text-green-700">{selectedContent.message}</p>
+                </div>
+              )}
+
               <div className="bg-slate-50 p-3 rounded text-sm space-y-2">
                 <label className="text-xs font-medium text-slate-600">
                   Full Record JSON
@@ -588,6 +746,13 @@ export function ContentBrowser() {
                   className="flex-1 px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-900 hover:bg-slate-50"
                 >
                   Close
+                </button>
+                <button
+                  onClick={() => downloadOriginalDocument(selectedContent)}
+                  disabled={loading}
+                  className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50"
+                >
+                  {loading ? 'Downloading...' : 'Download Original'}
                 </button>
                 <button
                   onClick={() => deleteDocument(selectedContent.document_id)}

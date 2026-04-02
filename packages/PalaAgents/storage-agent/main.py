@@ -202,6 +202,34 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
         logger.debug(f"[TOOL-DEBUG] Storing document with type={doc_type}, original_file={original_file}, file_format={file_format}, created_by={created_by}, metadata={metadata}, app_data={app_data}, file_hash={file_hash}, file_blob={'present' if file_blob else 'absent'}, s3_result={s3_result}")
         # Store metadata in DB and replicate file_blob to SQLite for backup
         logger.info(f"[REPLICATION] Storing to SQLite: file_blob={'present' if file_blob else 'absent'}, mime={original_file_mime}")
+        
+        # Build replication status before storing document
+        # s3_result structure: { success: bool, primary: {...}, replica: {...} }
+        s3_primary = s3_result.get('primary') if s3_result else None
+        s3_replica = s3_result.get('replica') if s3_result else None
+        s3_success = s3_result.get('success') if s3_result else False
+        
+        replication_status = {
+            'file_content': {
+                's3_primary': {**s3_primary, 'success': True} if s3_primary else {'success': False},
+                's3_replica': s3_replica if s3_replica else {'success': False, 'reason': 'Not configured'},
+            },
+            'metadata': {
+                'sqlite_primary': {
+                    'success': True,
+                    'provider': 'sqlite-primary',
+                    'db_path': getattr(provider, 'db_path', None),
+                    'file_blob_stored': file_blob is not None,
+                },
+                'sqlite_replica': {
+                    'success': True,
+                    'provider': 'sqlite-replica',
+                    'db_path': getattr(provider, 'replica_db_path', None),
+                    'file_blob_stored': file_blob is not None,
+                } if getattr(provider, 'replica_enabled', False) else {'success': False, 'reason': 'Not configured'},
+            }
+        }
+        
         doc, duplicate = await provider.store_document(
             type=doc_type,
             original_file=original_file,
@@ -212,45 +240,11 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
             created_by=created_by,
             file_hash=file_hash,
             file_blob=file_blob,  # Store file blob in SQLite for dual replication (backup)
-            file_mime=original_file_mime
+            file_mime=original_file_mime,
+            replication=replication_status,
+            s3_result=s3_result,
+            message=None  # Will be set after we know if it's a duplicate
         )
-        logger.debug(f"[TOOL-DEBUG] Document stored: id={doc.id}, duplicate={duplicate}, storage_location={getattr(doc, 'storage_location', None)}, provider_id={getattr(doc, 'provider_id', None)}")
-        logger.debug(f"tool_store_document: doc.id={doc.id}, storage_location={getattr(doc, 'storage_location', None)}, provider_id={getattr(doc, 'provider_id', None)}, duplicate={duplicate}")
-        
-        # Build comprehensive replication status
-        # S3: primary and replica buckets
-        # SQLite: primary and replica databases
-        s3_primary = s3_result.get('primary') if s3_result else None
-        s3_replica = s3_result.get('replica') if s3_result else None
-        
-        sqlite_primary = {
-            'success': True,
-            'provider': 'sqlite-primary',
-            'db_path': getattr(provider, 'db_path', None),
-            'file_blob_stored': file_blob is not None,
-        }
-        
-        sqlite_replica = None
-        if getattr(provider, 'replica_enabled', False):
-            sqlite_replica = {
-                'success': True,
-                'provider': 'sqlite-replica',
-                'db_path': getattr(provider, 'replica_db_path', None),
-                'file_blob_stored': file_blob is not None,
-            }
-        
-        replication_status = {
-            'file_content': {
-                's3_primary': s3_primary if s3_primary and s3_primary.get('success') else {'success': False},
-                's3_replica': s3_replica if s3_replica else {'success': False, 'reason': 'Not configured'},
-            },
-            'metadata': {
-                'sqlite_primary': sqlite_primary,
-                'sqlite_replica': sqlite_replica if sqlite_replica else {'success': False, 'reason': 'Not configured'},
-            }
-        }
-        
-        logger.info(f"[REPLICATION-SUMMARY] doc_id={doc.id}, s3_primary={s3_primary.get('success') if s3_primary else False}, s3_replica={s3_replica.get('success') if s3_replica else False}, sqlite_primary={sqlite_primary.get('success')}, sqlite_replica={sqlite_replica.get('success') if sqlite_replica else False}")
         
         result = {
             'document_id': doc.id,
@@ -428,21 +422,31 @@ async def tool_retrieve_document(params: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:
             pass
     """
-    Retrieve document by document ID
+    Retrieve document by document ID with optional original file content
     
     Params:
     - document_id: Document identifier
+    - include_original_file: If true, include original file as base64 (default: false)
     """
     try:
         document_id = params.get('document_id') or params.get('content_id')
         if not document_id:
             raise ValueError('document_id is required')
+        
+        include_original_file = params.get('include_original_file', False)
+        logger.debug(f"[TOOL-DEBUG] retrieve_document: document_id={document_id}, include_original_file={include_original_file}")
 
         doc = await provider.retrieve_document(document_id)
         if not doc:
+            logger.warning(f"[TOOL-WARNING] Document not found: {document_id}")
             raise ValueError(f'Document not found: {document_id}')
 
-        logger.debug(f"tool_retrieve_document: doc.id={doc.id}, storage_location={getattr(doc, 'storage_location', None)}, provider_id={getattr(doc, 'provider_id', None)}")
+        logger.debug(f"[TOOL-DEBUG] Document retrieved: doc.id={doc.id}, storage_location={getattr(doc, 'storage_location', None)}, provider_id={getattr(doc, 'provider_id', None)}")
+        
+        # Compute message based on duplicate status
+        duplicate_status = getattr(doc, 'duplicate', False)
+        message = 'Document updated (duplicate)' if duplicate_status else 'Document stored successfully'
+        
         result = {
             'document_id': doc.id,
             'type': doc.type,
@@ -456,13 +460,41 @@ async def tool_retrieve_document(params: Dict[str, Any]) -> Dict[str, Any]:
             'updated_at': doc.updated_at,
             'version': doc.version,
             'storage_location': getattr(doc, 'storage_location', None),
-            'provider_id': getattr(doc, 'provider_id', None)
+            'provider_id': getattr(doc, 'provider_id', None),
+            'file_hash': getattr(doc, 'file_hash', None),
+            'replication': getattr(doc, 'replication', None),
+            's3_result': getattr(doc, 's3_result', None),
+            'message': message,
+            'duplicate': duplicate_status
         }
-        logger.info(f"[TOOL-RETURN] retrieve_document returned: {json.dumps(result)[:500]}")
+        
+        # Retrieve original file if requested
+        original_file_data = None
+        if include_original_file:
+            try:
+                logger.info(f"[TOOL-DEBUG] Retrieving original file for document_id={document_id}")
+                # Try to retrieve from SQLite BLOB storage first
+                if hasattr(provider, 'retrieve_document_file'):
+                    original_file_data = await provider.retrieve_document_file(document_id)
+                    if original_file_data:
+                        import base64
+                        original_file_b64 = base64.b64encode(original_file_data).decode('utf-8')
+                        result['original_file_data'] = original_file_b64
+                        result['original_file_size'] = len(original_file_data)
+                        logger.info(f"[TOOL-SUCCESS] Original file retrieved from storage: size={len(original_file_data)} bytes")
+                    else:
+                        logger.warning(f"[TOOL-WARNING] Original file not found in storage for document_id={document_id}")
+                        result['original_file_data'] = None
+                        result['original_file_size'] = 0
+            except Exception as e:
+                logger.error(f"[TOOL-ERROR] Failed to retrieve original file: {e}", exc_info=True)
+                result['original_file_error'] = str(e)
+        
+        logger.info(f"[TOOL-RETURN] retrieve_document returned: {json.dumps({k: v for k, v in result.items() if k != 'original_file_data'})[:500]}")
         return result
 
     except Exception as e:
-        logger.error(f"Error in retrieve_document: {e}", exc_info=True)
+        logger.error(f"[TOOL-ERROR] Error in retrieve_document: {e}", exc_info=True)
         raise
 
 

@@ -77,9 +77,36 @@ class SQLiteProvider(StorageProvider):
                 previous_version_id TEXT,
                 
                 -- Soft delete
-                deleted_at TEXT
+                deleted_at TEXT,
+                
+                -- Replication and S3 information (stored as JSON)
+                replication TEXT DEFAULT NULL,
+                s3_result TEXT DEFAULT NULL,
+                message TEXT DEFAULT NULL
             )
         ''')
+        
+        # Add migration for new columns if they don't exist
+        try:
+            cursor.execute('PRAGMA table_info(documents)')
+            columns = {col[1] for col in cursor.fetchall()}
+            
+            if 'replication' not in columns:
+                logger.info(f"[SQLITE-MIGRATE] Adding 'replication' column to {db_path}")
+                cursor.execute('ALTER TABLE documents ADD COLUMN replication TEXT DEFAULT NULL')
+            
+            if 's3_result' not in columns:
+                logger.info(f"[SQLITE-MIGRATE] Adding 's3_result' column to {db_path}")
+                cursor.execute('ALTER TABLE documents ADD COLUMN s3_result TEXT DEFAULT NULL')
+            
+            if 'message' not in columns:
+                logger.info(f"[SQLITE-MIGRATE] Adding 'message' column to {db_path}")
+                cursor.execute('ALTER TABLE documents ADD COLUMN message TEXT DEFAULT NULL')
+            
+            conn.commit()
+        except Exception as e:
+            logger.warning(f"[SQLITE-MIGRATE] Migration error (may be non-critical): {e}")
+            conn.rollback()
 
         # Indexes
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_documents_type ON documents(type)')
@@ -219,6 +246,9 @@ class SQLiteProvider(StorageProvider):
         file_hash: Optional[str] = None,
         file_blob: Optional[bytes] = None,
         file_mime: Optional[str] = None,
+        replication: Optional[Dict[str, Any]] = None,
+        s3_result: Optional[Dict[str, Any]] = None,
+        message: Optional[str] = None,
     ) -> tuple[Document, bool]:
         """Store a document with file content as BLOB. Returns (Document, duplicate: bool)"""
         conn = sqlite3.connect(self.db_path)
@@ -236,7 +266,7 @@ class SQLiteProvider(StorageProvider):
                     # Optionally, fetch and return the existing document
                     cursor = sqlite3.connect(self.db_path).cursor()
                     cursor.execute('''
-                        SELECT id, type, original_file, file_format, processed_data, metadata, app_data, created_by, created_at, updated_at, version, deleted_at, file_hash
+                        SELECT id, type, original_file, file_format, processed_data, metadata, app_data, created_by, created_at, updated_at, version, deleted_at, file_hash, replication, s3_result, message
                         FROM documents WHERE id = ?
                     ''', (existing[0],))
                     row = cursor.fetchone()
@@ -248,7 +278,11 @@ class SQLiteProvider(StorageProvider):
                             processed_data=json.loads(row[4]), metadata=json.loads(row[5]),
                             app_data=json.loads(row[6]), created_by=row[7], created_at=row[8],
                             updated_at=row[9], version=row[10], deleted_at=row[11], file_hash=row[12],
-                            storage_location=row[2], provider_id='sqlite'
+                            storage_location=row[2], provider_id='sqlite',
+                            replication=json.loads(row[13]) if row[13] else None,
+                            s3_result=json.loads(row[14]) if row[14] else None,
+                            message=row[15],
+                            duplicate=True
                         ),
                         True
                     )
@@ -277,8 +311,9 @@ class SQLiteProvider(StorageProvider):
             cursor.execute('''
                 INSERT INTO documents (
                     id, type, original_file, file_format, processed_data,
-                    metadata, app_data, created_by, created_at, updated_at, file_hash
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    metadata, app_data, created_by, created_at, updated_at, file_hash,
+                    replication, s3_result, message
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 doc_id,
                 type,
@@ -290,7 +325,10 @@ class SQLiteProvider(StorageProvider):
                 created_by,
                 now,
                 now,
-                file_hash
+                file_hash,
+                json.dumps(replication) if replication else None,
+                json.dumps(s3_result) if s3_result else None,
+                message
             ))
 
             conn.commit()
@@ -377,7 +415,10 @@ class SQLiteProvider(StorageProvider):
                     updated_at=now,
                     file_hash=file_hash,
                     storage_location=original_file if original_file else None,
-                    provider_id='sqlite'
+                    provider_id='sqlite',
+                    replication=replication,
+                    s3_result=s3_result,
+                    message=message
                 ),
                 False
             )
@@ -394,7 +435,8 @@ class SQLiteProvider(StorageProvider):
 
         cursor.execute('''
             SELECT id, type, original_file, file_format, processed_data, metadata,
-                   app_data, created_by, created_at, updated_at, version, deleted_at, file_hash
+                   app_data, created_by, created_at, updated_at, version, deleted_at, file_hash,
+                   replication, s3_result, message
             FROM documents WHERE id = ? AND deleted_at IS NULL
         ''', (document_id,))
 
@@ -419,10 +461,39 @@ class SQLiteProvider(StorageProvider):
             deleted_at=row[11],
             file_hash=row[12],
             storage_location=row[2] if row[2] else None,
-            provider_id='sqlite'
+            provider_id='sqlite',
+            replication=json.loads(row[13]) if row[13] else None,
+            s3_result=json.loads(row[14]) if row[14] else None,
+            message=row[15]
         )
         logger.debug(f"retrieve_document: doc.id={doc.id}, storage_location={doc.storage_location}, provider_id={doc.provider_id}")
         return doc
+
+    async def retrieve_document_file(self, document_id: str) -> Optional[bytes]:
+        """Retrieve the original file BLOB for a document by ID"""
+        logger.debug(f"[RETRIEVE-FILE] Attempting to retrieve file for document_id={document_id}")
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('''
+                SELECT file_blob, file_mime FROM document_files WHERE document_id = ?
+            ''', (document_id,))
+
+            row = cursor.fetchone()
+            
+            if not row:
+                logger.warning(f"[RETRIEVE-FILE] File not found for document_id={document_id}")
+                return None
+
+            file_blob, file_mime = row
+            logger.info(f"[RETRIEVE-FILE] File retrieved for document_id={document_id}, size={len(file_blob) if file_blob else 0} bytes, mime={file_mime}")
+            return file_blob
+        except Exception as e:
+            logger.error(f"[RETRIEVE-FILE] Error retrieving file for document_id={document_id}: {e}", exc_info=True)
+            return None
+        finally:
+            conn.close()
 
     async def list_documents(
         self,

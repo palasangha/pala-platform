@@ -29,6 +29,11 @@ class Document:
     file_hash: Optional[str] = None  # SHA-256 for deduplication
     storage_location: Optional[str] = None  # Path or URI where file is stored
     provider_id: Optional[str] = None  # Storage provider identifier
+    # Replication and S3 information
+    replication: Optional[Dict[str, Any]] = None  # Replication status from store_document
+    s3_result: Optional[Dict[str, Any]] = None  # S3 upload result information
+    duplicate: bool = False  # Whether this is a duplicate document
+    message: Optional[str] = None  # Status message from store_document
 
 
 @dataclass
