@@ -77,11 +77,11 @@ class ResultAggregator:
                 published = job.get('published_count', 0)
                 consumed = job.get('consumed_count', 0)
 
-                # Verify job has at least some checkpoint data
-                checkpoint = job.get('checkpoint', {})
-                results_count = len(checkpoint.get('results', []))
-                errors_count = len(checkpoint.get('errors', []))
-                total_saved = results_count + errors_count
+                # Count saved results from the bulk_job_results collection
+                # (with fallback to legacy checkpoint arrays for backward compatibility)
+                total_saved = BulkJob.count_saved(self.mongo, job_id)
+                results_count = self.mongo.db.bulk_job_results.count_documents({'job_id': job_id, 'result_type': 'success'})
+                errors_count = self.mongo.db.bulk_job_results.count_documents({'job_id': job_id, 'result_type': 'error'})
 
                 logger.info(f"Job {job_id}: published={published}, consumed={consumed}, results={results_count}, errors={errors_count}, total_saved={total_saved}")
 
@@ -138,14 +138,12 @@ class ResultAggregator:
                 logger.error(f"Job {job_id} not found")
                 return
 
-            # Check entire checkpoint structure
-            checkpoint = job.get('checkpoint', {})
-            logger.error(f"Job {job_id} checkpoint keys: {list(checkpoint.keys())}")
-            logger.error(f"Job {job_id} checkpoint size: {len(str(checkpoint))} bytes")
-            logger.error(f"Job {job_id} full checkpoint structure: {checkpoint}")
+            # Fetch results from the bulk_job_results collection
+            # (with fallback to legacy checkpoint arrays for backward compatibility)
+            results = BulkJob.get_results(self.mongo, job_id)
+            errors = BulkJob.get_errors(self.mongo, job_id)
 
-            results = checkpoint.get('results', [])
-            errors = checkpoint.get('errors', [])
+            logger.info(f"Job {job_id}: loaded {len(results)} results and {len(errors)} errors from storage")
 
             # CRITICAL FIX: Deduplicate results by filename
             # Some files may be processed twice due to NSQ redelivery or race conditions

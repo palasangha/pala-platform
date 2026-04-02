@@ -62,7 +62,6 @@ services:
     - AZURE_VISION_KEY=${AZURE_VISION_KEY}
     - OLLAMA_HOST=${OLLAMA_HOST:-http://localhost:11434}
     - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2-vision}
-    - OLLAMA_ENABLED=${OLLAMA_ENABLED:-true}
     - LANGCHAIN_ENABLED=${LANGCHAIN_ENABLED:-true}
     - LANGCHAIN_OLLAMA_HOST=${LANGCHAIN_OLLAMA_HOST:-http://ollama:11434}
     - LANGCHAIN_MODEL=${LANGCHAIN_MODEL:-llama3.2-vision:11b}
@@ -75,7 +74,7 @@ services:
     - EASYOCR_GPU=${EASYOCR_GPU:-False}
     - LMSTUDIO_ENABLED=${LMSTUDIO_ENABLED:-true}
     - LMSTUDIO_HOST=${LMSTUDIO_HOST:-http://lmstudio:1234}
-    - LMSTUDIO_MODEL=${LMSTUDIO_MODEL:-google/gemma-3-12b}
+    - LMSTUDIO_MODEL=${LMSTUDIO_MODEL:-deepseek-r1-distill-qwen-14b}
     - LMSTUDIO_API_KEY=${LMSTUDIO_API_KEY:-lm-studio}
     - LMSTUDIO_TIMEOUT=${LMSTUDIO_TIMEOUT:-600}
     - LMSTUDIO_MAX_TOKENS=${LMSTUDIO_MAX_TOKENS:-4096}
@@ -286,6 +285,8 @@ services:
     - OLLAMA_BASE_URL=http://ollama:11434
     - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-your-secret-key-here}
     - ENABLE_OLLAMA_API=true
+    - OPENAI_API_BASE_URL=http://lmstudio:1234/v1
+    - OPENAI_API_KEY=lm-studio
     volumes:
     - open_webui_data:/app/backend/data
     networks:
@@ -466,7 +467,7 @@ services:
     - LLAMACPP_MODEL=${LLAMACPP_MODEL:-gemma3-vision}
     - LMSTUDIO_ENABLED=${LMSTUDIO_ENABLED:-true}
     - LMSTUDIO_HOST=${LMSTUDIO_HOST:-http://lmstudio:1234}
-    - LMSTUDIO_MODEL=${LMSTUDIO_MODEL:-google/gemma-3-12b}
+    - LMSTUDIO_MODEL=${LMSTUDIO_MODEL:-deepseek-r1-distill-qwen-14b}
     - LMSTUDIO_TIMEOUT=${LMSTUDIO_TIMEOUT:-600}
     volumes:
     - ./backend/uploads:/app/uploads
@@ -492,7 +493,7 @@ services:
     ports:
     - 1234:1234
     environment:
-    - DISPLAY=:0
+    - DISPLAY=${DISPLAY}
     - XAUTHORITY=/tmp/.Xauthority
     - QT_X11_NO_MITSHM=1
     - QT_DEBUG_PLUGINS=0
@@ -684,7 +685,9 @@ services:
     environment:
     - MCP_SERVER_URL=ws://mcp-server:3003
     - OLLAMA_HOST=http://ollama:11434
-    - OLLAMA_MODEL=llama3.2
+    - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5vl:7b}
+    - LMSTUDIO_HOST=${LMSTUDIO_HOST:-http://lmstudio:1234}
+    - LMSTUDIO_MODEL=${LMSTUDIO_MODEL:-deepseek-vl-7b-chat}
     - AGENT_ID=metadata-agent
     - LOG_LEVEL=debug
     networks:
@@ -710,7 +713,9 @@ services:
     environment:
     - MCP_SERVER_URL=ws://mcp-server:3003
     - OLLAMA_HOST=http://ollama:11434
-    - OLLAMA_MODEL=llama3.2
+    - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5vl:7b}
+    - LMSTUDIO_HOST=${LMSTUDIO_HOST:-http://lmstudio:1234}
+    - LMSTUDIO_MODEL=${LMSTUDIO_MODEL:-deepseek-vl-7b-chat}
     - AGENT_ID=entity-agent
     - LOG_LEVEL=debug
     networks:
@@ -736,7 +741,9 @@ services:
     environment:
     - MCP_SERVER_URL=ws://mcp-server:3003
     - OLLAMA_HOST=http://ollama:11434
-    - OLLAMA_MODEL=llama3.2
+    - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5vl:7b}
+    - LMSTUDIO_HOST=${LMSTUDIO_HOST:-http://lmstudio:1234}
+    - LMSTUDIO_MODEL=${LMSTUDIO_MODEL:-deepseek-vl-7b-chat}
     - AGENT_ID=structure-agent
     - LOG_LEVEL=debug
     networks:
@@ -762,7 +769,9 @@ services:
     environment:
     - MCP_SERVER_URL=ws://mcp-server:3003
     - OLLAMA_HOST=http://ollama:11434
-    - OLLAMA_MODEL=llama3.2
+    - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5vl:7b}
+    - LMSTUDIO_HOST=${LMSTUDIO_HOST:-http://lmstudio:1234}
+    - LMSTUDIO_MODEL=${LMSTUDIO_MODEL:-deepseek-vl-7b-chat}
     - AGENT_ID=content-agent
     - LOG_LEVEL=debug
     networks:
@@ -788,7 +797,9 @@ services:
     environment:
     - MCP_SERVER_URL=ws://mcp-server:3003
     - OLLAMA_HOST=http://ollama:11434
-    - OLLAMA_MODEL=llama3.2
+    - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5vl:7b}
+    - LMSTUDIO_HOST=${LMSTUDIO_HOST:-http://lmstudio:1234}
+    - LMSTUDIO_MODEL=${LMSTUDIO_MODEL:-deepseek-vl-7b-chat}
     - AGENT_ID=context-agent
     - LOG_LEVEL=debug
     networks:
@@ -880,6 +891,38 @@ services:
   #   - nsqd
   #   deploy:
   #     replicas: 2
+  remote-worker-tunnel:
+    image: python:3.11-slim
+    container_name: gvpocr-remote-worker-tunnel
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    volumes:
+    - ./scripts/setup_remote_worker_tunnels.py:/app/setup_remote_worker_tunnels.py:ro
+    - /var/run/docker.sock:/var/run/docker.sock
+    - ${HOME}/.ssh:/root/.ssh:ro
+    - /usr/bin/docker:/usr/bin/docker:ro
+    - /usr/lib/x86_64-linux-gnu/libltdl.so.7:/usr/lib/x86_64-linux-gnu/libltdl.so.7:ro
+    environment:
+    - REMOTE_USER=${REMOTE_WORKER_USER:-tod}
+    - REMOTE_HOST=${REMOTE_WORKER_HOST:-172.12.0.84}
+    - PYTHONUNBUFFERED=1
+    command: >
+      sh -c "
+        pip install --quiet --no-cache-dir paramiko requests &&
+        echo 'Starting tunnel manager...' &&
+        python /app/setup_remote_worker_tunnels.py &&
+        echo 'Initial setup done. Monitoring every 5 minutes...' &&
+        while true; do
+          sleep 300;
+          python /app/setup_remote_worker_tunnels.py --check-only || \
+          python /app/setup_remote_worker_tunnels.py;
+        done
+      "
+    depends_on:
+    - nsqd
+    - backend
+
   zip-regeneration-worker:
     build:
       context: .

@@ -381,6 +381,9 @@ class BulkJob:
         Uses a truly atomic check-and-insert operation to prevent race conditions
         where multiple workers might process the same file simultaneously.
 
+        Results are stored in a separate bulk_job_results collection to avoid
+        exceeding MongoDB's 16MB document size limit on the bulk_jobs document.
+
         Args:
             mongo: MongoDB connection
             job_id: Job identifier
@@ -420,9 +423,9 @@ class BulkJob:
         if message_id:
             query_conditions['checkpoint.processed_message_ids'] = {'$ne': message_id}
 
-        # Build update operations
+        # Update bulk_jobs with only lightweight tracking data (no result payload)
+        # to avoid exceeding MongoDB's 16MB document size limit
         update_operations = {
-            '$push': {'checkpoint.results': result},
             '$addToSet': {'checkpoint.processed_files': file_path},
             '$inc': {'consumed_count': 1},
             '$set': {
@@ -445,6 +448,13 @@ class BulkJob:
             logger.warning(f"save_file_result_atomic: File {file_path} was already processed by another worker, skipping duplicate")
             return None
 
+        # Store full result payload in a separate collection to avoid the 16MB document limit
+        result_doc = dict(result)
+        result_doc['job_id'] = job_id
+        result_doc['result_type'] = 'success'
+        result_doc['saved_at'] = datetime.utcnow()
+        mongo.db.bulk_job_results.insert_one(result_doc)
+
         logger.info(f"save_file_result_atomic: Successfully saved result - matched={update_result.matched_count}, modified={update_result.modified_count}")
 
         return update_result
@@ -456,6 +466,9 @@ class BulkJob:
 
         Uses a truly atomic check-and-insert operation to prevent race conditions
         where multiple workers might process the same file simultaneously.
+
+        Errors are stored in a separate bulk_job_results collection to avoid
+        exceeding MongoDB's 16MB document size limit on the bulk_jobs document.
 
         Args:
             mongo: MongoDB connection
@@ -469,13 +482,6 @@ class BulkJob:
         import os
         import logging
         logger = logging.getLogger(__name__)
-
-        error_doc = {
-            'file': os.path.basename(file_path),
-            'file_path': file_path,
-            'error': error,
-            'processed_at': datetime.utcnow().isoformat()
-        }
 
         # Get current state to calculate new progress
         job = mongo.db.bulk_jobs.find_one({'job_id': job_id})
@@ -492,15 +498,14 @@ class BulkJob:
         # Use collection with write concern for atomicity
         collection = mongo.db.get_collection('bulk_jobs', write_concern=WriteConcern(w='majority', j=True))
 
-        # Atomic operation: Only update if file_path NOT in processed_files array
-        # This prevents race conditions where multiple workers process the same file
+        # Update bulk_jobs with only lightweight tracking data (no error payload)
+        # to avoid exceeding MongoDB's 16MB document size limit
         update_result = collection.update_one(
             {
                 'job_id': job_id,
                 'checkpoint.processed_files': {'$ne': file_path}  # Only update if file NOT already processed
             },
             {
-                '$push': {'checkpoint.errors': error_doc},
                 '$addToSet': {'checkpoint.processed_files': file_path},
                 '$inc': {'consumed_count': 1},
                 '$set': {
@@ -516,9 +521,108 @@ class BulkJob:
             logger.warning(f"save_file_error_atomic: File {file_path} was already processed by another worker, skipping duplicate error")
             return None
 
+        # Store full error payload in a separate collection to avoid the 16MB document limit
+        error_doc = {
+            'job_id': job_id,
+            'result_type': 'error',
+            'file': os.path.basename(file_path),
+            'file_path': file_path,
+            'error': error,
+            'processed_at': datetime.utcnow().isoformat(),
+            'saved_at': datetime.utcnow()
+        }
+        mongo.db.bulk_job_results.insert_one(error_doc)
+
         logger.info(f"save_file_error_atomic: Successfully saved error - matched={update_result.matched_count}, modified={update_result.modified_count}")
 
         return update_result
+
+    @staticmethod
+    def get_results(mongo, job_id):
+        """
+        Get all successful results for a job from bulk_job_results collection,
+        with fallback to legacy checkpoint.results for backward compatibility.
+
+        Args:
+            mongo: MongoDB connection
+            job_id: Job identifier
+
+        Returns:
+            List of result dictionaries
+        """
+        # Primary: query from separate collection
+        results = list(mongo.db.bulk_job_results.find(
+            {'job_id': job_id, 'result_type': 'success'},
+            {'_id': 0, 'job_id': 0, 'result_type': 0, 'saved_at': 0}
+        ))
+
+        # Fallback: include any results stored in legacy checkpoint.results field
+        job = mongo.db.bulk_jobs.find_one({'job_id': job_id}, {'checkpoint.results': 1})
+        if job:
+            legacy_results = job.get('checkpoint', {}).get('results', [])
+            if legacy_results:
+                # Deduplicate by file_path, preferring new collection entries
+                new_paths = {r['file_path'] for r in results if r.get('file_path')}
+                for r in legacy_results:
+                    if r.get('file_path') not in new_paths:
+                        results.append(r)
+
+        return results
+
+    @staticmethod
+    def get_errors(mongo, job_id):
+        """
+        Get all error records for a job from bulk_job_results collection,
+        with fallback to legacy checkpoint.errors for backward compatibility.
+
+        Args:
+            mongo: MongoDB connection
+            job_id: Job identifier
+
+        Returns:
+            List of error dictionaries
+        """
+        # Primary: query from separate collection
+        errors = list(mongo.db.bulk_job_results.find(
+            {'job_id': job_id, 'result_type': 'error'},
+            {'_id': 0, 'job_id': 0, 'result_type': 0, 'saved_at': 0}
+        ))
+
+        # Fallback: include any errors stored in legacy checkpoint.errors field
+        job = mongo.db.bulk_jobs.find_one({'job_id': job_id}, {'checkpoint.errors': 1})
+        if job:
+            legacy_errors = job.get('checkpoint', {}).get('errors', [])
+            if legacy_errors:
+                new_paths = {e['file_path'] for e in errors if e.get('file_path')}
+                for e in legacy_errors:
+                    if e.get('file_path') not in new_paths:
+                        errors.append(e)
+
+        return errors
+
+    @staticmethod
+    def count_saved(mongo, job_id):
+        """
+        Count total saved results and errors for a job across both the new
+        bulk_job_results collection and the legacy checkpoint arrays.
+
+        Args:
+            mongo: MongoDB connection
+            job_id: Job identifier
+
+        Returns:
+            Total count of saved results + errors
+        """
+        new_count = mongo.db.bulk_job_results.count_documents({'job_id': job_id})
+
+        # Also count any legacy entries not yet migrated
+        job = mongo.db.bulk_jobs.find_one({'job_id': job_id}, {'checkpoint.results': 1, 'checkpoint.errors': 1})
+        legacy_count = 0
+        if job:
+            checkpoint = job.get('checkpoint', {})
+            legacy_count = len(checkpoint.get('results', [])) + len(checkpoint.get('errors', []))
+
+        return new_count + legacy_count
 
     @staticmethod
     def is_file_processed(mongo, job_id, file_path):
