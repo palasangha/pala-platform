@@ -346,13 +346,15 @@ function DeveloperPanel() {
         },
         {
           name: 'retrieve_document',
-          description: 'Retrieve document by ID',
-          placeholder: 'Enter JSON: {"document_id": "..."}',
+          description: 'Retrieve document by ID with optional file content',
+          placeholder: 'Enter JSON: {"document_id": "...", "include_original_file": false}',
           examples: [
-            { label: 'By document id', input: '{"document_id": "doc-12345678"}' },
+            { label: 'Retrieve metadata only', input: '{"document_id": "doc-12345678"}' },
+            { label: 'Retrieve with file content', input: '{"document_id": "doc-12345678", "include_original_file": true}' },
           ],
           schemaFields: [
             { name: 'document_id', type: 'string', required: true, description: 'Document identifier returned by store_document.' },
+            { name: 'include_original_file', type: 'boolean', description: 'If true, returns original file as base64-encoded content. Default: false', defaultValue: 'false' },
           ],
         },
         {
@@ -657,6 +659,31 @@ function DeveloperPanel() {
                 )}
               </div>
             )}
+
+            {/* Tool-specific help text */}
+            {selectedTool === 'store_document' && (
+              <div className="bg-green-900 bg-opacity-30 border border-green-700 p-3 rounded text-xs text-green-200 space-y-2">
+                <p className="font-semibold">File Handling Guide:</p>
+                <ul className="list-disc list-inside space-y-1">
+                  <li>Upload a file using the file input above, and it will be automatically injected as <code className="text-green-100">base64</code> in the JSON</li>
+                  <li>Files are stored redundantly in: SQLite (primary + replica) and S3 (primary + replica)</li>
+                  <li>Response includes <code className="text-green-100">replication</code> status showing success/failure of each storage location</li>
+                  <li>Use the returned <code className="text-green-100">document_id</code> to retrieve the document later with <code className="text-green-100">retrieve_document</code></li>
+                </ul>
+              </div>
+            )}
+            {selectedTool === 'retrieve_document' && (
+              <div className="bg-blue-900 bg-opacity-30 border border-blue-700 p-3 rounded text-xs text-blue-200 space-y-2">
+                <p className="font-semibold">File Retrieval Guide:</p>
+                <ul className="list-disc list-inside space-y-1">
+                  <li>Set <code className="text-blue-100">"include_original_file": true</code> to retrieve the original file content</li>
+                  <li>File content is returned as <code className="text-blue-100">base64-encoded</code> in the <code className="text-blue-100">original_file_data</code> field</li>
+                  <li>Use the <strong>Download Original</strong> button in Storage Explorer to download files automatically</li>
+                  <li>In code, decode with: <code className="text-blue-100">atob(response.original_file_data)</code> (JavaScript) or <code className="text-blue-100">base64.b64decode()</code> (Python)</li>
+                </ul>
+              </div>
+            )}
+
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
