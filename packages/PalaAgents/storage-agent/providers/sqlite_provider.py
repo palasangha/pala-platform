@@ -392,3 +392,33 @@ class SQLiteProvider(BaseStorageProvider):
         except Exception as e:
             logger.error(f"Error getting stats: {e}")
             return {'error': str(e)}
+    
+    def _cosine_similarity(self, vec_a: list, vec_b: list) -> float:
+        """
+        Calculate cosine similarity between two vectors
+        
+        Args:
+            vec_a: First vector
+            vec_b: Second vector
+            
+        Returns:
+            Cosine similarity score (0-1)
+        """
+        try:
+            if not vec_a or not vec_b or len(vec_a) != len(vec_b):
+                return 0.0
+            
+            # Calculate dot product
+            dot_product = sum(a * b for a, b in zip(vec_a, vec_b))
+            
+            # Calculate magnitudes
+            mag_a = sum(a * a for a in vec_a) ** 0.5
+            mag_b = sum(b * b for b in vec_b) ** 0.5
+            
+            if mag_a == 0 or mag_b == 0:
+                return 0.0
+            
+            return dot_product / (mag_a * mag_b)
+        except Exception as e:
+            logger.error(f"Error calculating cosine similarity: {e}")
+            return 0.0

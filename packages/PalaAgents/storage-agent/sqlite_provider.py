@@ -843,6 +843,219 @@ class SQLiteProvider(StorageProvider):
             logger.error(f"Error creating signature: {e}", exc_info=True)
             raise
 
+    def _cosine_similarity(self, vec_a: list, vec_b: list) -> float:
+        """
+        Calculate cosine similarity between two vectors.
+        
+        Args:
+            vec_a: First vector (list of floats)
+            vec_b: Second vector (list of floats)
+            
+        Returns:
+            Cosine similarity score (0-1)
+        """
+        try:
+            if not vec_a or not vec_b or len(vec_a) != len(vec_b):
+                return 0.0
+            
+            # Calculate dot product
+            dot_product = sum(a * b for a, b in zip(vec_a, vec_b))
+            
+            # Calculate magnitudes
+            mag_a = sum(a * a for a in vec_a) ** 0.5
+            mag_b = sum(b * b for b in vec_b) ** 0.5
+            
+            if mag_a == 0 or mag_b == 0:
+                return 0.0
+            
+            return dot_product / (mag_a * mag_b)
+        except Exception as e:
+            logger.error(f"[SEARCH-DOCUMENTS] Error calculating cosine similarity: {e}")
+            return 0.0
+
+    async def search_documents(
+        self,
+        query: str,
+        query_embedding: Optional[List[float]] = None,
+        limit: int = 5,
+        min_confidence: float = 0.5,
+        include_original_content: bool = False
+    ) -> List[Dict[str, Any]]:
+        """
+        Search documents using embeddings (semantic) or keyword fallback.
+        
+        Args:
+            query: Search query string
+            query_embedding: Optional embedding vector for semantic search
+            limit: Max results to return
+            min_confidence: Minimum relevance score (0-1)
+            include_original_content: Whether to include original file data
+            
+        Returns:
+            List of documents with relevance scores
+        """
+        logger.info(f"[SEARCH-DOCUMENTS] Searching for: '{query}' (embedding={'yes' if query_embedding else 'no'})")
+        
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            results = []
+            
+            # Step 1: Fetch all documents
+            logger.debug("[SEARCH-DOCUMENTS] Fetching documents from database...")
+            cursor.execute('''
+                SELECT id, type, original_file, file_format, processed_data, metadata,
+                       app_data, created_by, created_at, updated_at, version, file_size, file_hash
+                FROM documents
+                WHERE deleted_at IS NULL
+                ORDER BY created_at DESC
+                LIMIT 1000
+            ''')
+            
+            rows = cursor.fetchall()
+            conn.close()
+            
+            logger.debug(f"[SEARCH-DOCUMENTS] Loaded {len(rows)} documents for searching")
+            
+            # Step 2: Score documents
+            for row in rows:
+                doc_id = row[0]
+                doc_type = row[1]
+                original_file = row[2]
+                file_format = row[3]
+                processed_data = json.loads(row[4]) if row[4] else {}
+                metadata = json.loads(row[5]) if row[5] else {}
+                app_data = json.loads(row[6]) if row[6] else {}
+                created_by = row[7]
+                created_at = row[8]
+                updated_at = row[9]
+                version = row[10]
+                file_size = row[11]
+                file_hash = row[12]
+                
+                relevance_score = 0.0
+                match_method = "none"
+                
+                # Method 1: Semantic search using embeddings
+                if query_embedding:
+                    try:
+                        # Get document embedding from app_data
+                        doc_embedding = app_data.get('embedding_vector', None)
+                        
+                        # If embedding is a string (JSON), parse it
+                        if doc_embedding and isinstance(doc_embedding, str):
+                            try:
+                                doc_embedding = json.loads(doc_embedding)
+                                logger.debug(f"[SEARCH-DOCUMENTS] Parsed embedding from JSON string")
+                            except:
+                                doc_embedding = None
+                        
+                        if doc_embedding and isinstance(doc_embedding, list):
+                            logger.debug(f"[SEARCH-DOCUMENTS] Found embedding for {original_file} (dim={len(doc_embedding)})")
+                            # Calculate cosine similarity (range: -1 to 1)
+                            raw_similarity = self._cosine_similarity(query_embedding, doc_embedding)
+                            # Normalize to [0, 1] range: (similarity + 1) / 2
+                            similarity = (raw_similarity + 1.0) / 2.0
+                            logger.info(f"[SEARCH-DOCUMENTS] {original_file}: raw_sim={raw_similarity:.4f}, normalized={similarity:.4f}, threshold={min_confidence}")
+                            if similarity >= min_confidence:
+                                relevance_score = similarity
+                                match_method = "semantic"
+                                logger.info(f"[SEARCH-DOCUMENTS] ✅ MATCH: {original_file} (score={similarity:.3f})")
+                            else:
+                                logger.debug(f"[SEARCH-DOCUMENTS] Below threshold: {similarity:.4f} < {min_confidence}")
+                        else:
+                            logger.debug(f"[SEARCH-DOCUMENTS] No embedding or not a list for {original_file}: type={type(doc_embedding)}")
+                    except Exception as e:
+                        logger.error(f"[SEARCH-DOCUMENTS] Error in semantic search: {e}", exc_info=True)
+                        pass  # Fall through to keyword search
+                
+                # Method 2: Keyword search (if no semantic match or no embedding)
+                if relevance_score < min_confidence:
+                    query_lower = query.lower()
+                    keyword_score = 0.0
+                    
+                    # Check filename
+                    if original_file and query_lower in original_file.lower():
+                        keyword_score = max(keyword_score, 0.7)
+                    
+                    # Check document type
+                    if doc_type and query_lower in doc_type.lower():
+                        keyword_score = max(keyword_score, 0.6)
+                    
+                    # Check metadata summaries and topics
+                    if metadata:
+                        if metadata.get('summary') and query_lower in metadata.get('summary', '').lower():
+                            keyword_score = max(keyword_score, 0.6)
+                        if metadata.get('topics'):
+                            topics = metadata.get('topics', [])
+                            if isinstance(topics, list):
+                                for topic in topics:
+                                    if query_lower in str(topic).lower():
+                                        keyword_score = max(keyword_score, 0.5)
+                                        break
+                        if metadata.get('places'):
+                            places = metadata.get('places', [])
+                            if isinstance(places, list):
+                                for place in places:
+                                    if query_lower in str(place).lower():
+                                        keyword_score = max(keyword_score, 0.5)
+                                        break
+                    
+                    # Check processed data
+                    if processed_data:
+                        for key, val in processed_data.items():
+                            if isinstance(val, str) and query_lower in val.lower():
+                                keyword_score = max(keyword_score, 0.5)
+                                break
+                    
+                    if keyword_score >= min_confidence:
+                        relevance_score = keyword_score
+                        match_method = "keyword"
+                        logger.debug(f"[SEARCH-DOCUMENTS] Keyword match: {original_file} (score={keyword_score:.3f})")
+                
+                # Add to results if scored above threshold
+                if relevance_score >= min_confidence:
+                    # Extract excerpt from metadata or processed data
+                    excerpt = ""
+                    if metadata.get('summary'):
+                        excerpt = metadata.get('summary', '')[:300]
+                    elif isinstance(processed_data, dict) and processed_data.get('content'):
+                        content = processed_data.get('content', '')
+                        if isinstance(content, str):
+                            excerpt = content[:300]
+                    
+                    result = {
+                        'document_id': doc_id,
+                        'type': doc_type,
+                        'original_file': original_file,
+                        'file_format': file_format,
+                        'relevance_score': round(relevance_score, 3),
+                        'match_method': match_method,
+                        'created_at': created_at,
+                        'created_by': created_by,
+                        'summary': metadata.get('summary', '') if isinstance(metadata, dict) else '',
+                        'topics': metadata.get('topics', []) if isinstance(metadata, dict) else [],
+                        'places': metadata.get('places', []) if isinstance(metadata, dict) else [],
+                        'excerpt': excerpt,
+                    }
+                    
+                    if include_original_content:
+                        result['original_file_data'] = processed_data.get('content', '') if isinstance(processed_data, dict) else ''
+                    
+                    results.append(result)
+            
+            # Step 3: Sort by relevance and limit
+            results.sort(key=lambda x: x['relevance_score'], reverse=True)
+            results = results[:limit]
+            
+            logger.info(f"[SEARCH-DOCUMENTS] ✅ Search complete: {len(results)} results found")
+            return results
+            
+        except Exception as e:
+            logger.error(f"[SEARCH-DOCUMENTS] ❌ Error during search: {e}", exc_info=True)
+            return []
+
     async def search_full_text(
         self,
         query: str,

@@ -156,7 +156,7 @@ echo -e "  Logs: logs/metadata-agent.log\n"
 sleep 2
 
 # 4. Start Storage Agent
-echo -e "${GREEN}[4/6] Starting Storage Agent...${NC}"
+echo -e "${GREEN}[4/7] Starting Storage Agent...${NC}"
 cd "$ROOT_DIR"
 export MCP_SERVER_URL="ws://localhost:3010"
 export MCP_AGENT_ID="storage-agent"
@@ -166,8 +166,19 @@ echo -e "${GREEN}✓ Storage Agent started (PID: $STORAGE_PID)${NC}"
 echo -e "  Logs: logs/storage-agent.log\n"
 sleep 2
 
-# 5. Start Web Dashboard
-echo -e "${GREEN}[5/5] Starting Web Dashboard...${NC}"
+# 5. Start Chat Agent
+echo -e "${GREEN}[5/7] Starting Chat Agent...${NC}"
+cd "$ROOT_DIR"
+export MCP_SERVER_URL="ws://localhost:3010"
+export MCP_AGENT_ID="chat-agent"
+"$AGENT_VENV_DIR/bin/python" packages/PalaAgents/chat-agent/main.py > "$ROOT_DIR/logs/chat-agent.log" 2>&1 &
+CHAT_PID=$!
+echo -e "${GREEN}✓ Chat Agent started (PID: $CHAT_PID)${NC}"
+echo -e "  Logs: logs/chat-agent.log\n"
+sleep 2
+
+# 6. Start Web Dashboard
+echo -e "${GREEN}[6/7] Starting Web Dashboard...${NC}"
 cd "$ROOT_DIR/apps/web"
 if [ ! -d "node_modules" ]; then
     echo -e "${YELLOW}Installing Web Dashboard dependencies...${NC}"
@@ -187,7 +198,8 @@ echo -e "${YELLOW}Services:${NC}"
 echo -e "  • MCP Server:          ws://localhost:3010"
 echo -e "  • Sample Agent:        Connected (echo, sum)"
 echo -e "  • Metadata Agent:      Connected (extract_metadata)"
-echo -e "  • Storage Agent:       Connected (store_document, retrieve_document, list_documents, etc.)"
+echo -e "  • Storage Agent:       Connected (store_document, retrieve_document, list_documents, semantic_search_documents, etc.)"
+echo -e "  • Chat Agent:          Connected (chat_with_documents)"
 echo -e "  • Web Dashboard:       http://localhost:3020\n"
 
 echo -e "${YELLOW}Logs:${NC}"
@@ -195,6 +207,7 @@ echo -e "  • MCP Server:          tail -f logs/mcp-server.log"
 echo -e "  • Sample Agent:        tail -f logs/sample-agent.log"
 echo -e "  • Metadata Agent:      tail -f logs/metadata-agent.log"
 echo -e "  • Storage Agent:       tail -f logs/storage-agent.log"
+echo -e "  • Chat Agent:          tail -f logs/chat-agent.log"
 echo -e "  • Web Dashboard:       tail -f logs/web-dashboard.log\n"
 
 echo -e "${YELLOW}Press Ctrl+C to stop all services${NC}\n"

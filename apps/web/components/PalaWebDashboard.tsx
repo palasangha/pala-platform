@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { ContentBrowser } from './ContentBrowser';
 
-type Tab = 'storage' | 'developer';
+type Tab = 'storage' | 'developer' | 'chat';
 
 export function PalaWebDashboard() {
   const [activeTab, setActiveTab] = useState<Tab>('developer');
@@ -37,6 +37,16 @@ export function PalaWebDashboard() {
           {/* Navigation */}
           <div className="flex gap-1 border-b border-slate-800">
             <button
+              onClick={() => setActiveTab('chat')}
+              className={`px-4 py-2 border-b-2 font-medium text-sm transition-colors ${
+                activeTab === 'chat'
+                  ? 'border-blue-500 text-blue-400'
+                  : 'border-transparent text-slate-400 hover:text-slate-300'
+              }`}
+            >
+              Chat
+            </button>
+            <button
               onClick={() => setActiveTab('developer')}
               className={`px-4 py-2 border-b-2 font-medium text-sm transition-colors ${
                 activeTab === 'developer'
@@ -62,6 +72,7 @@ export function PalaWebDashboard() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 py-8">
+        {activeTab === 'chat' && <ChatPanel />}
         {activeTab === 'developer' && <DeveloperPanel />}
         {activeTab === 'storage' && <StorageExplorer />}
       </main>
@@ -78,22 +89,6 @@ export function PalaWebDashboard() {
 
 // Developer Panel - Interactive tool testing with code examples
 function DeveloperPanel() {
-        // Inject file data into JSON input for store_document
-        const injectFileToInput = () => {
-          if (!selectedFile || !fileBase64) return;
-          let json: any = {};
-          try {
-            json = input ? JSON.parse(input) : {};
-          } catch (e) {
-            alert('Invalid JSON in input. Please fix before injecting file.');
-            return;
-          }
-          json.original_file_data = fileBase64;
-          json.original_file = selectedFile.name;
-          json.original_file_mime = selectedFile.type || '';
-          setInput(JSON.stringify(json, null, 2));
-          console.log('[PalaWebDashboard] Injected file into JSON input.');
-        };
       // File upload state for store_document
       const [selectedFile, setSelectedFile] = useState<File | null>(null);
       const [fileBase64, setFileBase64] = useState<string>('');
@@ -475,6 +470,22 @@ function DeveloperPanel() {
             { name: 'include_web', type: 'boolean', description: 'Include separate web-section placeholder.', defaultValue: 'true' },
           ],
         },
+        {
+          name: 'semantic_search_documents',
+          description: 'Semantic search across documents using embeddings',
+          placeholder: 'Enter JSON: {"query": "..."}',
+          examples: [
+            { label: 'Buddhist teachings', input: '{"query": "What was said in bodhgaya", "limit": 5, "min_confidence": 0.5}' },
+            { label: 'High confidence search', input: '{"query": "meditation techniques", "limit": 3, "min_confidence": 0.7, "include_original_content": true}' },
+            { label: 'Low threshold search', input: '{"query": "any documents", "limit": 10, "min_confidence": 0.3}' },
+          ],
+          schemaFields: [
+            { name: 'query', type: 'string', required: true, description: 'Search query text or question to find similar documents.' },
+            { name: 'limit', type: 'number', description: 'Maximum number of documents to return.', defaultValue: '5' },
+            { name: 'min_confidence', type: 'number', description: 'Minimum similarity score threshold (0-1).', defaultValue: '0.5' },
+            { name: 'include_original_content', type: 'boolean', description: 'If true, includes original document content in results.', defaultValue: 'false' },
+          ],
+        },
       ],
     },
   ];
@@ -538,10 +549,8 @@ function DeveloperPanel() {
   };
 
   const getIntegrationRequestExample = (): string => {
-    const currentAgent = AGENTS.find((a) => a.id === selectedAgent);
-    const currentTool = currentAgent?.tools.find((t) => t.name === selectedTool);
     // This function should only return a string, not JSX.
-    // Removed misplaced return statement.
+    return '';
   };
 
   const invokeTool = async () => {
@@ -889,6 +898,177 @@ ws.send(JSON.stringify(request));`}
               <div className="text-slate-400">No input parameters. Send an empty object <code className="text-blue-300">{`{}`}</code>.</div>
             )}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Chat Panel - Chat with documents using RAG
+function ChatPanel() {
+  const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string; sources?: any[] }>>([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [searchLimit, setSearchLimit] = useState(5);
+  const [minConfidence, setMinConfidence] = useState(0.5);
+  const { send } = useWebSocket();
+
+  const handleSendMessage = async () => {
+    if (!input.trim()) return;
+
+    const userMessage = input.trim();
+    setInput('');
+    setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+    setLoading(true);
+
+    try {
+      const result: any = await send('tools/invoke', {
+        name: 'semantic_search_documents',
+        arguments: {
+          query: userMessage,
+          limit: searchLimit,
+          min_confidence: minConfidence,
+          include_original_content: false
+        }
+      });
+
+      // Extract documents from nested result structure
+      // Response structure: result.result.documents (or result.result.result.documents)
+      let documents = [];
+      if (result.result?.result?.documents) {
+        documents = result.result.result.documents;
+      } else if (result.result?.documents) {
+        documents = result.result.documents;
+      }
+      
+      // Build response message
+      let content = '';
+      if (documents.length > 0) {
+        content = `Found ${documents.length} relevant document(s):\n\n`;
+        documents.forEach((doc: any, idx: number) => {
+          content += `${idx + 1}. ${doc.filename} (relevance: ${(doc.relevance_score * 100).toFixed(0)}%)\n`;
+        });
+      } else {
+        content = 'No documents found matching your query.';
+      }
+
+      const assistantMessage = {
+        role: 'assistant' as const,
+        content: content,
+        sources: documents
+      };
+
+      setMessages(prev => [...prev, assistantMessage]);
+    } catch (error) {
+      const errorMessage = {
+        role: 'assistant' as const,
+        content: `Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`,
+        sources: []
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-slate-800 rounded-lg border border-slate-700 p-6">
+        <h2 className="text-xl font-bold text-white mb-4">Chat with Documents</h2>
+        
+        {/* Configuration */}
+        <div className="grid grid-cols-2 gap-4 mb-6">
+          <div>
+            <label className="block text-sm text-slate-300 mb-2">Search Limit</label>
+            <input
+              type="number"
+              min="1"
+              max="20"
+              value={searchLimit}
+              onChange={(e) => setSearchLimit(parseInt(e.target.value))}
+              className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-slate-300 mb-2">Min Confidence</label>
+            <input
+              type="number"
+              min="0"
+              max="1"
+              step="0.1"
+              value={minConfidence}
+              onChange={(e) => setMinConfidence(parseFloat(e.target.value))}
+              className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+            />
+          </div>
+        </div>
+
+        {/* Chat Messages */}
+        <div className="bg-slate-900 rounded h-96 overflow-y-auto mb-4 p-4 space-y-4">
+          {messages.length === 0 ? (
+            <div className="text-slate-500 text-center pt-12">
+              <p>Start a conversation by asking a question about your documents.</p>
+            </div>
+          ) : (
+            messages.map((msg, idx) => (
+              <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div
+                  className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+                    msg.role === 'user'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-slate-700 text-slate-100'
+                  }`}
+                >
+                  <p className="text-sm">{msg.content}</p>
+                  
+                  {/* Show sources for assistant messages */}
+                  {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-slate-600 text-xs">
+                      <p className="font-semibold mb-2">📄 Sources:</p>
+                      <div className="space-y-1">
+                        {msg.sources.map((source: any, sidx: number) => (
+                          <div key={sidx} className="bg-slate-600 bg-opacity-50 rounded p-2">
+                            <p className="font-mono text-slate-200">{source.filename || source.document_id}</p>
+                            <p className="text-slate-300">Score: {(source.relevance_score * 100).toFixed(0)}%</p>
+                            {source.summary && (
+                              <p className="text-slate-400 mt-1 line-clamp-2">{source.summary}</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+          {loading && (
+            <div className="flex justify-start">
+              <div className="bg-slate-700 text-slate-100 px-4 py-2 rounded-lg">
+                <p className="text-sm">Thinking...</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Input Area */}
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyPress={(e) => e.key === 'Enter' && !loading && handleSendMessage()}
+            placeholder="Ask a question about your documents..."
+            disabled={loading}
+            className="flex-1 bg-slate-700 border border-slate-600 rounded px-4 py-2 text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 disabled:opacity-50"
+          />
+          <button
+            onClick={handleSendMessage}
+            disabled={loading}
+            className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 text-white px-6 py-2 rounded font-medium transition-colors"
+          >
+            Send
+          </button>
         </div>
       </div>
     </div>

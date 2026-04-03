@@ -115,6 +115,111 @@ if os.getenv('FILE_STORAGE_PROVIDER', 's3') == 's3':
             s3_provider = None
 
 
+# ============================================================================
+# Embedding Model Initialization
+# ============================================================================
+embedding_model = None
+try:
+    from sentence_transformers import SentenceTransformer
+    logger.info("[EMBEDDING-INIT] Loading SentenceTransformer model...")
+    embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+    logger.info("[EMBEDDING-INIT] ✅ SentenceTransformer model loaded successfully")
+except ImportError as e:
+    logger.error(f"[EMBEDDING-INIT] ❌ Failed to import SentenceTransformer: {e}")
+    logger.warning("[EMBEDDING-INIT] Semantic search will not be available. Install: pip install sentence-transformers")
+    embedding_model = None
+except Exception as e:
+    logger.error(f"[EMBEDDING-INIT] ❌ Failed to load embedding model: {e}")
+    logger.warning("[EMBEDDING-INIT] Continuing without embeddings. Semantic search disabled.")
+    embedding_model = None
+
+
+def combine_searchable_text(metadata: Dict[str, Any], processed_data: Dict[str, Any], original_file: str) -> str:
+    """Combine metadata, processed data, and file info into searchable text"""
+    parts = []
+    
+    # Add filename
+    if original_file:
+        parts.append(f"File: {original_file}")
+    
+    # Add metadata summaries
+    if metadata and isinstance(metadata, dict):
+        pala = metadata.get('pala_metadata', {})
+        if pala:
+            content = pala.get('content', {})
+            if content.get('summary'):
+                parts.append(f"Summary: {content['summary']}")
+            if content.get('topics'):
+                topics = content['topics']
+                if isinstance(topics, dict):
+                    topics_list = topics.get('topics', [])
+                else:
+                    topics_list = topics
+                parts.append(f"Topics: {', '.join(str(t) for t in topics_list)}")
+            
+            parties = pala.get('parties', {})
+            if parties and isinstance(parties, dict):
+                people = parties.get('people', [])
+                if people:
+                    names = [p.get('name') for p in people if p.get('name')]
+                    if names:
+                        parts.append(f"People: {', '.join(names)}")
+            
+            places = pala.get('places', {})
+            if places and isinstance(places, dict):
+                locations = places.get('locations', [])
+                if locations:
+                    loc_names = [loc.get('name') for loc in locations if loc.get('name')]
+                    if loc_names:
+                        parts.append(f"Places: {', '.join(loc_names)}")
+    
+    # Add processed data
+    if processed_data and isinstance(processed_data, dict):
+        # If it's from metadata extraction, get the extracted_fields
+        if processed_data.get('extracted_fields'):
+            extracted = processed_data['extracted_fields']
+            if extracted.get('summary'):
+                parts.append(f"Extracted Summary: {extracted['summary']}")
+            if extracted.get('key_topics'):
+                topics = extracted['key_topics']
+                if topics:
+                    parts.append(f"Extracted Topics: {', '.join(str(t) for t in topics)}")
+        
+        # Add any text content
+        if processed_data.get('text'):
+            text = processed_data['text']
+            if isinstance(text, str) and len(text) > 0:
+                # Limit to first 1000 chars to avoid huge embeddings
+                parts.append(f"Content: {text[:1000]}")
+    
+    # Combine all parts
+    searchable_text = "\n".join(parts)
+    logger.debug(f"[EMBEDDING] Combined searchable text length: {len(searchable_text)} chars")
+    return searchable_text
+
+
+def generate_embedding(text: str, embedding_model_instance=None) -> Optional[list]:
+    """Generate embedding vector for text"""
+    if embedding_model_instance is None:
+        logger.warning("[EMBEDDING] Embedding model not available, returning None")
+        return None
+    
+    if not text or not isinstance(text, str):
+        logger.warning(f"[EMBEDDING] Invalid text for embedding: {type(text)}")
+        return None
+    
+    try:
+        logger.debug(f"[EMBEDDING] Generating embedding for text of length {len(text)}")
+        embedding_vector = embedding_model_instance.encode(text, convert_to_tensor=False)
+        # Convert numpy array to list
+        embedding_list = embedding_vector.tolist() if hasattr(embedding_vector, 'tolist') else list(embedding_vector)
+        logger.debug(f"[EMBEDDING] ✅ Generated embedding of dimension {len(embedding_list)}")
+        return embedding_list
+    except Exception as e:
+        logger.error(f"[EMBEDDING] ❌ Failed to generate embedding: {e}")
+        return None
+
+
 # Tool implementations
 async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
     logger.info(f"[TOOL-INVOKE] store_document called with params: {json.dumps(params)[:500]}")
@@ -229,6 +334,39 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
                 } if getattr(provider, 'replica_enabled', False) else {'success': False, 'reason': 'Not configured'},
             }
         }
+        
+        # ====================================================================
+        # Step: Generate embeddings for semantic search
+        # ====================================================================
+        embedding_vector = None
+        searchable_text = None
+        try:
+            logger.info("[EMBEDDING-STORE] Generating embeddings for document...")
+            searchable_text = combine_searchable_text(metadata, processed_data, original_file)
+            logger.debug(f"[EMBEDDING-STORE] Searchable text created: {len(searchable_text)} chars")
+            
+            if embedding_model:
+                embedding_vector = generate_embedding(searchable_text, embedding_model)
+                if embedding_vector:
+                    logger.info(f"[EMBEDDING-STORE] ✅ Embedding generated successfully (dimension: {len(embedding_vector)})")
+                else:
+                    logger.warning("[EMBEDDING-STORE] ⚠️  Embedding generation returned None, will continue without embeddings")
+            else:
+                logger.warning("[EMBEDDING-STORE] ⚠️  Embedding model not available, will continue without embeddings")
+        except Exception as e:
+            logger.error(f"[EMBEDDING-STORE] ❌ Failed to generate embeddings: {e}")
+            logger.warning("[EMBEDDING-STORE] Continuing without embeddings for this document")
+            embedding_vector = None
+        
+        # Add embedding info to app_data for storage
+        if embedding_vector:
+            app_data['embedding_generated'] = True
+            app_data['embedding_model'] = 'all-MiniLM-L6-v2'
+            app_data['embedding_timestamp'] = datetime.now(timezone.utc).isoformat()
+            app_data['embedding_vector'] = embedding_vector  # Store embedding vector
+            app_data['searchable_text'] = searchable_text  # Store searchable text for search
+        else:
+            app_data['embedding_generated'] = False
         
         doc, duplicate = await provider.store_document(
             type=doc_type,
@@ -719,12 +857,205 @@ async def tool_answer_content_query(params: Dict[str, Any]) -> Dict[str, Any]:
         raise
 
 
+# ============================================================================
+# Semantic Search Tool - Vector-based document search
+# ============================================================================
+async def tool_semantic_search_documents(params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Semantic search across documents using embeddings.
+    
+    Params:
+    - query: Search query string (required)
+    - limit: Maximum number of results to return (default: 5)
+    - min_confidence: Minimum similarity score (0-1, default: 0.5)
+    - include_original_content: Whether to include original file data (default: false)
+    
+    Returns:
+    - documents: List of matching documents with relevance scores
+    - query: The original query
+    - embedding_used: Whether embeddings were used
+    - search_method: 'semantic', 'keyword', or 'none'
+    """
+    logger.info(f"[SEMANTIC-SEARCH] Called with query: '{params.get('query', '')}'")
+    
+    try:
+        query = params.get('query', '')
+        limit = min(params.get('limit', 5), 20)  # Cap at 20 results
+        min_confidence = params.get('min_confidence', 0.5)
+        include_original = params.get('include_original_content', False)
+        
+        if not query or not isinstance(query, str) or len(query.strip()) == 0:
+            logger.warning("[SEMANTIC-SEARCH] Empty query provided")
+            return {
+                'documents': [],
+                'query': query,
+                'embedding_used': False,
+                'search_method': 'none',
+                'error': 'Query cannot be empty',
+                'message': 'Please provide a search query'
+            }
+        
+        logger.info(f"[SEMANTIC-SEARCH] Query: '{query}' (limit={limit}, min_confidence={min_confidence})")
+        
+        # Generate embedding for query
+        query_embedding = None
+        if embedding_model:
+            try:
+                logger.info("[SEMANTIC-SEARCH] Generating query embedding...")
+                query_embedding = generate_embedding(query, embedding_model)
+                if query_embedding:
+                    logger.info(f"[SEMANTIC-SEARCH] ✅ Query embedding generated (dimension: {len(query_embedding)}, sample: {query_embedding[:3]})")
+                else:
+                    logger.warning("[SEMANTIC-SEARCH] ❌ Query embedding generation returned None")
+            except Exception as e:
+                logger.error(f"[SEMANTIC-SEARCH] ❌ Exception generating query embedding: {e}", exc_info=True)
+                logger.error(f"[SEMANTIC-SEARCH] Failed to generate query embedding: {e}")
+                query_embedding = None
+        else:
+            logger.warning("[SEMANTIC-SEARCH] Embedding model not available, using keyword search")
+        
+        # Search documents using provider
+        logger.debug("[SEMANTIC-SEARCH] Calling provider.search_documents...")
+        try:
+            search_results = await provider.search_documents(
+                query=query,
+                query_embedding=query_embedding,
+                limit=limit,
+                min_confidence=min_confidence,
+                include_original_content=include_original
+            )
+            
+            num_results = len(search_results) if search_results else 0
+            logger.info(f"[SEMANTIC-SEARCH] ✅ Search completed, found {num_results} results")
+            
+            # Determine search method used
+            search_method = 'semantic' if query_embedding else 'keyword'
+            
+            # Format results
+            formatted_results = []
+            for idx, doc in enumerate(search_results, 1):
+                logger.debug(f"[SEMANTIC-SEARCH] Result {idx}: doc_id={doc.get('document_id')}, score={doc.get('relevance_score')}")
+                formatted_results.append({
+                    'rank': idx,
+                    'document_id': doc.get('document_id'),
+                    'filename': doc.get('original_file'),
+                    'type': doc.get('type'),
+                    'relevance_score': round(doc.get('relevance_score', 0), 3),
+                    'created_at': doc.get('created_at'),
+                    'summary': doc.get('summary'),
+                    'topics': doc.get('topics'),
+                    'places': doc.get('places'),
+                    'excerpt': doc.get('excerpt'),
+                    'original_file_data': doc.get('original_file_data') if include_original else None
+                })
+            
+            result = {
+                'documents': formatted_results,
+                'query': query,
+                'embedding_used': query_embedding is not None,
+                'search_method': search_method,
+                'result_count': num_results,
+                'message': f"Found {num_results} relevant document(s) using {search_method} search"
+            }
+            
+            logger.info(f"[SEMANTIC-SEARCH] Returning {num_results} results using {search_method} search")
+            return result
+            
+        except AttributeError as e:
+            logger.error(f"[SEMANTIC-SEARCH] Provider doesn't have search_documents method: {e}")
+            logger.warning("[SEMANTIC-SEARCH] Falling back to list_documents for search")
+            
+            # Fallback: list all documents and do client-side matching
+            all_docs = await provider.list_documents(limit=100)
+            if not all_docs:
+                logger.warning("[SEMANTIC-SEARCH] No documents found in database")
+                return {
+                    'documents': [],
+                    'query': query,
+                    'embedding_used': False,
+                    'search_method': 'none',
+                    'error': 'No documents available to search',
+                    'message': 'Database is empty'
+                }
+            
+            # Simple keyword matching fallback
+            logger.info("[SEMANTIC-SEARCH] Using keyword matching fallback")
+            matched = []
+            query_lower = query.lower()
+            
+            for doc in all_docs:
+                score = 0
+                reasons = []
+                
+                # Check filename
+                if doc.original_file and query_lower in doc.original_file.lower():
+                    score += 0.3
+                    reasons.append('filename')
+                
+                # Check metadata (from app_data)
+                app_data = getattr(doc, 'app_data', {}) or {}
+                if isinstance(app_data, str):
+                    try:
+                        app_data = json.loads(app_data)
+                    except:
+                        app_data = {}
+                
+                # Check type
+                if doc.type and query_lower in doc.type.lower():
+                    score += 0.2
+                    reasons.append('type')
+                
+                # Check for exact match in app_data tags or other fields
+                if app_data:
+                    for key, val in app_data.items():
+                        if isinstance(val, str) and query_lower in val.lower():
+                            score += 0.2
+                            reasons.append(f'app_data.{key}')
+                            break
+                
+                if score > 0:
+                    matched.append({
+                        'document_id': doc.id,
+                        'original_file': doc.original_file,
+                        'type': doc.type,
+                        'relevance_score': min(score, 1.0),
+                        'created_at': doc.created_at,
+                        'match_reasons': reasons
+                    })
+            
+            # Sort by relevance score
+            matched.sort(key=lambda x: x['relevance_score'], reverse=True)
+            matched = matched[:limit]
+            
+            logger.info(f"[SEMANTIC-SEARCH] Keyword fallback found {len(matched)} results")
+            
+            return {
+                'documents': matched,
+                'query': query,
+                'embedding_used': False,
+                'search_method': 'keyword',
+                'result_count': len(matched),
+                'message': f"Found {len(matched)} document(s) using keyword search (fallback)"
+            }
+            
+    except Exception as e:
+        logger.error(f"[SEMANTIC-SEARCH] ❌ Search failed: {e}", exc_info=True)
+        return {
+            'documents': [],
+            'query': params.get('query', ''),
+            'embedding_used': False,
+            'search_method': 'none',
+            'error': str(e),
+            'message': f"Search failed: {str(e)}"
+        }
+
 
 # Tool registry
 TOOLS: Dict[str, Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]] = {
     "store_document": tool_store_document,
     "retrieve_document": tool_retrieve_document,
     "list_documents": tool_list_documents,
+    "semantic_search_documents": tool_semantic_search_documents,
     "store_extraction": tool_store_extraction,
     "retrieve_extraction": tool_retrieve_extraction,
     "list_extractions": tool_list_extractions,
@@ -876,6 +1207,21 @@ async def register_tools(ws: websockets.WebSocketClientProtocol, agent_id: str) 
                     "query": {"type": "string"},
                     "limit": {"type": "number", "default": 5},
                     "include_web": {"type": "boolean", "default": True}
+                },
+                "required": ["query"]
+            }
+        },
+        {
+            "name": "semantic_search_documents",
+            "description": "Semantic search across documents using embeddings with keyword fallback",
+            "agentId": agent_id,
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query string"},
+                    "limit": {"type": "number", "description": "Maximum results to return", "default": 5},
+                    "min_confidence": {"type": "number", "description": "Minimum similarity score (0-1)", "default": 0.5},
+                    "include_original_content": {"type": "boolean", "description": "Include original file data", "default": False}
                 },
                 "required": ["query"]
             }
