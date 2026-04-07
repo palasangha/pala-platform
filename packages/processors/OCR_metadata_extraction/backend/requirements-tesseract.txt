@@ -1,3 +1,0 @@
-# Tesseract OCR dependencies
-# Note: Tesseract binary must be installed separately on the system
-pytesseract==0.3.10
