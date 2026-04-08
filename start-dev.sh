@@ -38,7 +38,21 @@ clear_port() {
     local port=$1
     local label=$2
     local pids
-    pids=$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)
+    
+    # Try different tools for cross-platform compatibility
+    if command -v lsof >/dev/null 2>&1; then
+        # macOS and Linux with lsof installed
+        pids=$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)
+    elif command -v ss >/dev/null 2>&1; then
+        # Modern Linux with ss (socket statistics)
+        pids=$(ss -tlnp 2>/dev/null | grep ":$port " | awk '{print $NF}' | grep -oP '(?<=pid=)\d+' | head -1)
+    elif command -v netstat >/dev/null 2>&1; then
+        # Fallback to netstat (Linux, BSD)
+        pids=$(netstat -tlnp 2>/dev/null | grep ":$port " | awk '{print $NF}' | cut -d'/' -f1)
+    else
+        echo -e "${YELLOW}⚠ Cannot determine port status (lsof, ss, or netstat required)${NC}"
+        return
+    fi
 
     if [ -n "$pids" ]; then
         echo -e "${YELLOW}Found existing listener(s) on :$port for $label -> $pids${NC}"
@@ -120,8 +134,13 @@ if [ ! -d "venv" ]; then
     echo -e "${YELLOW}Creating virtual environment...${NC}"
     python3 -m venv venv
 fi
-source venv/bin/activate
-if [ ! -f "venv/bin/websockets" ]; then
+# Activate virtual environment (cross-platform compatible)
+if [ -f "venv/bin/activate" ]; then
+    source venv/bin/activate
+elif [ -f "venv/Scripts/activate" ]; then
+    source venv/Scripts/activate
+fi
+if ! command -v websockets >/dev/null 2>&1; then
     echo -e "${YELLOW}Installing dependencies...${NC}"
     pip install -q -r requirements.txt
 fi
@@ -129,7 +148,7 @@ export MCP_SERVER_URL="ws://localhost:3010"
 export MCP_AGENT_ID="sample-agent"
 python main.py > "$ROOT_DIR/logs/sample-agent.log" 2>&1 &
 SAMPLE_PID=$!
-deactivate
+deactivate 2>/dev/null || true
 echo -e "${GREEN}✓ Sample Agent started (PID: $SAMPLE_PID)${NC}"
 echo -e "  Logs: logs/sample-agent.log\n"
 sleep 2
@@ -141,8 +160,13 @@ if [ ! -d "venv" ]; then
     echo -e "${YELLOW}Creating virtual environment...${NC}"
     python3 -m venv venv
 fi
-source venv/bin/activate
-if [ ! -f "venv/bin/anthropic" ]; then
+# Activate virtual environment (cross-platform compatible)
+if [ -f "venv/bin/activate" ]; then
+    source venv/bin/activate
+elif [ -f "venv/Scripts/activate" ]; then
+    source venv/Scripts/activate
+fi
+if ! command -v anthropic >/dev/null 2>&1; then
     echo -e "${YELLOW}Installing dependencies...${NC}"
     pip install -q -r requirements.txt
 fi
@@ -150,7 +174,7 @@ export MCP_SERVER_URL="ws://localhost:3010"
 export MCP_AGENT_ID="metadata-extraction-agent"
 python main.py > "$ROOT_DIR/logs/metadata-agent.log" 2>&1 &
 METADATA_PID=$!
-deactivate
+deactivate 2>/dev/null || true
 echo -e "${GREEN}✓ Metadata Extraction Agent started (PID: $METADATA_PID)${NC}"
 echo -e "  Logs: logs/metadata-agent.log\n"
 sleep 2
