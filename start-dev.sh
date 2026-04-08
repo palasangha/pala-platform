@@ -136,7 +136,7 @@ sleep 2
 
 # 3. Start Metadata Extraction Agent
 echo -e "${GREEN}[3/6] Starting Metadata Extraction Agent...${NC}"
-cd "$ROOT_DIR/packages/agents/metadata-extraction-agent"
+cd "$ROOT_DIR/packages/PalaAgents/metadata-extraction-agent"
 if [ ! -d "venv" ]; then
     echo -e "${YELLOW}Creating virtual environment...${NC}"
     python3 -m venv venv
