@@ -44,13 +44,24 @@ export class MCPServer {
     logger.debug('Registry initialized');
 
     // Initialize transport
-    this.transport = new WebSocketTransport({
+    const transportConfig: any = {
       port: this.config.port,
+      host: this.config.host || '0.0.0.0',
       auth: {
         enabled: !!this.config.auth?.jwtSecret,
         sharedSecret: this.config.auth?.jwtSecret,
       },
-    });
+    };
+
+    // Only add ping settings if they're defined
+    if (this.config.transport?.pingInterval !== undefined) {
+      transportConfig.pingInterval = this.config.transport.pingInterval;
+    }
+    if (this.config.transport?.pingTimeout !== undefined) {
+      transportConfig.pingTimeout = this.config.transport.pingTimeout;
+    }
+
+    this.transport = new WebSocketTransport(transportConfig);
     this.transport.setProtocolHandler(this.protocolHandler);
 
     // Initialize invoker with callback to get agent connections

@@ -1273,7 +1273,7 @@ async def run_agent():
 
     while True:
         try:
-            async with websockets.connect(server_url) as ws:
+            async with websockets.connect(server_url, max_size=None) as ws:
                 logger.info(f"Connected to MCP server as {agent_id}")
 
                 # Register tools
@@ -1284,18 +1284,30 @@ async def run_agent():
                     logger.info(f"[AGENT-RECV] Raw message: {message}")
                     try:
                         msg = json.loads(message)
-                        method = msg.get("method")
-                        params = msg.get("params", {})
-                        msg_id = msg.get("id")
+                    except json.JSONDecodeError:
+                        logger.error("[AGENT-DEBUG] Failed to parse JSON")
+                        continue
 
+                    method = msg.get("method")
+                    params = msg.get("params", {})
+                    msg_id = msg.get("id")
+
+                    # Ignore responses/errors from the server (they have result/error but no method)
+                    if not method:
+                        logger.debug(f"[AGENT-DEBUG] Received response/non-request message: {str(msg)[:100]}")
+                        continue
+
+                    logger.info(f"[AGENT-DEBUG] Processing method: {method}")
+
+                    try:
                         if method == "tools/invoke":
                             result = await handle_invoke(method, params)
                             await ws.send(make_response(result, msg_id))
                         else:
-                            logger.warning(f"Unknown method: {method}")
+                            logger.warning(f"[AGENT-DEBUG] Unknown method: {method}")
 
                     except Exception as e:
-                        logger.error(f"Error handling message: {e}", exc_info=True)
+                        logger.error(f"[AGENT-ERROR] Error invoking tool: {e}", exc_info=True)
                         if msg_id:
                             await ws.send(make_error(str(e), msg_id))
 

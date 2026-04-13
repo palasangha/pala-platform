@@ -299,11 +299,19 @@ async def handle_message(ws: websockets.WebSocketClientProtocol, raw: str) -> No
     try:
         message = json.loads(raw)
     except json.JSONDecodeError:
+        print("[Agent-DEBUG] Failed to parse JSON")
         await ws.send(make_error("Invalid JSON", None))
         return
 
     method = message.get("method")
     msg_id = message.get("id")
+
+    # Ignore responses/errors from the server (they have result/error but no method)
+    if not method:
+        print(f"[Agent-DEBUG] Received response/non-request message: {json.dumps(message)[:100]}")
+        return
+
+    print(f"[Agent-DEBUG] Processing method: {method}")
 
     if method == "tools/invoke":
         try:
@@ -311,9 +319,11 @@ async def handle_message(ws: websockets.WebSocketClientProtocol, raw: str) -> No
             response = make_response(result, msg_id)
             await ws.send(response)
         except Exception as err:
+            print(f"[Agent-ERROR] Error invoking tool: {err}")
             await ws.send(make_error(str(err), msg_id))
     else:
         # For any other method, acknowledge to keep things simple
+        print(f"[Agent-DEBUG] Acknowledging method: {method}")
         await ws.send(make_response({"ack": method}, msg_id))
 
 
@@ -330,7 +340,7 @@ async def main() -> None:
     if agent_token:
         headers["Authorization"] = f"Bearer {agent_token}"
 
-    async with websockets.connect(url, additional_headers=headers if headers else None) as ws:
+    async with websockets.connect(url, additional_headers=headers if headers else None, max_size=None) as ws:
         # Store global reference for cross-agent tool invocation
         _ws_global = ws
         

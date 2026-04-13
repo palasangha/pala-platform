@@ -18,6 +18,10 @@ export interface ServerConfig {
     level: 'debug' | 'info' | 'warn' | 'error';
     pretty?: boolean;
   };
+  transport?: {
+    pingInterval?: number; // ms, default 30000
+    pingTimeout?: number; // ms, default 60000 (60 seconds for long operations)
+  };
 }
 
 export interface JSONRPCRequest {

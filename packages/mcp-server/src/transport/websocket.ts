@@ -6,26 +6,27 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer, Server as HTTPServer, IncomingMessage } from 'http';
 import { EventEmitter } from 'events';
+import { AsyncLocalStorage } from 'async_hooks';
 import type { ProtocolHandler } from '../protocol/handler';
 import jwt from 'jsonwebtoken';
 import { generateTraceId } from '../tracing';
 
-// Context tracking for current connection (for message handlers)
-let currentConnectionId: string | null = null;
+// Context tracking for current connection using AsyncLocalStorage so concurrent
+// message handlers on different connections don't overwrite each other's value.
+const connectionStorage = new AsyncLocalStorage<string>();
 
 export function getCurrentConnectionId(): string | null {
-  return currentConnectionId;
+  return connectionStorage.getStore() ?? null;
 }
 
-export function setCurrentConnectionId(id: string | null): void {
-  currentConnectionId = id;
-}
+// kept for backwards-compat call sites; no-op now since AsyncLocalStorage is set via .run()
+export function setCurrentConnectionId(_id: string | null): void {}
 
 export interface TransportConfig {
   port: number;
   host?: string;
-  pingInterval?: number; // ms, default 30000
-  pingTimeout?: number; // ms, default 5000
+  pingInterval?: number; // ms, default 300000 (5 minutes)
+  pingTimeout?: number; // ms, default 60000 (60 seconds)
   auth?: {
     enabled?: boolean;
     sharedSecret?: string;
@@ -55,8 +56,8 @@ export class WebSocketTransport extends EventEmitter {
     this.connections = new Map();
     this.config = {
       host: '0.0.0.0',
-      pingInterval: 30000,
-      pingTimeout: 5000,
+      pingInterval: 300000, // 5 minutes for long-running operations
+      pingTimeout: 60000, // 60 seconds for pong response
       auth: {
         enabled: false,
         sharedSecret: undefined,
@@ -86,6 +87,7 @@ export class WebSocketTransport extends EventEmitter {
       // Create WebSocket server
       this.wss = new WebSocketServer({
         server: this.httpServer,
+        maxPayload: 500 * 1024 * 1024, // 500MB for large file uploads
         verifyClient: (info, done) => {
           this.handleAuth(info.req)
             .then((principal) => {
@@ -183,12 +185,14 @@ export class WebSocketTransport extends EventEmitter {
 
     // Handle connection close
     ws.on('close', (code: number, reason: Buffer) => {
+      console.log(`[WS-CLOSE] Connection ${connectionId} closed: code=${code}, reason=${reason.toString()}`);
       this.connections.delete(connectionId);
       this.emit('disconnect', { connectionId, code, reason: reason.toString() });
     });
 
     // Handle errors
     ws.on('error', (error) => {
+      console.log(`[WS-ERROR] Connection ${connectionId} error:`, error);
       this.emit('connectionError', { connectionId, error });
     });
   }
@@ -256,16 +260,25 @@ export class WebSocketTransport extends EventEmitter {
     }
 
     try {
-      // Set current connection context for handlers
-      setCurrentConnectionId(connectionId);
-      const response = await this.protocolHandler.processMessage(message, traceId);
-      setCurrentConnectionId(null);
-      
+      // Run message processing with connectionId bound to AsyncLocalStorage so
+      // concurrent handlers on different connections don't overwrite each other.
+      console.log(`[MSG-PROCESS] Processing message for ${connectionId}, readyState=${connection.ws.readyState}`);
+      const response = await connectionStorage.run(connectionId, () =>
+        this.protocolHandler.processMessage(message, traceId)
+      );
+      console.log(`[MSG-PROCESS-DONE] Processing complete, readyState=${connection.ws.readyState}`);
+
       if (response) {
-        connection.ws.send(response);
+        console.log(`[MSG-RESPONSE] Sending response for connection ${connectionId}, readyState=${connection.ws.readyState}`);
+        if (connection.ws.readyState === WebSocket.OPEN) {
+          connection.ws.send(response);
+          console.log(`[MSG-RESPONSE-SENT] Response sent successfully`);
+        } else {
+          console.log(`[MSG-RESPONSE-FAILED] Connection not open (state=${connection.ws.readyState}), cannot send response`);
+        }
       }
     } catch (error) {
-      setCurrentConnectionId(null);
+      console.log(`[MSG-ERROR] Error processing message in connection ${connectionId}:`, error);
       const errorResponse = JSON.stringify({
         jsonrpc: '2.0',
         id: null,
@@ -275,7 +288,11 @@ export class WebSocketTransport extends EventEmitter {
           data: error instanceof Error ? error.message : 'Unknown error',
         },
       });
-      connection.ws.send(errorResponse);
+      try {
+        connection.ws.send(errorResponse);
+      } catch (sendError) {
+        console.log(`[MSG-ERROR-SEND-FAILED] Failed to send error response:`, sendError);
+      }
     }
   }
 
@@ -330,10 +347,13 @@ export class WebSocketTransport extends EventEmitter {
    * Start heartbeat (ping/pong)
    */
   private startHeartbeat(): void {
+    console.log(`[HEARTBEAT] Starting with interval=${this.config.pingInterval}ms, timeout=${this.config.pingTimeout}ms`);
     this.pingIntervalId = setInterval(() => {
+      console.log(`[HEARTBEAT-CHECK] Checking ${this.connections.size} connections`);
       for (const [connectionId, connection] of this.connections.entries()) {
         if (!connection.isAlive) {
           // Connection didn't respond to last ping, terminate
+          console.log(`[HEARTBEAT-KILL] Terminating connection ${connectionId} - no pong received`);
           connection.ws.terminate();
           this.connections.delete(connectionId);
           this.emit('timeout', { connectionId });
@@ -343,6 +363,7 @@ export class WebSocketTransport extends EventEmitter {
         // Mark as not alive and send ping
         connection.isAlive = false;
         if (connection.ws.readyState === WebSocket.OPEN) {
+          console.log(`[HEARTBEAT-PING] Sending ping to ${connectionId}`);
           connection.ws.ping();
         }
       }

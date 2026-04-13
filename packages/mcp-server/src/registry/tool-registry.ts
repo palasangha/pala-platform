@@ -77,17 +77,19 @@ export class ToolRegistry extends EventEmitter {
 
   /**
    * Register a tool from an agent
+   * Allows re-registration from the same agent (for reconnections)
    */
   register(tool: ToolDefinition): void {
     // Validate tool definition
     const validated = ToolDefinitionSchema.parse(tool);
 
-    // Check for duplicate tool names
-    if (this.tools.has(validated.name)) {
-      throw new Error(`Tool '${validated.name}' is already registered`);
+    // Check for duplicate tool names from different agents
+    const existingTool = this.tools.get(validated.name);
+    if (existingTool && existingTool.agentId !== validated.agentId) {
+      throw new Error(`Tool '${validated.name}' is already registered by a different agent (${existingTool.agentId})`);
     }
 
-    // Store tool
+    // Store tool (allows update from same agent)
     this.tools.set(validated.name, validated);
 
     // Track agent's tools

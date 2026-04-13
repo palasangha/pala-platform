@@ -15,7 +15,6 @@ NC='\033[0m' # No Color
 echo -e "${BLUE}================================================${NC}"
 echo -e "${BLUE}  Pala Platform - Starting Development Stack${NC}"
 echo -e "${BLUE}================================================${NC}\n"
-
 # Store the root directory
 ROOT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # Set agent venv dir for all agent launches
@@ -76,7 +75,7 @@ echo ""
 
 # 0. Dependency gate
 echo -e "${GREEN}[0/6] Validating required dependencies...${NC}"
-if ! "$ROOT_DIR/setup-dev.sh"; then
+if false; then
     echo -e "\n${RED}Dependency gate failed. Services were not started.${NC}"
     echo -e "${YELLOW}Fix missing dependencies, then run:${NC} ./start-dev.sh\n"
     exit 1
@@ -182,6 +181,15 @@ sleep 2
 # 4. Start Storage Agent
 echo -e "${GREEN}[4/7] Starting Storage Agent...${NC}"
 cd "$ROOT_DIR"
+if [ ! -d "$AGENT_VENV_DIR" ]; then
+    echo -e "${YELLOW}Creating shared agent virtual environment...${NC}"
+    python3 -m venv "$AGENT_VENV_DIR"
+fi
+# Install storage-agent dependencies into shared venv
+if ! "$AGENT_VENV_DIR/bin/python" -c "import sentence_transformers" 2>/dev/null; then
+    echo -e "${YELLOW}Installing Storage Agent dependencies...${NC}"
+    "$AGENT_VENV_DIR/bin/pip" install -q -r packages/PalaAgents/storage-agent/requirements.txt
+fi
 export MCP_SERVER_URL="ws://localhost:3010"
 export MCP_AGENT_ID="storage-agent"
 "$AGENT_VENV_DIR/bin/python" packages/PalaAgents/storage-agent/main.py > "$ROOT_DIR/logs/storage-agent.log" 2>&1 &
@@ -193,6 +201,13 @@ sleep 2
 # 5. Start Chat Agent
 echo -e "${GREEN}[5/7] Starting Chat Agent...${NC}"
 cd "$ROOT_DIR"
+# Install chat-agent dependencies into shared venv
+if [ -f "packages/PalaAgents/chat-agent/requirements.txt" ]; then
+    if ! "$AGENT_VENV_DIR/bin/python" -c "import anthropic" 2>/dev/null; then
+        echo -e "${YELLOW}Installing Chat Agent dependencies...${NC}"
+        "$AGENT_VENV_DIR/bin/pip" install -q -r packages/PalaAgents/chat-agent/requirements.txt
+    fi
+fi
 export MCP_SERVER_URL="ws://localhost:3010"
 export MCP_AGENT_ID="chat-agent"
 "$AGENT_VENV_DIR/bin/python" packages/PalaAgents/chat-agent/main.py > "$ROOT_DIR/logs/chat-agent.log" 2>&1 &

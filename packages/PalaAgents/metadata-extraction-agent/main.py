@@ -294,7 +294,7 @@ class MetadataExtractionAgent:
 
             logger.info(f"Connecting to MCP server at {self.server_url}")
 
-            async with websockets.connect(self.server_url, additional_headers=headers) as ws:
+            async with websockets.connect(self.server_url, additional_headers=headers, max_size=None) as ws:
                 logger.info("Connected to MCP server")
 
                 # Register tools

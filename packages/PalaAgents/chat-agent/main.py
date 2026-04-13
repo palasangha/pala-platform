@@ -429,7 +429,7 @@ async def main() -> None:
         headers["Authorization"] = f"Bearer {agent_token}"
         logger.debug("[CHAT-AGENT] Using bearer token for authentication")
     
-    async with websockets.connect(url, additional_headers=headers if headers else None) as ws:
+    async with websockets.connect(url, additional_headers=headers if headers else None, max_size=None) as ws:
         # Store global reference for tool invocation
         _ws_global = ws
         
