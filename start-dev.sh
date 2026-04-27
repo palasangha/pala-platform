@@ -133,6 +133,10 @@ cd "$ROOT_DIR/packages/PalaAgents/sample-agent"
 if [ ! -d "venv" ]; then
     echo -e "${YELLOW}Creating virtual environment...${NC}"
     python3 -m venv venv
+    # Upgrade pip to latest version for compatibility
+    if [ -f "venv/bin/python" ]; then
+        venv/bin/python -m pip install --upgrade pip setuptools wheel -q
+    fi
 fi
 # Activate virtual environment (cross-platform compatible)
 if [ -f "venv/bin/activate" ]; then
@@ -159,6 +163,10 @@ cd "$ROOT_DIR/packages/PalaAgents/metadata-extraction-agent"
 if [ ! -d "venv" ]; then
     echo -e "${YELLOW}Creating virtual environment...${NC}"
     python3 -m venv venv
+    # Upgrade pip to latest version for compatibility
+    if [ -f "venv/bin/python" ]; then
+        venv/bin/python -m pip install --upgrade pip setuptools wheel -q
+    fi
 fi
 # Activate virtual environment (cross-platform compatible)
 if [ -f "venv/bin/activate" ]; then
