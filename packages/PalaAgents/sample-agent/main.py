@@ -28,6 +28,37 @@ import websockets
 # Global WebSocket connection for cross-agent communication
 _ws_global = None
 
+
+def decode_file_content_for_metadata(file_b64: str, file_format: str, file_name: str) -> str:
+    """Best-effort decode of uploaded file bytes into text for metadata extraction."""
+    try:
+        file_bytes = base64.b64decode(file_b64)
+    except Exception:
+        return (
+            f"Document: {file_name}\n"
+            f"Format: {file_format}\n"
+            "(Unable to decode base64 file content. No OCR text provided.)"
+        )
+
+    fmt = (file_format or "").lower()
+    text_like_formats = {"txt", "md", "json", "csv", "xml", "html", "htm"}
+
+    if fmt in text_like_formats:
+        decoded = file_bytes.decode("utf-8", errors="replace").strip()
+        if decoded:
+            return decoded
+
+    # Heuristic fallback for unknown formats: try UTF-8 decode and reject binary-looking output
+    candidate = file_bytes.decode("utf-8", errors="replace").strip()
+    if candidate and "\x00" not in candidate:
+        return candidate
+
+    return (
+        f"Document: {file_name}\n"
+        f"Format: {file_format}\n"
+        "(Binary file uploaded. No OCR text provided; extracted metadata may be limited.)"
+    )
+
 # Simple tool implementations -------------------------------------------------
 
 async def tool_echo(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -121,20 +152,28 @@ async def tool_process_and_store_document(params: Dict[str, Any]) -> Dict[str, A
         print(f"[Sample-Agent] Processing file: {original_file_name}")
         
         # Step 1: Extract metadata using metadata-extraction-agent
-        # If no OCR text provided, use a placeholder indicating file was processed
+        # Prefer provided OCR text. If it is not available, forward the file payload
+        # so the metadata agent can extract text from the file itself.
         print(f"[Sample-Agent] Step 1: Extracting metadata...")
-        text_for_extraction = ocr_text or f"Document: {original_file_name}\nFormat: {file_format}\n(Original file data provided as base64 binary)"
-        
+
+        metadata_arguments: Dict[str, Any] = {
+            "filename": original_file_name,
+            "file_format": file_format,
+            "model": "ollama",
+            "output_type": "combined",
+            "document_context": "document_archive",
+        }
+
+        if (ocr_text or "").strip():
+            metadata_arguments["text"] = ocr_text.strip()
+        else:
+            metadata_arguments["file_data"] = original_file_b64
+
         try:
             metadata_result = await invoke_remote_tool(
                 agent_id="metadata-extraction-agent",
                 tool_name="extract_metadata",
-                arguments={
-                    "text": text_for_extraction,
-                    "model": "ollama",
-                    "output_type": "combined",
-                    "document_context": "document_archive"
-                }
+                arguments=metadata_arguments,
             )
         except Exception as e:
             print(f"[Sample-Agent] Step 1 FAILED: Metadata extraction error: {e}")

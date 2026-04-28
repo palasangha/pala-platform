@@ -25,8 +25,36 @@ cd "$ROOT_DIR"
 # Function to cleanup background processes on exit
 cleanup() {
     echo -e "\n${YELLOW}Shutting down services...${NC}"
-    jobs -p | xargs -r kill 2>/dev/null || true
-    wait 2>/dev/null || true
+    local pids=()
+    local pid
+
+    for pid in "$MCP_PID" "$SAMPLE_PID" "$METADATA_PID" "$STORAGE_PID" "$CHAT_PID" "$WEB_PID" "$OLLAMA_PID"; do
+        if [ -n "$pid" ]; then
+            pids+=("$pid")
+        fi
+    done
+
+    while IFS= read -r pid; do
+        if [ -n "$pid" ]; then
+            pids+=("$pid")
+        fi
+    done < <(jobs -pr 2>/dev/null || true)
+
+    if [ "${#pids[@]}" -gt 0 ]; then
+        printf '%s\n' "${pids[@]}" | sort -u | xargs -r kill 2>/dev/null || true
+
+        for _ in 1 2 3 4 5; do
+            if ! printf '%s\n' "${pids[@]}" | sort -u | xargs -r kill -0 2>/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+
+        if printf '%s\n' "${pids[@]}" | sort -u | xargs -r kill -0 2>/dev/null; then
+            printf '%s\n' "${pids[@]}" | sort -u | xargs -r kill -9 2>/dev/null || true
+        fi
+    fi
+
     echo -e "${GREEN}All services stopped${NC}"
     exit 0
 }

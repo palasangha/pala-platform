@@ -98,7 +98,11 @@ function DeveloperPanel() {
         const file = e.target.files?.[0] || null;
         setSelectedFile(file);
         setFileBase64('');
-        if (file && (currentTool?.name === 'store_document' || currentTool?.name === 'process_and_store_document')) {
+        if (file && (
+          currentTool?.name === 'store_document' ||
+          currentTool?.name === 'process_and_store_document' ||
+          currentTool?.name === 'extract_metadata'
+        )) {
           const reader = new FileReader();
           reader.onload = () => {
             const arrayBuffer = reader.result as ArrayBuffer;
@@ -150,6 +154,17 @@ function DeveloperPanel() {
                 file_format: ['pdf','txt','json','md','jpg','png'].includes(ext) ? ext : 'bin',
                 document_type: 'ocr',
                 created_by: 'web-dashboard',
+              };
+            } else if (currentTool?.name === 'extract_metadata') {
+              // Auto-populate for extract_metadata by sending full file payload
+              const ext = file.name.split('.').pop()?.toLowerCase() || '';
+              json = {
+                file_data: base64Data,
+                filename: file.name,
+                file_format: ext || 'bin',
+                model: 'ollama',
+                output_type: 'pala',
+                document_context: 'uploaded_file',
               };
             }
             
@@ -296,7 +311,7 @@ function DeveloperPanel() {
         {
           name: 'extract_metadata',
           description: 'Extract metadata from text',
-          placeholder: 'Enter JSON with text, model, output_type',
+          placeholder: 'Upload a file or enter JSON with text/file_data, model, output_type',
           examples: [
             {
               label: 'Letter (Pala schema)',
@@ -319,8 +334,22 @@ function DeveloperPanel() {
             {
               name: 'text',
               type: 'string',
-              required: true,
-              description: 'Input text to analyze (OCR, transcription, or any text source).',
+              description: 'Input text to analyze (OCR, transcription, or any text source). Optional if file_data is provided.',
+            },
+            {
+              name: 'file_data',
+              type: 'string',
+              description: 'Base64-encoded file content. Optional if text is provided.',
+            },
+            {
+              name: 'filename',
+              type: 'string',
+              description: 'Optional source filename (used with file_data).',
+            },
+            {
+              name: 'file_format',
+              type: 'string',
+              description: 'Optional source format (e.g., pdf, txt, json, md).',
             },
             {
               name: 'model',
@@ -701,8 +730,10 @@ function DeveloperPanel() {
 
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-2">Input Parameters</label>
-              {/* File picker for store_document */}
-              {(currentTool?.name === 'store_document' || currentTool?.name === 'process_and_store_document') && (
+              {/* File picker for tools that support file upload */}
+              {(currentTool?.name === 'store_document' ||
+                currentTool?.name === 'process_and_store_document' ||
+                currentTool?.name === 'extract_metadata') && (
                 <div className="mb-2 flex flex-col gap-2">
                   <input
                     type="file"

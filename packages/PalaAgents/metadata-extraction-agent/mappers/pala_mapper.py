@@ -20,6 +20,10 @@ class PalaMapper:
         """
         Map extracted data to Pala schema v1.0.0.
 
+        Handles both:
+        1. Full schema responses (Claude provider)
+        2. Simplified schema responses (Ollama provider)
+
         Args:
             extracted_data: Raw extracted metadata from provider
 
@@ -27,6 +31,17 @@ class PalaMapper:
             Pala schema v1.0.0 compatible structure
         """
         mapper = PalaMapper()
+
+        # Detect if this is a simplified Ollama response or full schema
+        is_simplified = "people" in extracted_data or "organizations" in extracted_data or (
+            "document_type" in extracted_data and isinstance(extracted_data.get("document_type"), dict) 
+            and "value" in extracted_data["document_type"]
+            and "locations" in extracted_data
+        )
+
+        if is_simplified:
+            # Convert simplified format to full schema first
+            extracted_data = mapper._normalize_simplified_schema(extracted_data)
 
         return {
             "schema": "pala_metadata",
@@ -50,6 +65,108 @@ class PalaMapper:
                 "field_confidences": mapper._extract_field_confidences(extracted_data),
             },
         }
+
+    @staticmethod
+    def _normalize_simplified_schema(simplified_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convert simplified Ollama schema to full schema format.
+        
+        Simplified format has:
+        - people, organizations, locations as arrays
+        - summary as dict with text/confidence
+        - tone, sentiment as strings
+        
+        Full format has:
+        - parties.people, parties.organizations
+        - places.locations
+        - summary, key_topics, tone_sentiment nested in content
+        """
+        normalized = {}
+
+        # Document type
+        if "document_type" in simplified_data:
+            normalized["document_type"] = simplified_data["document_type"]
+        else:
+            normalized["document_type"] = {"value": "unknown", "confidence": 0.0}
+
+        # Document date
+        if "document_date" in simplified_data:
+            normalized["document_date"] = simplified_data["document_date"]
+        else:
+            normalized["document_date"] = {"value": None, "confidence": 0.0}
+
+        # Parties
+        normalized["parties"] = {
+            "people": simplified_data.get("people", []),
+            "organizations": simplified_data.get("organizations", []),
+            "confidence": max(
+                [p.get("confidence", 0) for p in simplified_data.get("people", [])]
+                + [o.get("confidence", 0) for o in simplified_data.get("organizations", [])]
+                + [0]
+            ),
+        }
+
+        # Places
+        normalized["places"] = {
+            "locations": simplified_data.get("locations", []),
+            "confidence": max(
+                [l.get("confidence", 0) for l in simplified_data.get("locations", [])]
+                + [0]
+            ),
+        }
+
+        # Storage location (not in simplified format)
+        normalized["storage_location"] = {
+            "archive": None,
+            "collection": None,
+            "box": None,
+            "folder": None,
+            "confidence": 0.0,
+        }
+
+        # Access level
+        access_value = simplified_data.get("access_level", "public")
+        normalized["access_level"] = {
+            "value": access_value if access_value in ["public", "restricted", "private"] else "public",
+            "reasoning": "",
+            "confidence": 0.5 if access_value else 0.0,
+        }
+
+        # Summary
+        summary_data = simplified_data.get("summary", {})
+        if isinstance(summary_data, dict):
+            # Handle both {text: ..., confidence: ...} and {value: ..., confidence: ...}
+            if "text" in summary_data and "value" not in summary_data:
+                normalized["summary"] = {
+                    "value": summary_data.get("text", ""),
+                    "confidence": summary_data.get("confidence", 0.5)
+                }
+            else:
+                normalized["summary"] = summary_data
+        else:
+            normalized["summary"] = {"value": summary_data, "confidence": 0.5}
+
+        # Key topics
+        topics_list = simplified_data.get("topics", [])
+        normalized["key_topics"] = {
+            "topics": topics_list if isinstance(topics_list, list) else [],
+            "confidence": 0.7 if topics_list else 0.0,
+        }
+
+        # Tone & sentiment
+        normalized["tone_sentiment"] = {
+            "tone": simplified_data.get("tone", "neutral"),
+            "sentiment": simplified_data.get("sentiment", "neutral"),
+            "confidence": 0.6,
+        }
+
+        # Language
+        normalized["language"] = simplified_data.get("language", "en")
+
+        # Notes
+        normalized["notes"] = simplified_data.get("confidence_notes")
+
+        return normalized
 
     @staticmethod
     def _extract_document_type(data: Dict[str, Any]) -> Dict[str, Any]:

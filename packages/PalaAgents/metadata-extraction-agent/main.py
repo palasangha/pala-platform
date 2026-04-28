@@ -20,6 +20,7 @@ from typing import Dict, Any, Optional
 
 from providers.base_provider import BaseMetadataProvider
 from providers.claude_provider import ClaudeMetadataProvider
+from providers.ollama_provider import OllamaMetadataProvider
 from mappers.pala_mapper import PalaMapper
 from mappers.archipelago_mapper import ArchipelagoMapper
 
@@ -61,11 +62,16 @@ class MetadataExtractionAgent:
 
         # Initialize Claude provider
         self.claude_provider = ClaudeMetadataProvider()
+        # Initialize Ollama provider
+        self.ollama_provider = OllamaMetadataProvider()
 
         logger.info(f"Initialized {self.agent_id}")
         logger.info(f"Server: {self.server_url}")
         logger.info(
             f"Claude provider available: {self.claude_provider.is_available()}"
+        )
+        logger.info(
+            f"Ollama provider available: {self.ollama_provider.is_available()}"
         )
 
     def get_provider(self, model: str) -> BaseMetadataProvider:
@@ -83,14 +89,14 @@ class MetadataExtractionAgent:
         """
         if model.lower() == "claude":
             return self.claude_provider
+        elif model.lower() == "ollama":
+            return self.ollama_provider
         # Future providers can be added here
-        # elif model.lower() == "ollama":
-        #     return self.ollama_provider
         # elif model.lower() == "gemini":
         #     return self.gemini_provider
         else:
             raise ValueError(
-                f"Unsupported model: {model}. Supported: claude (more coming soon)"
+                f"Unsupported model: {model}. Supported: claude, ollama (more coming soon)"
             )
 
     async def extract_metadata(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -99,7 +105,10 @@ class MetadataExtractionAgent:
 
         Input parameters:
         {
-            "text": str,                                        # Required - input text (from OCR, transcription, etc)
+            "text": str,                                        # Optional if file_data provided
+            "file_data": str (base64-encoded file content),     # Optional if text provided
+            "filename": str,                                    # Optional with file_data
+            "file_format": str,                                 # Optional with file_data (pdf, txt, json, md, ...)
             "model": "claude" | "ollama" | "gemini" | "openai", # Required
             "output_type": "pala" | "archipelago" | "combined", # Required
             "language": str (optional),                         # ISO language code
@@ -131,19 +140,43 @@ class MetadataExtractionAgent:
 
         # Extract parameters
         text = params.get("text", "").strip()
+        file_data_b64 = params.get("file_data", "").strip()
+        filename = params.get("filename", "document")
+        file_format = params.get("file_format", "").lower()
         model = params.get("model", "claude").lower()
         output_type = params.get("output_type", "pala").lower()
         language = params.get("language")
         document_context = params.get("document_context")
         custom_prompt = params.get("custom_prompt")
         schema_version = params.get("schema_version", "1.0.0")
+        chunk_size = int(os.getenv("METADATA_CHUNK_CHARS", "8000"))
+        chunk_overlap = int(os.getenv("METADATA_CHUNK_OVERLAP", "500"))
 
         # Validate required parameters
-        if not text:
-            raise ValueError("text is required and cannot be empty")
+        if not text and not file_data_b64:
+            raise ValueError("Either text or file_data is required and cannot be empty")
         if output_type not in ["pala", "archipelago", "combined"]:
             raise ValueError(
                 f'output_type must be "pala", "archipelago", or "combined", got: {output_type}'
+            )
+
+        # If file payload is provided without text, extract text from file first
+        if not text and file_data_b64:
+            if not file_format:
+                file_format = filename.split(".")[-1].lower() if "." in filename else "txt"
+
+            return await self.extract_metadata_from_file(
+                {
+                    "file_data": file_data_b64,
+                    "filename": filename,
+                    "file_format": file_format,
+                    "model": model,
+                    "output_type": output_type,
+                    "language": language,
+                    "document_context": document_context,
+                    "custom_prompt": custom_prompt,
+                    "schema_version": schema_version,
+                }
             )
 
         logger.info(
@@ -158,13 +191,18 @@ class MetadataExtractionAgent:
                     f"Provider {model} is not available. Check configuration and dependencies."
                 )
 
-            # Extract metadata from provider
-            extracted_data = await provider.extract_metadata(
-                ocr_text=text,
+            # Extract metadata from provider, chunking long input so the full document is analyzed.
+            extracted_data = await self._extract_metadata_with_chunking(
+                provider=provider,
+                text=text,
                 language=language,
                 document_context=document_context,
                 custom_prompt=custom_prompt,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
             )
+            logger.info(f"Raw extracted data keys: {list(extracted_data.keys())}")
+            logger.info(f"Raw extracted data (truncated): {str(extracted_data)[:500]}")
 
             # Add metadata
             extracted_data["extraction_timestamp"] = datetime.now(timezone.utc).isoformat()
@@ -204,8 +242,352 @@ class MetadataExtractionAgent:
             return result
 
         except Exception as e:
-            logger.error(f"Metadata extraction failed: {e}")
+            logger.exception(f"Metadata extraction failed: {e}")
             raise
+
+    async def _extract_metadata_with_chunking(
+        self,
+        provider: BaseMetadataProvider,
+        text: str,
+        language: Optional[str],
+        document_context: Optional[str],
+        custom_prompt: Optional[str],
+        chunk_size: int,
+        chunk_overlap: int,
+    ) -> Dict[str, Any]:
+        """Extract metadata for either a single chunk or multiple chunks merged together."""
+        normalized_text = text.strip()
+        if len(normalized_text) <= chunk_size:
+            return await provider.extract_metadata(
+                ocr_text=normalized_text,
+                language=language,
+                document_context=document_context,
+                custom_prompt=custom_prompt,
+            )
+
+        chunks = self._split_text_into_chunks(normalized_text, chunk_size, chunk_overlap)
+        logger.info(f"Splitting input into {len(chunks)} chunks (chunk_size={chunk_size}, overlap={chunk_overlap})")
+
+        chunk_results = []
+        for index, chunk in enumerate(chunks, start=1):
+            logger.info(f"Extracting chunk {index}/{len(chunks)} ({len(chunk)} chars)")
+            chunk_result = await provider.extract_metadata(
+                ocr_text=chunk,
+                language=language,
+                document_context=document_context,
+                custom_prompt=custom_prompt,
+            )
+            chunk_results.append(chunk_result)
+
+        merged = self._merge_chunk_extractions(chunk_results)
+        merged["chunk_count"] = len(chunks)
+        merged["chunk_sizes"] = [len(chunk) for chunk in chunks]
+        return merged
+
+    @staticmethod
+    def _split_text_into_chunks(text: str, chunk_size: int, chunk_overlap: int) -> list:
+        """Split text into overlapping chunks without losing the full document."""
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be greater than 0")
+        if chunk_overlap < 0:
+            raise ValueError("chunk_overlap cannot be negative")
+        if chunk_overlap >= chunk_size:
+            raise ValueError("chunk_overlap must be smaller than chunk_size")
+
+        chunks = []
+        start = 0
+        text_length = len(text)
+
+        while start < text_length:
+            end = min(start + chunk_size, text_length)
+            chunks.append(text[start:end])
+            if end >= text_length:
+                break
+            start = end - chunk_overlap
+
+        return chunks
+
+    @staticmethod
+    def _merge_chunk_extractions(chunk_results: list) -> Dict[str, Any]:
+        """Merge multiple provider outputs into one combined extracted data structure."""
+        if not chunk_results:
+            return {}
+
+        if len(chunk_results) == 1:
+            return chunk_results[0]
+
+        merged: Dict[str, Any] = {
+            "document_type": {"value": "unknown", "confidence": 0.0},
+            "document_date": {"value": None, "confidence": 0.0},
+            "people": [],
+            "organizations": [],
+            "locations": [],
+            "summary": {"text": "", "confidence": 0.0},
+            "topics": [],
+            "tone": "neutral",
+            "sentiment": "neutral",
+            "language": "en",
+            "access_level": "public",
+            "confidence_notes": [],
+        }
+
+        def _as_dict(value: Any) -> Dict[str, Any]:
+            return value if isinstance(value, dict) else {}
+
+        def _as_list(value: Any) -> list:
+            return value if isinstance(value, list) else []
+
+        def _pick_better(current: Dict[str, Any], candidate: Dict[str, Any], value_key: str = "value") -> Dict[str, Any]:
+            current_conf = current.get("confidence", 0.0) if isinstance(current, dict) else 0.0
+            candidate_conf = candidate.get("confidence", 0.0) if isinstance(candidate, dict) else 0.0
+            current_value = current.get(value_key) if isinstance(current, dict) else None
+            candidate_value = candidate.get(value_key) if isinstance(candidate, dict) else None
+            if candidate_conf > current_conf:
+                return candidate
+            if candidate_conf == current_conf and current_value in [None, "", "unknown"] and candidate_value not in [None, "", "unknown"]:
+                return candidate
+            return current
+
+        people_by_key = {}
+        orgs_by_key = {}
+        locations_by_key = {}
+        topic_order = []
+        notes = []
+        summary_texts = []
+
+        for result in chunk_results:
+            if not isinstance(result, dict):
+                continue
+
+            merged["document_type"] = _pick_better(merged["document_type"], _as_dict(result.get("document_type")))
+            merged["document_date"] = _pick_better(merged["document_date"], _as_dict(result.get("document_date")))
+
+            summary_obj = result.get("summary")
+            if isinstance(summary_obj, dict):
+                summary_text = summary_obj.get("text") or summary_obj.get("value") or ""
+                if summary_text:
+                    summary_texts.append(summary_text.strip())
+                merged["summary"] = _pick_better(merged["summary"], {"text": summary_text, "confidence": summary_obj.get("confidence", 0.0)}, value_key="text")
+
+            for field_name, bucket in [("people", people_by_key), ("organizations", orgs_by_key), ("locations", locations_by_key)]:
+                for item in _as_list(result.get(field_name)):
+                    if not isinstance(item, dict):
+                        continue
+                    name = (item.get("name") or "").strip()
+                    role = (item.get("role") or "").strip()
+                    if not name:
+                        continue
+                    key = (name.lower(), role.lower())
+                    existing = bucket.get(key)
+                    if existing is None or item.get("confidence", 0.0) > existing.get("confidence", 0.0):
+                        bucket[key] = item
+
+            for topic in _as_list(result.get("topics")):
+                if isinstance(topic, str):
+                    cleaned = topic.strip()
+                    if cleaned and cleaned.lower() not in [t.lower() for t in topic_order]:
+                        topic_order.append(cleaned)
+
+            tone = result.get("tone")
+            if isinstance(tone, str) and tone.strip() and merged["tone"] == "neutral":
+                merged["tone"] = tone.strip()
+
+            sentiment = result.get("sentiment")
+            if isinstance(sentiment, str) and sentiment.strip() and merged["sentiment"] == "neutral":
+                merged["sentiment"] = sentiment.strip()
+
+            language = result.get("language")
+            if isinstance(language, str) and language.strip():
+                merged["language"] = language.strip()
+
+            access_level = result.get("access_level")
+            if isinstance(access_level, str) and access_level.strip():
+                merged["access_level"] = access_level.strip()
+
+            notes_value = result.get("confidence_notes")
+            if isinstance(notes_value, str) and notes_value.strip():
+                notes.append(notes_value.strip())
+
+        merged["people"] = list(people_by_key.values())
+        merged["organizations"] = list(orgs_by_key.values())
+        merged["locations"] = list(locations_by_key.values())
+        merged["topics"] = topic_order
+        merged["confidence_notes"] = " | ".join(notes) if notes else None
+
+        if summary_texts and not merged["summary"].get("text"):
+            merged["summary"]["text"] = " ".join(summary_texts)
+        elif summary_texts and len(summary_texts) > 1:
+            merged["summary"]["text"] = " ".join(summary_texts)
+
+        merged["summary"]["confidence"] = max(
+            [result.get("summary", {}).get("confidence", 0.0) for result in chunk_results if isinstance(result, dict) and isinstance(result.get("summary"), dict)] + [0.0]
+        )
+
+        return merged
+
+    async def extract_metadata_from_file(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract structured metadata directly from a file (base64-encoded).
+
+        Input parameters:
+        {
+            "file_data": str (base64-encoded file content),  # Required
+            "filename": str,                                  # Optional - original filename
+            "file_format": str,                               # Optional - pdf, txt, json, etc
+            "model": "claude" | "ollama",                     # Optional, default: "ollama"
+            "output_type": "pala" | "archipelago" | "combined", # Optional, default: "pala"
+            "language": str (optional),                       # ISO language code
+            "document_context": str (optional),               # Context hint
+            "custom_prompt": str (optional)                   # Override default prompt
+        }
+
+        Returns:
+        Same as extract_metadata() but processes file first to extract text.
+        """
+        import base64
+        import tempfile
+        import os
+
+        file_data_b64 = params.get("file_data", "").strip()
+        filename = params.get("filename", "document")
+        file_format = params.get("file_format", "").lower()
+        model = params.get("model", "ollama").lower()
+        output_type = params.get("output_type", "pala").lower()
+        language = params.get("language")
+        document_context = params.get("document_context")
+        custom_prompt = params.get("custom_prompt")
+        schema_version = params.get("schema_version", "1.0.0")
+
+        if not file_data_b64:
+            raise ValueError("file_data (base64-encoded) is required")
+
+        logger.info(f"Extracting metadata from file: {filename}, format: {file_format}")
+
+        try:
+            # Decode base64 to bytes
+            file_bytes = base64.b64decode(file_data_b64)
+            logger.info(f"Decoded {len(file_bytes)} bytes from base64")
+
+            # Extract text based on file format
+            text = await self._extract_text_from_file(file_bytes, file_format, filename)
+
+            if not text or not text.strip():
+                logger.warning(f"No text extracted from file: {filename}")
+                text = f"Document: {filename}\nFormat: {file_format}\n(Binary file, could not extract text)"
+
+            logger.info(f"Extracted {len(text)} characters from file")
+
+            # Now call extract_metadata with the extracted text
+            result = await self.extract_metadata({
+                "text": text,
+                "model": model,
+                "output_type": output_type,
+                "language": language,
+                "document_context": document_context,
+                "custom_prompt": custom_prompt,
+                "schema_version": schema_version,
+            })
+
+            # Add file metadata to result
+            result["source_file"] = {
+                "filename": filename,
+                "format": file_format,
+                "size_bytes": len(file_bytes),
+                "text_extracted": True
+            }
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to extract metadata from file: {e}")
+            raise
+
+    @staticmethod
+    async def _extract_text_from_file(file_bytes: bytes, file_format: str, filename: str) -> str:
+        """
+        Extract text from file based on format.
+
+        Supports: txt, json, pdf (basic), md
+        """
+        text = ""
+
+        if file_format in ["txt", "md"]:
+            # Simple text formats
+            try:
+                text = file_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                text = file_bytes.decode("latin-1")
+
+        elif file_format == "json":
+            # JSON format
+            try:
+                import json
+                text = file_bytes.decode("utf-8")
+                data = json.loads(text)
+                # Pretty print JSON for better readability
+                text = json.dumps(data, indent=2)
+            except Exception as e:
+                logger.warning(f"Failed to parse JSON: {e}")
+                text = file_bytes.decode("utf-8", errors="ignore")
+
+        elif file_format == "pdf":
+            # PDF format - try to extract text
+            try:
+                from pypdf import PdfReader
+                from io import BytesIO
+
+                pdf_file = BytesIO(file_bytes)
+                pdf_reader = PdfReader(pdf_file)
+                text_parts = []
+                for page in pdf_reader.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text_parts.append(page_text)
+                text = "\n\n".join(text_parts)
+                logger.info(f"Extracted {len(text)} chars from PDF with {len(pdf_reader.pages)} pages")
+            except ImportError:
+                try:
+                    import PyPDF2
+                    from io import BytesIO
+
+                    pdf_file = BytesIO(file_bytes)
+                    pdf_reader = PyPDF2.PdfReader(pdf_file)
+                    text_parts = []
+                    for page in pdf_reader.pages:
+                        page_text = page.extract_text()
+                        if page_text:
+                            text_parts.append(page_text)
+                    text = "\n\n".join(text_parts)
+                    logger.info(
+                        f"Extracted {len(text)} chars from PDF with {len(pdf_reader.pages)} pages (PyPDF2)"
+                    )
+                except ImportError:
+                    logger.warning("No PDF parser available (pypdf/PyPDF2). Returning safe fallback text")
+                    text = (
+                        f"Document: {filename}\n"
+                        f"Format: {file_format}\n"
+                        "(PDF uploaded but PDF text parser is not installed. Install pypdf for full extraction.)"
+                    )
+                except Exception as e:
+                    logger.warning(f"PDF extraction fallback failed: {e}")
+                    text = f"PDF file: {filename} (could not extract text)"
+            except Exception as e:
+                logger.warning(f"PDF extraction error: {e}")
+                text = f"PDF file: {filename} (extraction error)"
+
+        else:
+            # Unknown format - try UTF-8 decoding
+            logger.info(f"Unknown format '{file_format}', attempting UTF-8 decode")
+            try:
+                text = file_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                try:
+                    text = file_bytes.decode("latin-1")
+                except Exception:
+                    logger.warning(f"Could not decode file: {filename}")
+                    text = f"Binary file: {filename} (could not extract text)"
+
+        return text
 
     @staticmethod
     def _extract_confidence_scores(extracted_data: Dict[str, Any]) -> Dict[str, float]:
@@ -238,6 +620,18 @@ class MetadataExtractionAgent:
                             "type": "string",
                             "description": "Input text from any source (OCR, transcription, etc.)",
                         },
+                        "file_data": {
+                            "type": "string",
+                            "description": "Base64-encoded file content. Optional if text is provided.",
+                        },
+                        "filename": {
+                            "type": "string",
+                            "description": "Optional filename for file_data input (e.g., 'document.pdf')",
+                        },
+                        "file_format": {
+                            "type": "string",
+                            "description": "Optional file format for file_data input (e.g., 'pdf', 'txt', 'json', 'md')",
+                        },
                         "model": {
                             "type": "string",
                             "description": 'AI provider to use: "claude", "ollama", "gemini", "openai"',
@@ -265,7 +659,54 @@ class MetadataExtractionAgent:
                             "description": "Pin to specific schema version (e.g., '1.0.0')",
                         },
                     },
-                    "required": ["text", "model", "output_type"],
+                    "required": ["model", "output_type"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "name": "extract_metadata_from_file",
+                "description": "Extract structured metadata directly from a file (base64-encoded). Supports PDF, text, JSON, and markdown files.",
+                "agentId": self.agent_id,
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "file_data": {
+                            "type": "string",
+                            "description": "Base64-encoded file content",
+                        },
+                        "filename": {
+                            "type": "string",
+                            "description": "Original filename (e.g., 'document.pdf')",
+                        },
+                        "file_format": {
+                            "type": "string",
+                            "description": 'File format: "pdf", "txt", "json", "md", etc.',
+                            "enum": ["pdf", "txt", "json", "md"],
+                        },
+                        "model": {
+                            "type": "string",
+                            "description": 'AI provider to use: "claude", "ollama", "gemini", "openai"',
+                            "enum": ["claude", "ollama", "gemini", "openai"],
+                        },
+                        "output_type": {
+                            "type": "string",
+                            "description": 'Output schema: "pala", "archipelago", or "combined"',
+                            "enum": ["pala", "archipelago", "combined"],
+                        },
+                        "language": {
+                            "type": "string",
+                            "description": "ISO language code (e.g., 'en', 'hi')",
+                        },
+                        "document_context": {
+                            "type": "string",
+                            "description": 'Context hint: "historical_letter", "monastery_record", etc.',
+                        },
+                        "custom_prompt": {
+                            "type": "string",
+                            "description": "Override default extraction prompt",
+                        },
+                    },
+                    "required": ["file_data", "file_format", "model", "output_type"],
                     "additionalProperties": False,
                 },
             }
@@ -278,11 +719,14 @@ class MetadataExtractionAgent:
         tool_name = params.get("name")
         arguments = params.get("arguments", {})
 
-        if tool_name != "extract_metadata":
+        if tool_name == "extract_metadata":
+            logger.info(f"Invoking tool: {tool_name}")
+            return await self.extract_metadata(arguments)
+        elif tool_name == "extract_metadata_from_file":
+            logger.info(f"Invoking tool: {tool_name}")
+            return await self.extract_metadata_from_file(arguments)
+        else:
             raise ValueError(f"Unknown tool: {tool_name}")
-
-        logger.info(f"Invoking tool: {tool_name}")
-        return await self.extract_metadata(arguments)
 
     async def run(self):
         """Main agent loop"""

@@ -57,23 +57,44 @@ class ArchipelagoMapper:
     @staticmethod
     def _extract_title(data: Dict[str, Any]) -> str:
         """Extract title for Archipelago"""
-        summary = data.get("summary", {}).get("value", "")
-        if summary:
-            # Use first sentence or truncate at 200 chars
-            title = summary.split(".")[0][:200]
+        # Be tolerant of several summary shapes:
+        # - {"value": "..."}
+        # - {"text": "..."}
+        # - plain string
+        summary_obj = data.get("summary")
+        summary_text = ""
+        if isinstance(summary_obj, dict):
+            summary_text = summary_obj.get("value") or summary_obj.get("text") or ""
+        elif isinstance(summary_obj, str):
+            summary_text = summary_obj
+
+        if summary_text:
+            title = summary_text.split(".")[0][:200]
             return title.strip()
         return "Historical Document"
 
     @staticmethod
     def _extract_description(data: Dict[str, Any]) -> str:
         """Extract description"""
-        return data.get("summary", {}).get("value", "No description available")
+        summary_obj = data.get("summary")
+        if isinstance(summary_obj, dict):
+            return summary_obj.get("value") or summary_obj.get("text") or "No description available"
+        if isinstance(summary_obj, str):
+            return summary_obj
+        return "No description available"
 
     @staticmethod
     def _extract_subjects(data: Dict[str, Any]) -> List[str]:
         """Extract subjects/topics"""
-        topics = data.get("key_topics", {}).get("topics", [])
-        doc_type = data.get("document_type", {}).get("value", "")
+        # Accept either full key_topics or simple topics list
+        kt = data.get("key_topics")
+        if isinstance(kt, dict):
+            topics = kt.get("topics", [])
+        else:
+            topics = data.get("topics", []) if isinstance(data.get("topics"), list) else []
+
+        dt = data.get("document_type")
+        doc_type = dt.get("value") if isinstance(dt, dict) else (dt or "")
         subjects = list(topics)
         if doc_type:
             subjects.insert(0, doc_type)
@@ -83,9 +104,13 @@ class ArchipelagoMapper:
     def _extract_creators(data: Dict[str, Any]) -> List[str]:
         """Extract creators (senders/authors)"""
         creators = []
-        parties = data.get("parties", {})
-        for person in parties.get("people", []):
-            if person.get("role") in ["sender", "author", "creator"]:
+        # Parties may be nested under 'parties' or provided at top-level as 'people'
+        parties = data.get("parties") if isinstance(data.get("parties"), dict) else {}
+        people_list = parties.get("people", []) if parties else data.get("people", [])
+        if not isinstance(people_list, list):
+            people_list = []
+        for person in people_list:
+            if isinstance(person, dict) and person.get("role") in ["sender", "author", "creator"]:
                 creators.append(person.get("name", "Unknown"))
         return creators
 
@@ -93,12 +118,19 @@ class ArchipelagoMapper:
     def _extract_contributors(data: Dict[str, Any]) -> List[str]:
         """Extract contributors"""
         contributors = []
-        parties = data.get("parties", {})
-        for person in parties.get("people", []):
-            if person.get("role") in ["recipient", "mentioned", "signed"]:
+        parties = data.get("parties") if isinstance(data.get("parties"), dict) else {}
+        people_list = parties.get("people", []) if parties else data.get("people", [])
+        if not isinstance(people_list, list):
+            people_list = []
+        for person in people_list:
+            if isinstance(person, dict) and person.get("role") in ["recipient", "mentioned", "signed"]:
                 contributors.append(person.get("name", "Unknown"))
-        for org in parties.get("organizations", []):
-            if org.get("role") in ["recipient", "mentioned"]:
+
+        orgs_list = parties.get("organizations", []) if parties else data.get("organizations", [])
+        if not isinstance(orgs_list, list):
+            orgs_list = []
+        for org in orgs_list:
+            if isinstance(org, dict) and org.get("role") in ["recipient", "mentioned"]:
                 contributors.append(org.get("name", "Unknown"))
         return contributors
 
@@ -141,8 +173,16 @@ class ArchipelagoMapper:
     @staticmethod
     def _extract_rights(data: Dict[str, Any]) -> str:
         """Extract rights information"""
-        access = data.get("access_level", {}).get("value", "public")
-        reasoning = data.get("access_level", {}).get("reasoning", "")
+        access_obj = data.get("access_level")
+        if isinstance(access_obj, dict):
+            access = access_obj.get("value", "public")
+            reasoning = access_obj.get("reasoning", "")
+        elif isinstance(access_obj, str):
+            access = access_obj
+            reasoning = ""
+        else:
+            access = "public"
+            reasoning = ""
 
         rights_map = {
             "public": "Public Domain / Open Access",
@@ -158,7 +198,13 @@ class ArchipelagoMapper:
     @staticmethod
     def _extract_access_rights(data: Dict[str, Any]) -> str:
         """Extract access rights URI (COAR standard)"""
-        access = data.get("access_level", {}).get("value", "public")
+        access_obj = data.get("access_level")
+        if isinstance(access_obj, dict):
+            access = access_obj.get("value", "public")
+        elif isinstance(access_obj, str):
+            access = access_obj
+        else:
+            access = "public"
 
         access_rights_map = {
             "public": "http://purl.org/coar/access_right/c_abf2",  # open access

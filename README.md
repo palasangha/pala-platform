@@ -178,7 +178,12 @@ npm run clean
 | `MCP_AGENT_TOKEN` | Agent auth token (set if server has auth enabled) | `unset` |
 | `MCP_SERVER_URL` | Server URL for agent connection | `ws://localhost:4000` |
 | `NEXT_PUBLIC_MCP_SERVER_URL` | Server URL for web dashboard | `ws://localhost:4000` |
+| **Metadata Extraction** | | |
 | `ANTHROPIC_API_KEY` | Claude API key (for metadata extraction agent) | `unset` |
+| `CLAUDE_ENABLED` | Enable Claude metadata extraction | `true` |
+| `OLLAMA_ENABLED` | Enable Ollama metadata extraction | `true` |
+| `OLLAMA_BASE_URL` | Ollama server URL | `http://localhost:11434` |
+| `OLLAMA_MODEL` | Ollama model to use | `mistral` |
 
 ## JSON-RPC Methods
 

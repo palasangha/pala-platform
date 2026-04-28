@@ -241,7 +241,9 @@ prepare_workspace() {
 OS=$(get_os)
 ROOT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 MISSING=()
-OLLAMA_MODEL_REQUIRED="${OLLAMA_MODEL:-minicpm-v}"
+# Ollama model for metadata extraction agent (can be overridden with OLLAMA_MODEL env var)
+# Recommended models: mistral, neural-chat, or other instruction-tuned models
+OLLAMA_MODEL_REQUIRED="${OLLAMA_MODEL:-mistral}"
 
 echo -e "${BLUE}================================================${NC}"
 echo -e "${BLUE}  Pala Platform - Dependency Gate${NC}"
@@ -263,6 +265,7 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
     echo -e "  • Ollama model: ollama pull $OLLAMA_MODEL_REQUIRED"
     echo -e "  • LM Studio: https://lmstudio.ai/download"
     echo -e "  • Tesseract: https://tesseract-ocr.github.io/tessdoc/Installation.html"
+    echo -e "\n${YELLOW}After installing, run:${NC} ./start-dev.sh"
     exit 2
 fi
 
