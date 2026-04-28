@@ -21,7 +21,7 @@ import json
 import os
 import uuid
 import base64
-from typing import Any, Awaitable, Callable, Dict
+from typing import Any, Awaitable, Callable, Dict, Optional
 
 import websockets
 
@@ -227,7 +227,7 @@ TOOLS: Dict[str, Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]] = {
 
 # JSON-RPC helpers ------------------------------------------------------------
 
-def make_request(method: str, params: Any | None = None, id: str | None = None) -> str:
+def make_request(method: str, params: Optional[Any] = None, id: Optional[str] = None) -> str:
     """Create a JSON-RPC request string."""
     payload = {"jsonrpc": "2.0", "method": method}
     if params is not None:
@@ -242,7 +242,7 @@ def make_response(result: Any, id: str) -> str:
     return json.dumps({"jsonrpc": "2.0", "result": result, "id": id})
 
 
-def make_error(message: str, id: str | None = None, code: int = -32000) -> str:
+def make_error(message: str, id: Optional[str] = None, code: int = -32000) -> str:
     """Create a JSON-RPC error response string."""
     return json.dumps({"jsonrpc": "2.0", "error": {"code": code, "message": message}, "id": id})
 

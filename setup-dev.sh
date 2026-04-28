@@ -10,19 +10,26 @@ else
 fi
 
 echo "[setup-dev] Installing agent Python dependencies (python-dotenv, boto3, websockets)..."
-"$AGENT_VENV_DIR/bin/pip" install --upgrade pip >/dev/null 2>&1
-"$AGENT_VENV_DIR/bin/pip" install python-dotenv boto3 websockets >/dev/null 2>&1
-if [[ $? -ne 0 ]]; then
-    echo "[setup-dev] ERROR: Failed to install Python dependencies in venv."
-    exit 1
+success=false
+"$AGENT_VENV_DIR/bin/pip" install --upgrade pip >/dev/null 2>&1 && \
+"$AGENT_VENV_DIR/bin/pip" install python-dotenv boto3 websockets >/dev/null 2>&1 && \
+success=true
+if [[ "$success" != "true" ]]; then
+    echo "[setup-dev] WARNING: Could not install agent Python dependencies"
+    echo "[setup-dev] WORKAROUND: Agents will use system Python directly"
+    echo "[setup-dev] If you need the agent-venv, run:"
+    echo "[setup-dev]   brew reinstall python@3.13  # or python@3.14"
+    echo "[setup-dev]   $ROOT_DIR/setup-dev.sh"
+else
+    echo "[setup-dev] Python dependencies installed in venv."
 fi
-echo "[setup-dev] Python dependencies installed in venv."
 
 echo "[setup-dev] To run the agent, use:"
 echo "  source $AGENT_VENV_DIR/bin/activate"
 echo "  python packages/PalaAgents/storage-agent/main.py"
 echo "Or run directly:"
 echo "  $AGENT_VENV_DIR/bin/python packages/PalaAgents/storage-agent/main.py"
+echo "[setup-dev] Python setup complete."
 #!/bin/bash
 
 # Pala Platform - Development Environment Setup Gate
@@ -200,12 +207,13 @@ prepare_workspace() {
         for agent_dir in "$pala_agents_dir"/*; do
             if [[ -d "$agent_dir" && -f "$agent_dir/requirements.txt" ]]; then
                 if [[ ! -d "$agent_dir/venv" ]]; then
-                    python3 -m venv "$agent_dir/venv" >/dev/null 2>&1 || true
+                    /usr/bin/python3 -m venv "$agent_dir/venv" >/dev/null 2>&1 || true
                 fi
                 if [[ -d "$agent_dir/venv" ]]; then
-                    source "$agent_dir/venv/bin/activate" >/dev/null 2>&1 || true
-                    pip install -q -r "$agent_dir/requirements.txt" >/dev/null 2>&1 || true
-                    deactivate >/dev/null 2>&1 || true
+                    # Use venv python directly instead of sourcing activate
+                    if [[ -f "$agent_dir/venv/bin/python" ]]; then
+                        "$agent_dir/venv/bin/python" -m pip install -q -r "$agent_dir/requirements.txt" >/dev/null 2>&1 || true
+                    fi
                 fi
             fi
         done
@@ -217,12 +225,13 @@ prepare_workspace() {
         for agent_dir in "$agents_dir"/*; do
             if [[ -d "$agent_dir" && -f "$agent_dir/requirements.txt" ]]; then
                 if [[ ! -d "$agent_dir/venv" ]]; then
-                    python3 -m venv "$agent_dir/venv" >/dev/null 2>&1 || true
+                    /usr/bin/python3 -m venv "$agent_dir/venv" >/dev/null 2>&1 || true
                 fi
                 if [[ -d "$agent_dir/venv" ]]; then
-                    source "$agent_dir/venv/bin/activate" >/dev/null 2>&1 || true
-                    pip install -q -r "$agent_dir/requirements.txt" >/dev/null 2>&1 || true
-                    deactivate >/dev/null 2>&1 || true
+                    # Use venv python directly instead of sourcing activate
+                    if [[ -f "$agent_dir/venv/bin/python" ]]; then
+                        "$agent_dir/venv/bin/python" -m pip install -q -r "$agent_dir/requirements.txt" >/dev/null 2>&1 || true
+                    fi
                 fi
             fi
         done
@@ -280,12 +289,13 @@ echo -e "${YELLOW}S3/MinIO config in use:${NC}"
 grep -E '^(S3_|FILE_STORAGE_PROVIDER|STORAGE_PROVIDER)' "$ROOT_DIR/.env" | grep -v '^#' || echo "(No S3 config found in .env)"
 
 # 2. Install boto3 in storage-agent venv
-STORAGE_AGENT_DIR="$ROOT_DIR/packages/agents/storage-agent"
+STORAGE_AGENT_DIR="$ROOT_DIR/packages/PalaAgents/storage-agent"
 if [[ -d "$STORAGE_AGENT_DIR/venv" ]]; then
-    source "$STORAGE_AGENT_DIR/venv/bin/activate" >/dev/null 2>&1 || true
-    pip install -q boto3 >/dev/null 2>&1 || true
-    deactivate >/dev/null 2>&1 || true
-    echo -e "${GREEN}✓ boto3 installed in storage-agent venv${NC}"
+    # Use venv python directly instead of sourcing activate
+    if [[ -f "$STORAGE_AGENT_DIR/venv/bin/python" ]]; then
+        "$STORAGE_AGENT_DIR/venv/bin/python" -m pip install -q boto3 >/dev/null 2>&1 || true
+        echo -e "${GREEN}✓ boto3 installed in storage-agent venv${NC}"
+    fi
 fi
 
 # 3. Check/start MinIO server on a free port (3900-4000) if not running

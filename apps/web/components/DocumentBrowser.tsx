@@ -77,12 +77,11 @@ interface DocumentContent {
 }
 
 interface DocumentBrowserProps {
-  wsUrl: string;
   connected: boolean;
   send: (method: string, params: any) => Promise<any>;
 }
 
-export default function DocumentBrowser({ wsUrl, connected, send }: DocumentBrowserProps) {
+export default function DocumentBrowser({ connected, send }: DocumentBrowserProps) {
   const unwrapMcpResult = (payload: any) => {
     let current = payload;
     let depth = 0;
@@ -112,11 +111,6 @@ export default function DocumentBrowser({ wsUrl, connected, send }: DocumentBrow
     }
   }, [documents]);
   
-  // Pagination
-  const [page, setPage] = useState(1);
-  const [limit] = useState(20);
-  const [hasMore, setHasMore] = useState(true);
-  
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
   const [contentTypeFilter, setContentTypeFilter] = useState('');
@@ -126,7 +120,7 @@ export default function DocumentBrowser({ wsUrl, connected, send }: DocumentBrow
   const [stats, setStats] = useState<StorageStats | null>(null);
 
   // Load documents (always show all, then filter in UI)
-  const loadDocuments = useCallback(async (reset = false) => {
+  const loadDocuments = useCallback(async () => {
     if (!connected) {
       setError('WebSocket not connected');
       return;
@@ -158,14 +152,13 @@ export default function DocumentBrowser({ wsUrl, connected, send }: DocumentBrow
           hash: item.file_hash || item.hash || '', // map file_hash to hash
         }))
       );
-      setHasMore(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load documents';
       setError(message);
     } finally {
       setLoading(false);
     }
-  }, [backendFilter, connected, contentTypeFilter, limit, page, send]);
+  }, [backendFilter, connected, contentTypeFilter, send]);
 
   // Load stats
   const loadStats = async () => {
@@ -210,7 +203,7 @@ export default function DocumentBrowser({ wsUrl, connected, send }: DocumentBrow
         throw new Error(response?.error || 'Failed to clear documents');
       }
 
-      await Promise.all([loadDocuments(true), loadStats()]);
+      await Promise.all([loadDocuments(), loadStats()]);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to clear documents';
       setError(message);
@@ -264,7 +257,7 @@ export default function DocumentBrowser({ wsUrl, connected, send }: DocumentBrow
   // Initial load
   useEffect(() => {
     if (connected) {
-      loadDocuments(true);
+      loadDocuments();
       loadStats();
     }
   }, [backendFilter, connected, contentTypeFilter, loadDocuments]);

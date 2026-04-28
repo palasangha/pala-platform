@@ -101,12 +101,11 @@ else
     echo ""
 fi
 
-# Check if ANTHROPIC_API_KEY is set
+# Check if ANTHROPIC_API_KEY is set (optional, chat-agent will work without it)
 if [ -z "$ANTHROPIC_API_KEY" ]; then
-    echo -e "${RED}ERROR: ANTHROPIC_API_KEY not set${NC}"
-    echo -e "${YELLOW}Please set it:${NC}"
+    echo -e "${YELLOW}⚠ ANTHROPIC_API_KEY not set - chat-agent will use Ollama only${NC}"
+    echo -e "${YELLOW}To enable Claude responses, set:${NC}"
     echo -e "  export ANTHROPIC_API_KEY=\"sk-ant-api03-your-key-here\"\n"
-    exit 1
 fi
 
 echo -e "${GREEN}[Preflight] Killing any running storage-agent processes...${NC}"
@@ -132,29 +131,27 @@ echo -e "${GREEN}[2/6] Starting Sample Agent...${NC}"
 cd "$ROOT_DIR/packages/PalaAgents/sample-agent"
 if [ ! -d "venv" ]; then
     echo -e "${YELLOW}Creating virtual environment...${NC}"
-    python3 -m venv venv
-    # Upgrade pip to latest version for compatibility
-    if [ -f "venv/bin/python" ]; then
-        venv/bin/python -m pip install --upgrade pip setuptools wheel -q
-    fi
+    /usr/bin/python3 -m venv venv
 fi
-# Activate virtual environment (cross-platform compatible)
-if [ -f "venv/bin/activate" ]; then
-    source venv/bin/activate
-elif [ -f "venv/Scripts/activate" ]; then
-    source venv/Scripts/activate
+# Use venv python directly (avoids activate script issues on Python 3.14)
+VENV_PYTHON=""
+if [ -f "venv/bin/python" ]; then
+    VENV_PYTHON="venv/bin/python"
+elif [ -f "venv/Scripts/python.exe" ]; then
+    VENV_PYTHON="venv/Scripts/python.exe"
 fi
-if ! command -v websockets >/dev/null 2>&1; then
-    echo -e "${YELLOW}Installing dependencies...${NC}"
-    pip install -q -r requirements.txt
+if [ -n "$VENV_PYTHON" ]; then
+    $VENV_PYTHON -m pip install --upgrade pip setuptools wheel -q 2>/dev/null || true
+    $VENV_PYTHON -m pip install -q -r requirements.txt 2>/dev/null || true
+    export MCP_SERVER_URL="ws://localhost:3010"
+    export MCP_AGENT_ID="sample-agent"
+    $VENV_PYTHON main.py > "$ROOT_DIR/logs/sample-agent.log" 2>&1 &
+    SAMPLE_PID=$!
+    echo -e "${GREEN}✓ Sample Agent started (PID: $SAMPLE_PID)${NC}"
+    echo -e "  Logs: logs/sample-agent.log\n"
+else
+    echo -e "${RED}Failed to find venv python${NC}"
 fi
-export MCP_SERVER_URL="ws://localhost:3010"
-export MCP_AGENT_ID="sample-agent"
-python main.py > "$ROOT_DIR/logs/sample-agent.log" 2>&1 &
-SAMPLE_PID=$!
-deactivate 2>/dev/null || true
-echo -e "${GREEN}✓ Sample Agent started (PID: $SAMPLE_PID)${NC}"
-echo -e "  Logs: logs/sample-agent.log\n"
 sleep 2
 
 # 3. Start Metadata Extraction Agent
@@ -162,55 +159,87 @@ echo -e "${GREEN}[3/6] Starting Metadata Extraction Agent...${NC}"
 cd "$ROOT_DIR/packages/PalaAgents/metadata-extraction-agent"
 if [ ! -d "venv" ]; then
     echo -e "${YELLOW}Creating virtual environment...${NC}"
-    python3 -m venv venv
-    # Upgrade pip to latest version for compatibility
-    if [ -f "venv/bin/python" ]; then
-        venv/bin/python -m pip install --upgrade pip setuptools wheel -q
-    fi
+    /usr/bin/python3 -m venv venv
 fi
-# Activate virtual environment (cross-platform compatible)
-if [ -f "venv/bin/activate" ]; then
-    source venv/bin/activate
-elif [ -f "venv/Scripts/activate" ]; then
-    source venv/Scripts/activate
+# Use venv python directly (avoids activate script issues on Python 3.14)
+VENV_PYTHON=""
+if [ -f "venv/bin/python" ]; then
+    VENV_PYTHON="venv/bin/python"
+elif [ -f "venv/Scripts/python.exe" ]; then
+    VENV_PYTHON="venv/Scripts/python.exe"
 fi
-if ! command -v anthropic >/dev/null 2>&1; then
-    echo -e "${YELLOW}Installing dependencies...${NC}"
-    pip install -q -r requirements.txt
+if [ -n "$VENV_PYTHON" ]; then
+    $VENV_PYTHON -m pip install --upgrade pip setuptools wheel -q 2>/dev/null || true
+    $VENV_PYTHON -m pip install -q -r requirements.txt 2>/dev/null || true
+    export MCP_SERVER_URL="ws://localhost:3010"
+    export MCP_AGENT_ID="metadata-extraction-agent"
+    $VENV_PYTHON main.py > "$ROOT_DIR/logs/metadata-agent.log" 2>&1 &
+    METADATA_PID=$!
+    echo -e "${GREEN}✓ Metadata Extraction Agent started (PID: $METADATA_PID)${NC}"
+    echo -e "  Logs: logs/metadata-agent.log\n"
+else
+    echo -e "${RED}Failed to find venv python${NC}"
 fi
-export MCP_SERVER_URL="ws://localhost:3010"
-export MCP_AGENT_ID="metadata-extraction-agent"
-python main.py > "$ROOT_DIR/logs/metadata-agent.log" 2>&1 &
-METADATA_PID=$!
-deactivate 2>/dev/null || true
-echo -e "${GREEN}✓ Metadata Extraction Agent started (PID: $METADATA_PID)${NC}"
-echo -e "  Logs: logs/metadata-agent.log\n"
 sleep 2
 
 # 4. Start Storage Agent
-echo -e "${GREEN}[4/7] Starting Storage Agent...${NC}"
-cd "$ROOT_DIR"
-export MCP_SERVER_URL="ws://localhost:3010"
-export MCP_AGENT_ID="storage-agent"
-"$AGENT_VENV_DIR/bin/python" packages/PalaAgents/storage-agent/main.py > "$ROOT_DIR/logs/storage-agent.log" 2>&1 &
-STORAGE_PID=$!
-echo -e "${GREEN}✓ Storage Agent started (PID: $STORAGE_PID)${NC}"
-echo -e "  Logs: logs/storage-agent.log\n"
+echo -e "${GREEN}[4/6] Starting Storage Agent...${NC}"
+cd "$ROOT_DIR/packages/PalaAgents/storage-agent"
+if [ ! -d "venv" ]; then
+    echo -e "${YELLOW}Creating virtual environment...${NC}"
+    /usr/bin/python3 -m venv venv
+fi
+# Use venv python directly (avoids activate script issues on Python 3.14)
+VENV_PYTHON=""
+if [ -f "venv/bin/python" ]; then
+    VENV_PYTHON="venv/bin/python"
+elif [ -f "venv/Scripts/python.exe" ]; then
+    VENV_PYTHON="venv/Scripts/python.exe"
+fi
+if [ -n "$VENV_PYTHON" ]; then
+    $VENV_PYTHON -m pip install --upgrade pip setuptools wheel -q 2>/dev/null || true
+    $VENV_PYTHON -m pip install -q -r requirements.txt 2>/dev/null || true
+    export MCP_SERVER_URL="ws://localhost:3010"
+    export MCP_AGENT_ID="storage-agent"
+    $VENV_PYTHON main.py > "$ROOT_DIR/logs/storage-agent.log" 2>&1 &
+    STORAGE_PID=$!
+    echo -e "${GREEN}✓ Storage Agent started (PID: $STORAGE_PID)${NC}"
+    echo -e "  Logs: logs/storage-agent.log\n"
+else
+    echo -e "${RED}Failed to find venv python${NC}"
+fi
 sleep 2
 
 # 5. Start Chat Agent
-echo -e "${GREEN}[5/7] Starting Chat Agent...${NC}"
-cd "$ROOT_DIR"
-export MCP_SERVER_URL="ws://localhost:3010"
-export MCP_AGENT_ID="chat-agent"
-"$AGENT_VENV_DIR/bin/python" packages/PalaAgents/chat-agent/main.py > "$ROOT_DIR/logs/chat-agent.log" 2>&1 &
-CHAT_PID=$!
-echo -e "${GREEN}✓ Chat Agent started (PID: $CHAT_PID)${NC}"
-echo -e "  Logs: logs/chat-agent.log\n"
+echo -e "${GREEN}[5/6] Starting Chat Agent...${NC}"
+cd "$ROOT_DIR/packages/PalaAgents/chat-agent"
+if [ ! -d "venv" ]; then
+    echo -e "${YELLOW}Creating virtual environment...${NC}"
+    /usr/bin/python3 -m venv venv
+fi
+# Use venv python directly (avoids activate script issues on Python 3.14)
+VENV_PYTHON=""
+if [ -f "venv/bin/python" ]; then
+    VENV_PYTHON="venv/bin/python"
+elif [ -f "venv/Scripts/python.exe" ]; then
+    VENV_PYTHON="venv/Scripts/python.exe"
+fi
+if [ -n "$VENV_PYTHON" ]; then
+    $VENV_PYTHON -m pip install --upgrade pip setuptools wheel -q 2>/dev/null || true
+    $VENV_PYTHON -m pip install -q -r requirements.txt 2>/dev/null || true
+    export MCP_SERVER_URL="ws://localhost:3010"
+    export MCP_AGENT_ID="chat-agent"
+    $VENV_PYTHON main.py > "$ROOT_DIR/logs/chat-agent.log" 2>&1 &
+    CHAT_PID=$!
+    echo -e "${GREEN}✓ Chat Agent started (PID: $CHAT_PID)${NC}"
+    echo -e "  Logs: logs/chat-agent.log\n"
+else
+    echo -e "${RED}Failed to find venv python${NC}"
+fi
 sleep 2
 
 # 6. Start Web Dashboard
-echo -e "${GREEN}[6/7] Starting Web Dashboard...${NC}"
+echo -e "${GREEN}[6/6] Starting Web Dashboard...${NC}"
 cd "$ROOT_DIR/apps/web"
 if [ ! -d "node_modules" ]; then
     echo -e "${YELLOW}Installing Web Dashboard dependencies...${NC}"

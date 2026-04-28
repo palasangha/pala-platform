@@ -89,12 +89,12 @@ export function PalaWebDashboard() {
 
 // Developer Panel - Interactive tool testing with code examples
 function DeveloperPanel() {
-      // File upload state for store_document
-      const [selectedFile, setSelectedFile] = useState<File | null>(null);
-      const [fileBase64, setFileBase64] = useState<string>('');
+  const [expandedGuide, setExpandedGuide] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fileBase64, setFileBase64] = useState<string>('');
 
-      // Handle file selection, convert to base64, and auto-populate JSON input
-      const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle file selection, convert to base64, and auto-populate JSON input
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0] || null;
         setSelectedFile(file);
         setFileBase64('');
@@ -548,11 +548,6 @@ function DeveloperPanel() {
     return preset?.input || JSON.stringify(getFullSchemaArguments(tool), null, 2);
   };
 
-  const getIntegrationRequestExample = (): string => {
-    // This function should only return a string, not JSX.
-    return '';
-  };
-
   const invokeTool = async () => {
     if (!client) return;
 
@@ -614,180 +609,142 @@ function DeveloperPanel() {
   const currentTool = currentAgent?.tools.find((t) => t.name === selectedTool);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      {/* Left Panel - Tool Selector & Invoker */}
-      <div className="space-y-6">
-        <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
-          <h2 className="text-lg font-semibold text-white mb-4">Available Tools</h2>
+    <div className="flex flex-col gap-6 h-full">
+      {/* Main Area: Tools (Left) + Results (Right/Center) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">
+        {/* Left Panel: Tool List (1 column) */}
+        <div className="lg:col-span-1 overflow-y-auto">
+          <div className="bg-slate-800 rounded-lg p-6 border border-slate-700 sticky top-0">
+            <h2 className="text-lg font-semibold text-white mb-4">Available Tools</h2>
 
-          {/* Agent Selector */}
-          <div className="space-y-2 mb-6">
-            {AGENTS.map((agent) => (
-              <div key={agent.id} className="space-y-2">
-                <button
-                  onClick={() => {
-                    setSelectedAgent(agent.id);
-                    setSelectedTool(agent.tools[0].name);
-                    setSelectedExampleIndex(0);
-                    setInput('');
-                    setResult(null);
-                  }}
-                  className={`w-full px-4 py-2 rounded-lg text-left font-medium transition-colors ${
-                    selectedAgent === agent.id
-                      ? 'bg-blue-900 text-blue-100'
-                      : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                  }`}
-                >
-                  {agent.name}
-                </button>
+            {/* Agent Selector */}
+            <div className="space-y-2">
+              {AGENTS.map((agent) => (
+                <div key={agent.id} className="space-y-2">
+                  <button
+                    onClick={() => {
+                      setSelectedAgent(agent.id);
+                      setSelectedTool(agent.tools[0].name);
+                      setSelectedExampleIndex(0);
+                      setInput('');
+                      setResult(null);
+                    }}
+                    className={`w-full px-4 py-2 rounded-lg text-left font-medium transition-colors ${
+                      selectedAgent === agent.id
+                        ? 'bg-blue-900 text-blue-100'
+                        : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                    }`}
+                  >
+                    {agent.name}
+                  </button>
 
-                {selectedAgent === agent.id && (
-                  <div className="ml-4 space-y-1">
-                    {agent.tools.map((tool) => (
-                      <button
-                        key={tool.name}
-                        onClick={() => {
-                          setSelectedTool(tool.name);
-                          setSelectedExampleIndex(0);
-                          setInput('');
-                          setResult(null);
-                        }}
-                        className={`w-full px-3 py-2 rounded text-left text-sm transition-colors ${
-                          selectedTool === tool.name
-                            ? 'bg-slate-600 text-white'
-                            : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
-                        }`}
-                      >
-                        <div className="font-mono">{tool.name}</div>
-                        <div className="text-xs opacity-75">{tool.description}</div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
+                  {selectedAgent === agent.id && (
+                    <div className="ml-4 space-y-1">
+                      {agent.tools.map((tool) => (
+                        <button
+                          key={tool.name}
+                          onClick={() => {
+                            setSelectedTool(tool.name);
+                            setSelectedExampleIndex(0);
+                            setInput('');
+                            setResult(null);
+                          }}
+                          className={`w-full px-3 py-2 rounded text-left text-sm transition-colors ${
+                            selectedTool === tool.name
+                              ? 'bg-slate-600 text-white'
+                              : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                          }`}
+                        >
+                          <div className="font-mono text-xs">{tool.name}</div>
+                          <div className="text-xs opacity-75">{tool.description}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
-        {/* Invoke Panel */}
-        <div className="bg-slate-800 rounded-lg p-6 border border-slate-700 space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-md font-semibold text-white">Test Tool</h3>
-            {currentTool?.examples?.length ? (
-              <div className="flex items-center gap-2">
-                <select
-                  value={selectedExampleIndex}
-                  onChange={(e) => setSelectedExampleIndex(Number(e.target.value))}
-                  className="text-xs px-2 py-1 bg-slate-700 border border-slate-600 text-slate-300 rounded"
-                >
-                  <option value={0}>Full Schema Example (all params)</option>
-                  {currentTool.examples.map((example, index) => (
-                    <option key={example.label} value={index + 1}>
-                      {example.label}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  onClick={() => {
-                    setInput(getSelectedExampleInput(currentTool));
-                  }}
-                  className="text-xs px-3 py-1 bg-slate-700 text-slate-300 rounded hover:bg-slate-600"
-                >
-                  Use Example
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => setInput('{}')}
-                className="text-xs px-3 py-1 bg-slate-700 text-slate-300 rounded hover:bg-slate-600"
-              >
-                Use Example
-              </button>
-            )}
-          </div>
+        {/* Right Panel: Input & Invoke (2 columns) */}
+        <div className="lg:col-span-2 space-y-6 overflow-y-auto min-h-0">
+          {/* Invoke Panel */}
+          <div className="bg-slate-800 rounded-lg p-6 border border-slate-700 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-md font-semibold text-white">Test Tool: <span className="font-mono text-blue-300">{selectedTool}</span></h3>
+              {currentTool?.examples?.length ? (
+                <div className="flex items-center gap-2">
+                  <select
+                    value={selectedExampleIndex}
+                    onChange={(e) => setSelectedExampleIndex(Number(e.target.value))}
+                    className="text-xs px-2 py-1 bg-slate-700 border border-slate-600 text-slate-300 rounded"
+                  >
+                    <option value={0}>Full Schema</option>
+                    {currentTool.examples.map((example, index) => (
+                      <option key={example.label} value={index + 1}>
+                        {example.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => {
+                      setInput(getSelectedExampleInput(currentTool));
+                    }}
+                    className="text-xs px-3 py-1 bg-blue-700 text-white rounded hover:bg-blue-600"
+                  >
+                    Use Example
+                  </button>
+                </div>
+              ) : null}
+            </div>
 
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-2">Input</label>
-            {/* File picker for store_document and process_and_store_document */}
-            {(currentTool?.name === 'store_document' || currentTool?.name === 'process_and_store_document') && (
-              <div className="mb-2 flex flex-col gap-2">
-                <input
-                  type="file"
-                  accept="*"
-                  onChange={handleFileChange}
-                  className="px-2 py-1 text-xs bg-slate-700 text-slate-200 rounded border border-slate-600"
-                />
-                {selectedFile && (
-                  <div className="text-xs text-slate-400">
-                    Selected: {selectedFile.name} ({selectedFile.type || 'unknown'}), {(selectedFile.size / 1024).toFixed(1)} KB
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Tool-specific help text */}
-            {selectedTool === 'store_document' && (
-              <div className="bg-green-900 bg-opacity-30 border border-green-700 p-3 rounded text-xs text-green-200 space-y-2">
-                <p className="font-semibold">File Handling Guide:</p>
-                <ul className="list-disc list-inside space-y-1">
-                  <li>Upload a file using the file input above, and it will be automatically injected as <code className="text-green-100">base64</code> in the JSON</li>
-                  <li>Files are stored redundantly in: SQLite (primary + replica) and S3 (primary + replica)</li>
-                  <li>Response includes <code className="text-green-100">replication</code> status showing success/failure of each storage location</li>
-                  <li>Use the returned <code className="text-green-100">document_id</code> to retrieve the document later with <code className="text-green-100">retrieve_document</code></li>
-                </ul>
-              </div>
-            )}
-            {selectedTool === 'process_and_store_document' && (
-              <div className="bg-purple-900 bg-opacity-30 border border-purple-700 p-3 rounded text-xs text-purple-200 space-y-2">
-                <p className="font-semibold">Orchestration Tool - Complete Pipeline:</p>
-                <ul className="list-disc list-inside space-y-1">
-                  <li>This tool chains: file → extract_metadata → store_document</li>
-                  <li>Upload a file using the file input above (automatically converted to base64)</li>
-                  <li><strong>Step 1:</strong> Calls <code className="text-purple-100">metadata-extraction-agent.extract_metadata</code> with the file</li>
-                  <li><strong>Step 2:</strong> Calls <code className="text-purple-100">storage-agent.store_document</code> with original file + extracted metadata</li>
-                  <li>Response includes: <code className="text-purple-100">document_id</code>, extracted <code className="text-purple-100">metadata</code>, and full <code className="text-purple-100">storage_result</code> with replication status</li>
-                  <li>Use this for end-to-end document processing pipelines</li>
-                </ul>
-              </div>
-            )}
-            {selectedTool === 'retrieve_document' && (
-              <div className="bg-blue-900 bg-opacity-30 border border-blue-700 p-3 rounded text-xs text-blue-200 space-y-2">
-                <p className="font-semibold">File Retrieval Guide:</p>
-                <ul className="list-disc list-inside space-y-1">
-                  <li>Set <code className="text-blue-100">"include_original_file": true</code> to retrieve the original file content</li>
-                  <li>File content is returned as <code className="text-blue-100">base64-encoded</code> in the <code className="text-blue-100">original_file_data</code> field</li>
-                  <li>Use the <strong>Download Original</strong> button in Storage Explorer to download files automatically</li>
-                  <li>In code, decode with: <code className="text-blue-100">atob(response.original_file_data)</code> (JavaScript) or <code className="text-blue-100">base64.b64decode()</code> (Python)</li>
-                </ul>
-              </div>
-            )}
-
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder={currentTool?.placeholder || 'Enter input...'}
-              className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-slate-100 text-sm font-mono placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              rows={6}
-            />
-          </div>
-
-          <button
-            onClick={invokeTool}
-            disabled={loading || (!input && selectedTool !== 'tool_list_content')}
-            className="w-full px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading ? 'Invoking...' : 'Invoke Tool'}
-          </button>
-
-          {result && (
             <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">Input Parameters</label>
+              {/* File picker for store_document */}
+              {(currentTool?.name === 'store_document' || currentTool?.name === 'process_and_store_document') && (
+                <div className="mb-2 flex flex-col gap-2">
+                  <input
+                    type="file"
+                    accept="*"
+                    onChange={handleFileChange}
+                    className="px-2 py-1 text-xs bg-slate-700 text-slate-200 rounded border border-slate-600"
+                  />
+                  {selectedFile && (
+                    <div className="text-xs text-slate-400">
+                      Selected: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(1)} KB)
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={currentTool?.placeholder || 'Enter input...'}
+                className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-slate-100 text-sm font-mono placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                rows={8}
+              />
+            </div>
+
+            <button
+              onClick={invokeTool}
+              disabled={loading || (!input && selectedTool !== 'tool_list_content')}
+              className="w-full px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? 'Invoking...' : 'Invoke Tool'}
+            </button>
+          </div>
+
+          {/* Results Panel */}
+          {result && (
+            <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
               <label className="block text-sm font-medium text-slate-300 mb-2">Result</label>
-              <pre className="bg-slate-900 p-3 rounded-lg text-xs overflow-x-auto text-green-400 border border-slate-600 max-h-96">
+              <pre className="bg-slate-900 p-3 rounded-lg text-xs overflow-x-auto text-green-400 border border-slate-600 max-h-64">
                 {JSON.stringify(result, null, 2)}
               </pre>
               {/* Download button if result contains file data */}
               {(() => {
-                // Support both single object and array of documents
                 const docs = Array.isArray(result) ? result : [result];
                 return docs.map((doc, idx) => {
                   if (doc && doc.original_file_data && doc.original_file) {
@@ -828,81 +785,103 @@ function DeveloperPanel() {
         </div>
       </div>
 
-      {/* Right Panel - Integration + Schema */}
-      <div className="space-y-6">
-        <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
-          <h3 className="text-md font-semibold text-white mb-3">Integration Guide</h3>
-          <div className="space-y-3 text-sm text-slate-300">
-            <div>
-              <p className="font-medium text-slate-200">1. Connect to MCP Server</p>
-              <pre className="mt-1 bg-slate-900 p-2 rounded text-xs text-blue-300 border border-slate-600">
+      {/* Bottom Panel: Expandable Integration Guide */}
+      <div className="border-t border-slate-700 pt-6">
+        <button
+          onClick={() => setExpandedGuide(!expandedGuide)}
+          className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-750 rounded-lg border border-slate-700 text-white font-medium transition-colors"
+        >
+          <span className={`transform transition-transform ${expandedGuide ? 'rotate-180' : ''}`}>▼</span>
+          Integration Guide & Tool Schema
+        </button>
+
+        {expandedGuide && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-4">
+            {/* Integration Guide */}
+            <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
+              <h3 className="text-md font-semibold text-white mb-3">How to Integrate</h3>
+              <div className="space-y-3 text-sm text-slate-300">
+                <div>
+                  <p className="font-medium text-slate-200 mb-1">1. Connect to MCP Server</p>
+                  <pre className="bg-slate-900 p-2 rounded text-xs text-blue-300 border border-slate-600 overflow-x-auto">
 {`const ws = new WebSocket('ws://localhost:3010');`}
-              </pre>
-            </div>
+                  </pre>
+                </div>
 
-            <div>
-              <p className="font-medium text-slate-200">2. Send JSON-RPC Request via WebSocket</p>
-              <pre className="mt-1 bg-slate-900 p-2 rounded text-xs text-blue-300 border border-slate-600">
-{`// Full request with all schema parameters populated
-const request = ${getIntegrationRequestExample()};
-ws.send(JSON.stringify(request));`}
-              </pre>
-            </div>
+                <div>
+                  <p className="font-medium text-slate-200 mb-1">2. Send JSON-RPC Request</p>
+                  <pre className="bg-slate-900 p-2 rounded text-xs text-blue-300 border border-slate-600 overflow-x-auto">
+{`ws.send(JSON.stringify({
+  jsonrpc: "2.0",
+  method: "tools/invoke",
+  params: {
+    name: "${selectedTool}",
+    arguments: ${input || '{}'}
+  },
+  id: "req-1"
+}));`}
+                  </pre>
+                </div>
 
-            <div>
-              <p className="font-medium text-slate-200">3. Listen for Response</p>
-              <pre className="mt-1 bg-slate-900 p-2 rounded text-xs text-blue-300 border border-slate-600">
+                <div>
+                  <p className="font-medium text-slate-200 mb-1">3. Listen for Response</p>
+                  <pre className="bg-slate-900 p-2 rounded text-xs text-blue-300 border border-slate-600 overflow-x-auto">
 {`ws.onmessage = (event) => {
   const response = JSON.parse(event.data);
   console.log(response.result);
 };`}
-              </pre>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
-          <h3 className="text-md font-semibold text-white mb-3">
-            Tool Schema: <span className="font-mono text-blue-300">{selectedTool}</span>
-          </h3>
-          <div className="text-xs space-y-3 text-slate-300">
-            {currentTool?.schemaFields?.length ? (
-              <div>
-                <p className="font-medium text-slate-200">Input Parameters:</p>
-                <div className="text-slate-400 space-y-1 ml-2 mt-1">
-                  {currentTool.schemaFields.map((field) => (
-                    <div key={field.name} className="bg-slate-900 border border-slate-700 rounded p-2">
-                      <div>
-                        <code className="text-blue-300">{field.name}</code>
-                        <span className="text-slate-500"> : {field.type}</span>
-                        {field.required ? (
-                          <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-red-900 text-red-200">required</span>
-                        ) : (
-                          <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-300">optional</span>
-                        )}
-                      </div>
-                      <div className="text-slate-400 mt-1">{field.description}</div>
-                      {field.possibleValues?.length ? (
-                        <div className="mt-1 text-slate-500">
-                          values: {field.possibleValues.map((v) => `"${v}"`).join(', ')}
-                        </div>
-                      ) : null}
-                      {field.defaultValue ? (
-                        <div className="mt-1 text-slate-500">default: {field.defaultValue}</div>
-                      ) : null}
-                    </div>
-                  ))}
+                  </pre>
                 </div>
               </div>
-            ) : (
-              <div className="text-slate-400">No input parameters. Send an empty object <code className="text-blue-300">{`{}`}</code>.</div>
-            )}
+            </div>
+
+            {/* Tool Schema */}
+            <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
+              <h3 className="text-md font-semibold text-white mb-3">
+                Schema: <span className="font-mono text-blue-300">{selectedTool}</span>
+              </h3>
+              <div className="text-xs space-y-3 text-slate-300 max-h-96 overflow-y-auto">
+                {currentTool?.schemaFields?.length ? (
+                  <div>
+                    <p className="font-medium text-slate-200 mb-2">Input Parameters:</p>
+                    <div className="text-slate-400 space-y-2">
+                      {currentTool.schemaFields.map((field) => (
+                        <div key={field.name} className="bg-slate-900 border border-slate-700 rounded p-2">
+                          <div className="flex items-center gap-2">
+                            <code className="text-blue-300 font-mono">{field.name}</code>
+                            <span className="text-slate-500">: {field.type}</span>
+                            {field.required ? (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-900 text-red-200">required</span>
+                            ) : (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-300">optional</span>
+                            )}
+                          </div>
+                          <div className="text-slate-400 mt-1 text-xs">{field.description}</div>
+                          {field.possibleValues?.length ? (
+                            <div className="mt-1 text-slate-500 text-xs">
+                              Values: {field.possibleValues.map((v) => `"${v}"`).join(', ')}
+                            </div>
+                          ) : null}
+                          {field.defaultValue ? (
+                            <div className="mt-1 text-slate-500 text-xs">Default: {field.defaultValue}</div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-slate-400">No input parameters required.</div>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
 }
+
+
 
 // Chat Panel - Chat with documents using RAG
 function ChatPanel() {

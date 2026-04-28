@@ -603,8 +603,9 @@ export default function Dashboard() {
         },
       };
       console.log('[MCP] [TOOL-REQ] Sending store_document payload:', payload);
+      let result;
       try {
-        const result = await send('tools/invoke', payload) as any;
+        result = await send('tools/invoke', payload) as any;
         console.log('[MCP] [TOOL-RESP] Received backend response:', result);
       } catch (err) {
         console.error('[MCP] [TOOL-ERR] Error from backend:', err);
@@ -843,7 +844,7 @@ export default function Dashboard() {
           {/* Main Content */}
           <div className="w-full">
             {currentView === 'browse' && (
-              <DocumentBrowser wsUrl={wsUrl} connected={connected} send={send} />
+              <DocumentBrowser connected={connected} send={send} />
             )}
 
             {currentView === 'workflow' && (
