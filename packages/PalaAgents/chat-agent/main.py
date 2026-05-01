@@ -22,9 +22,11 @@ import logging
 import os
 import sys
 import uuid
+import re
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, Optional
 
+import aiohttp
 import websockets
 
 # ============================================================================
@@ -52,6 +54,63 @@ logger.info("[CHAT-AGENT-STARTUP] Chat agent starting up...")
 # Global WebSocket connection for cross-agent communication
 _ws_global = None
 
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
+CHAT_REFINEMENT_ENABLED = os.getenv("CHAT_REFINEMENT_ENABLED", "true").lower() in ("true", "1", "yes")
+CHAT_MIN_RELEVANCE = float(os.getenv("CHAT_MIN_RELEVANCE", "0.75"))
+CHAT_HARD_MIN_RELEVANCE = float(os.getenv("CHAT_HARD_MIN_RELEVANCE", "0.65"))
+SEARCH_QUERY_STOPWORDS = {
+    "a",
+    "an",
+    "are",
+    "be",
+    "can",
+    "could",
+    "do",
+    "does",
+    "for",
+    "from",
+    "find",
+    "have",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "reference",
+    "references",
+    "related",
+    "show",
+    "that",
+    "the",
+    "there",
+    "these",
+    "this",
+    "to",
+    "was",
+    "were",
+    "what",
+    "when",
+    "where",
+    "who",
+    "why",
+    "with",
+    "document",
+    "documents",
+    "archive",
+    "content",
+    "mention",
+    "mentioned",
+    "mentions",
+    "place",
+    "organization",
+    "organizations",
+    "person",
+    "people",
+    "any",
+}
+
 
 # ============================================================================
 # Tool Implementations
@@ -77,7 +136,7 @@ async def invoke_remote_tool(agent_id: str, tool_name: str, arguments: Dict[str,
     }
     
     logger.info(f"[CHAT-AGENT] Invoking {agent_id}.{tool_name} (request_id: {request_id})")
-    logger.debug(f"[CHAT-AGENT] Arguments: {json.dumps(arguments)[:200]}...")
+    logger.debug(f"[CHAT-AGENT] Arguments: {json.dumps(arguments, default=str)[:500]}...")
     
     await _ws_global.send(json.dumps(request))
     
@@ -101,92 +160,247 @@ async def invoke_remote_tool(agent_id: str, tool_name: str, arguments: Dict[str,
         raise RuntimeError(f"Tool error: {error_msg}")
     
     result = response.get("result", {})
-    logger.debug(f"[CHAT-AGENT] Tool result: {json.dumps(result)[:300]}...")
+    logger.debug(f"[CHAT-AGENT] Tool result: {json.dumps(result, default=str)[:500]}...")
     return result
 
 
+def _safe_json_loads(text: str) -> Dict[str, Any]:
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else {}
+    except json.JSONDecodeError:
+        match = re.search(r"\{[\s\S]*\}", text)
+        if match:
+            try:
+                parsed = json.loads(match.group())
+                return parsed if isinstance(parsed, dict) else {}
+            except json.JSONDecodeError:
+                pass
+    return {}
+
+
+def _normalize_terms(values: list[str]) -> list[str]:
+    cleaned = []
+    for value in values:
+        token = re.sub(r"\s+", " ", str(value)).strip()
+        if token and token.lower() not in [item.lower() for item in cleaned]:
+            cleaned.append(token)
+    return cleaned
+
+
+def _build_search_query(refined_query: str, keywords: list[str], entities: list[str], must_include: list[str], user_message: str) -> str:
+    """Build search query by combining all meaningful candidates into a rich query string."""
+    # Start with the refined query (highest priority), then add entities, keywords, must_include
+    candidates = [
+        refined_query,
+        " ".join(entities),
+        " ".join(keywords),
+        " ".join(must_include),
+        user_message,
+    ]
+
+    all_tokens = []
+    seen = set()
+    
+    # Collect tokens from all candidates in priority order
+    for candidate in candidates:
+        if not candidate:
+            continue
+
+        for raw_token in re.findall(r"[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)?", str(candidate)):
+            normalized = raw_token.strip().lower()
+            if not normalized or normalized in SEARCH_QUERY_STOPWORDS or normalized in seen:
+                continue
+            seen.add(normalized)
+            all_tokens.append(raw_token.strip())
+
+    # Return up to 10 tokens (increased from 6 to capture more context)
+    if all_tokens:
+        return " ".join(all_tokens[:10])
+    
+    return ""
+
+    return user_message.strip()
+
+
+async def refine_search_query(user_message: str) -> Dict[str, Any]:
+    """Use Ollama to refine the user's prompt into search-friendly terms."""
+    fallback_tokens = _normalize_terms([
+        token for token in re.findall(r"[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)?", user_message)
+        if len(token) > 2
+    ])
+
+    fallback = {
+        "refined_query": user_message.strip(),
+        "keywords": fallback_tokens,
+        "entities": [],
+        "must_include": fallback_tokens[:6],
+        "exclude_terms": [],
+        "intent": "search",
+        "minimum_relevance": CHAT_MIN_RELEVANCE,
+        "confidence": 0.2,
+    }
+
+    if not CHAT_REFINEMENT_ENABLED:
+        logger.info(f"[CHAT-AGENT][REFINE] Refinement disabled; using fallback tokens={fallback_tokens[:8]}")
+        return fallback
+
+    prompt = """You refine archive search queries.
+
+Return ONLY JSON with this shape:
+{
+  "refined_query": "short search query for archive retrieval",
+    "search_query": "single concise phrase to use for retrieval",
+  "keywords": ["keyword1", "keyword2"],
+  "entities": ["person", "place", "organization"],
+  "must_include": ["terms that should appear if possible"],
+  "exclude_terms": ["irrelevant terms to ignore"],
+  "intent": "search|summary|comparison|fact_lookup",
+  "minimum_relevance": 0.0,
+  "confidence": 0.0
+}
+
+Rules:
+- Keep the refined query short, specific, and retrieval-friendly.
+- Prefer exact entities, names, places, and distinctive noun phrases.
+- Do not add labels like "place", "organization", or "person" to the query.
+- Do not repeat the same term more than once.
+- Preserve proper names, dates, places, and document-specific terms.
+- If the user asks for something broad, choose the strongest archive terms.
+- Never add facts that are not in the user's message.
+"""
+
+    try:
+        logger.debug(f"[CHAT-AGENT][REFINE] Input query={user_message!r}")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{OLLAMA_BASE_URL}/api/generate",
+                json={
+                    "model": OLLAMA_MODEL,
+                    "prompt": f"{prompt}\n\nUser query: {user_message}",
+                    "stream": False,
+                    "format": "json",
+                    "options": {"temperature": 0.0, "top_p": 0.9},
+                },
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as response:
+                if response.status != 200:
+                    logger.warning(f"[CHAT-AGENT] Query refinement failed with status {response.status}")
+                    return fallback
+
+                payload = await response.json()
+                refined = _safe_json_loads(payload.get("response", ""))
+                if not refined:
+                    logger.warning("[CHAT-AGENT][REFINE] Ollama returned empty or invalid refinement JSON; using fallback")
+                    return fallback
+
+                refined_query = str(refined.get("refined_query", user_message)).strip() or user_message.strip()
+                keywords = refined.get("keywords", []) if isinstance(refined.get("keywords"), list) else []
+                entities = refined.get("entities", []) if isinstance(refined.get("entities"), list) else []
+                must_include = refined.get("must_include", []) if isinstance(refined.get("must_include"), list) else []
+                exclude_terms = refined.get("exclude_terms", []) if isinstance(refined.get("exclude_terms"), list) else []
+                search_query = str(refined.get("search_query", "")).strip()
+                search_query = _build_search_query(
+                    search_query or refined_query,
+                    _normalize_terms([str(item) for item in keywords]),
+                    _normalize_terms([str(item) for item in entities]),
+                    _normalize_terms([str(item) for item in must_include]),
+                    user_message,
+                )
+
+                logger.info(
+                    "[CHAT-AGENT][REFINE] refined_query=%r search_query=%r keywords=%s entities=%s must_include=%s confidence=%.2f min_relevance=%.2f",
+                    refined_query,
+                    search_query,
+                    _normalize_terms([str(item) for item in keywords])[:6],
+                    _normalize_terms([str(item) for item in entities])[:6],
+                    _normalize_terms([str(item) for item in must_include])[:6],
+                    float(refined.get("confidence", 0.0) or 0.0),
+                    float(refined.get("minimum_relevance", CHAT_MIN_RELEVANCE) or CHAT_MIN_RELEVANCE),
+                )
+
+                return {
+                    "refined_query": refined_query,
+                    "keywords": _normalize_terms([str(item) for item in keywords]),
+                    "entities": _normalize_terms([str(item) for item in entities]),
+                    "must_include": _normalize_terms([str(item) for item in must_include]),
+                    "exclude_terms": _normalize_terms([str(item) for item in exclude_terms]),
+                    "intent": str(refined.get("intent", "search")),
+                    "minimum_relevance": float(refined.get("minimum_relevance", CHAT_MIN_RELEVANCE) or CHAT_MIN_RELEVANCE),
+                    "confidence": float(refined.get("confidence", 0.0) or 0.0),
+                    "search_query": search_query,
+                }
+    except Exception as exc:
+        logger.warning(f"[CHAT-AGENT] Query refinement unavailable, using fallback terms: {exc}")
+        return fallback
+
+
+def _extract_result_documents(search_result: Dict[str, Any]) -> list:
+    # Normalize possible nested result wrappers coming from remote agents/JSON-RPC
+    def _unwrap(result: Any, depth: int = 0) -> Any:
+        if depth > 6 or not isinstance(result, dict):
+            return result
+        # If top-level contains 'documents', we're at the payload
+        if 'documents' in result:
+            return result
+        # Otherwise, if there is a nested 'result' key, dive in
+        if 'result' in result and isinstance(result['result'], dict):
+            return _unwrap(result['result'], depth + 1)
+        return result
+
+    normalized = _unwrap(search_result)
+    documents = normalized.get("documents", []) if isinstance(normalized, dict) else []
+    if not isinstance(documents, list):
+        return []
+    return [doc for doc in documents if isinstance(doc, dict)]
+
+
+def _filter_documents(documents: list, threshold: float) -> list:
+    filtered = []
+    for doc in documents:
+        score = float(doc.get("relevance_score", 0.0) or 0.0)
+        if score >= threshold:
+            filtered.append(doc)
+    filtered.sort(key=lambda item: float(item.get("relevance_score", 0.0) or 0.0), reverse=True)
+    return filtered
+
+
+def _build_extractive_answer(query: str, refined_query: str, documents: list, search_method: str, embedding_used: bool) -> str:
+    if not documents:
+        return "No relevant documents found in the archive for that query."
+
+    lines = [
+        f"Refined search query: {refined_query}",
+        f"Search method: {search_method} (embeddings={'yes' if embedding_used else 'no'})",
+        "Matched documents:",
+    ]
+
+    for idx, doc in enumerate(documents[:5], start=1):
+        doc_id = doc.get("document_id", "unknown")
+        filename = doc.get("filename", "Unknown")
+        score = float(doc.get("relevance_score", 0.0) or 0.0)
+        excerpt = doc.get("excerpt") or doc.get("summary") or ""
+        lines.append(f"{idx}. {filename} [doc-{doc_id}] — relevance {score:.2f}")
+        if excerpt:
+            lines.append(f"   {excerpt[:280]}")
+
+    logger.info(
+        "[CHAT-AGENT][ANSWER] query=%r refined_query=%r search_method=%s embedding_used=%s num_documents=%d top_document=%s",
+        query,
+        refined_query,
+        search_method,
+        embedding_used,
+        len(documents),
+        documents[0].get("filename") if documents else None,
+    )
+
+    return "\n".join(lines)
+
+
 async def call_ollama_chat(system_prompt: str, user_message: str, documents: list = None) -> str:
-    """
-    Call Ollama to generate a response based on documents and user message.
-    
-    Currently uses intelligent template responses. Can be extended to call real Ollama API.
-    """
-    logger.info("[CHAT-AGENT] Generating response based on documents...")
-    
-    # Format documents for context
-    doc_context = ""
-    doc_summaries = []
-    doc_topics = set()
-    
-    if documents and len(documents) > 0:
-        logger.debug(f"[CHAT-AGENT] Processing {len(documents)} documents for response...")
-        doc_lines = []
-        for idx, doc in enumerate(documents, 1):
-            doc_id = doc.get('document_id', 'unknown')
-            filename = doc.get('filename', 'Unknown')
-            score = doc.get('relevance_score', 0)
-            excerpt = doc.get('excerpt', '')
-            summary = doc.get('summary', '')
-            
-            doc_lines.append(f"Document #{idx} (ID: {doc_id})")
-            doc_lines.append(f"  File: {filename}")
-            doc_lines.append(f"  Relevance: {score}")
-            if summary:
-                doc_lines.append(f"  Summary: {summary}")
-                doc_summaries.append((doc_id, summary))
-            if excerpt:
-                doc_lines.append(f"  Excerpt: {excerpt[:500]}...")
-            
-            # Collect topics
-            topics = doc.get('topics', [])
-            if isinstance(topics, list):
-                doc_topics.update(topics)
-            
-            doc_lines.append("")
-        
-        doc_context = "\n".join(doc_lines)
-    else:
-        doc_context = "No relevant documents found in the archive.\n"
-    
-    # Build intelligent response based on documents
-    logger.debug(f"[CHAT-AGENT] Building response from {len(doc_summaries)} document summaries")
-    
-    # Check if query matches document topics
-    query_lower = user_message.lower()
-    relevant_topics = [t for t in doc_topics if any(word in query_lower for word in str(t).lower().split())]
-    
-    response_parts = []
-    
-    if documents and len(documents) > 0:
-        # Lead with the most relevant document's summary
-        best_doc = documents[0]
-        best_id = best_doc.get('document_id', 'unknown')
-        best_summary = best_doc.get('summary', best_doc.get('excerpt', ''))
-        
-        if best_summary:
-            response_parts.append(f"Based on our document archive [doc-{best_id}]: {best_summary[:300]}")
-        
-        # Add additional context from other documents if available
-        if len(documents) > 1:
-            response_parts.append("\nAdditional context from the archive:")
-            for doc in documents[1:3]:  # Show up to 2 more documents
-                doc_id = doc.get('document_id', 'unknown')
-                filename = doc.get('filename', 'Unknown')
-                snippet = doc.get('summary', doc.get('excerpt', ''))
-                if snippet:
-                    response_parts.append(f"  - From '{filename}' [doc-{doc_id}]: {snippet[:200]}...")
-        
-        # Add topic-based guidance
-        if relevant_topics:
-            topics_str = ', '.join(str(t) for t in relevant_topics[:3])
-            response_parts.append(f"\nKey topics in the archive related to your question: {topics_str}")
-    else:
-        response_parts.append("Unfortunately, I couldn't find relevant documents in our archive to answer your specific question.")
-    
-    response = "\n".join(response_parts)
-    
-    logger.info("[CHAT-AGENT] ✅ Response generated from document summaries")
-    return response
+    """Build an extractive response from matched documents."""
+    logger.info("[CHAT-AGENT] Generating extractive response from documents...")
+    return _build_extractive_answer(user_message, user_message, documents or [], "semantic", True)
 
 
 async def tool_chat_with_documents(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -226,18 +440,69 @@ async def tool_chat_with_documents(params: Dict[str, Any]) -> Dict[str, Any]:
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
         
-        logger.info(f"[CHAT-AGENT-TOOL] Processing query: '{user_query}'")
+        logger.info(
+            "[CHAT-AGENT-TOOL] Processing query=%r search_limit=%s min_confidence=%s include_file_content=%s",
+            user_query,
+            search_limit,
+            min_confidence,
+            include_files,
+        )
+
+        query_terms = [
+            token.lower()
+            for token in re.findall(r"[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)?", user_query)
+            if len(token) > 2
+        ]
+        short_query_mode = len(query_terms) <= 2
+
+        refinement = {
+            "refined_query": user_query.strip(),
+            "keywords": query_terms,
+            "entities": [],
+            "must_include": query_terms[:4],
+            "exclude_terms": [],
+            "intent": "search",
+            "minimum_relevance": CHAT_MIN_RELEVANCE,
+            "confidence": 1.0,
+            "search_query": user_query.strip(),
+        } if short_query_mode else await refine_search_query(user_query)
+
+        if short_query_mode:
+            logger.info("[CHAT-AGENT-TOOL] Short query detected; using verbatim search without refinement")
+        refined_query = refinement.get("refined_query", user_query)
+        effective_min_confidence = max(
+            float(min_confidence or 0.0),
+            float(refinement.get("minimum_relevance", CHAT_MIN_RELEVANCE) or CHAT_MIN_RELEVANCE),
+            CHAT_HARD_MIN_RELEVANCE,
+        )
+        search_query = refinement.get("search_query") or refined_query
+
+        logger.info(
+            "[CHAT-AGENT-TOOL] Query refined: user_query=%r refined_query=%r search_query=%r threshold=%.2f refinement=%s",
+            user_query,
+            refined_query,
+            search_query,
+            effective_min_confidence,
+            {k: refinement.get(k) for k in ("intent", "confidence", "minimum_relevance", "keywords", "entities", "must_include")},
+        )
         
         # Step 1: Search for relevant documents
         logger.info("[CHAT-AGENT-TOOL] Step 1: Searching for relevant documents...")
         try:
+            logger.debug(
+                "[CHAT-AGENT-TOOL] Search payload: query=%r limit=%s min_confidence=%.2f include_original_content=%s",
+                search_query,
+                search_limit,
+                effective_min_confidence,
+                include_files,
+            )
             search_result = await invoke_remote_tool(
                 agent_id="storage-agent",
                 tool_name="semantic_search_documents",
                 arguments={
-                    "query": user_query,
+                    "query": search_query,
                     "limit": search_limit,
-                    "min_confidence": min_confidence,
+                    "min_confidence": effective_min_confidence,
                     "include_original_content": include_files
                 }
             )
@@ -246,49 +511,80 @@ async def tool_chat_with_documents(params: Dict[str, Any]) -> Dict[str, Any]:
                 logger.error("[CHAT-AGENT-TOOL] Invalid search result format")
                 search_result = {'documents': [], 'message': 'Search failed'}
             
-            documents = search_result.get('documents', [])
+            documents = _extract_result_documents(search_result)
             search_method = search_result.get('search_method', 'unknown')
             embedding_used = search_result.get('embedding_used', False)
+
+            logger.info(
+                "[CHAT-AGENT-TOOL] Raw search response: search_method=%s embedding_used=%s result_count=%d keys=%s",
+                search_method,
+                embedding_used,
+                len(documents),
+                sorted(list(search_result.keys())) if isinstance(search_result, dict) else [],
+            )
+
+            # Enforce strict relevance gating so weak matches do not become chat answers.
+            documents = _filter_documents(documents, effective_min_confidence)
             
             logger.info(f"[CHAT-AGENT-TOOL] ✅ Search completed: {len(documents)} results found (method: {search_method})")
             
             # Log each document found
             for idx, doc in enumerate(documents, 1):
-                logger.debug(f"[CHAT-AGENT-TOOL]   Result {idx}: {doc.get('filename')} (score: {doc.get('relevance_score')})")
+                logger.debug(
+                    "[CHAT-AGENT-TOOL]   Result %d: document_id=%s filename=%s score=%.3f match_method=%s excerpt=%r",
+                    idx,
+                    doc.get('document_id'),
+                    doc.get('filename'),
+                    float(doc.get('relevance_score', 0.0) or 0.0),
+                    doc.get('match_method'),
+                    (doc.get('excerpt') or doc.get('summary') or '')[:180],
+                )
+            if not documents:
+                logger.warning(
+                    "[CHAT-AGENT-TOOL] No documents after gating: query=%r refined_query=%r search_query=%r threshold=%.2f search_result_message=%r",
+                    user_query,
+                    refined_query,
+                    search_query,
+                    effective_min_confidence,
+                    search_result.get('message') if isinstance(search_result, dict) else None,
+                )
             
         except Exception as e:
-            logger.error(f"[CHAT-AGENT-TOOL] ❌ Search failed: {e}")
+            logger.error(f"[CHAT-AGENT-TOOL] ❌ Search failed: {e}", exc_info=True)
             documents = []
             search_method = "none"
             embedding_used = False
         
-        # Step 2: Generate response using Ollama
-        logger.info("[CHAT-AGENT-TOOL] Step 2: Generating response...")
-        
-        system_prompt = """You are a helpful research assistant for an archive of historical documents.
+        # Step 2: Build an extractive response only; no generative answer when no strong evidence exists.
+        logger.info("[CHAT-AGENT-TOOL] Step 2: Building extractive response...")
 
-Your role is to:
-1. ONLY answer using information from the provided documents
-2. ALWAYS cite which document each fact comes from using [doc-ID] notation
-3. If the documents don't have relevant information, say "This information is not available in our archive"
-4. Be conversational and helpful, but strictly factual
-5. If different documents have conflicting information, mention all perspectives with citations
-
-Do not speculate, make up information, or form opinions beyond what the documents state."""
-        
-        try:
-            answer = await call_ollama_chat(system_prompt, user_query, documents)
-            logger.info("[CHAT-AGENT-TOOL] ✅ Response generated")
-        except Exception as e:
-            logger.error(f"[CHAT-AGENT-TOOL] ❌ Response generation failed: {e}")
-            answer = f"I encountered an error while generating a response: {str(e)}"
+        if documents:
+            answer = _build_extractive_answer(
+                user_query,
+                refined_query,
+                documents,
+                search_method,
+                embedding_used,
+            )
+            logger.info("[CHAT-AGENT-TOOL] ✅ Extractive response built")
+        else:
+            answer = "No relevant documents found in the archive for that query."
+            logger.info(
+                "[CHAT-AGENT-TOOL] No relevant documents after gating: query=%r refined_query=%r search_query=%r threshold=%.2f",
+                user_query,
+                refined_query,
+                search_query,
+                effective_min_confidence,
+            )
         
         # Build final response
         result = {
             "success": True,
             "answer": answer,
             "source_documents": documents,
-            "search_query": user_query,
+            "refined_query": refined_query,
+            "query_refinement": refinement,
+            "search_query": search_query,
             "search_method": search_method,
             "embedding_used": embedding_used,
             "num_documents": len(documents),

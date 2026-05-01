@@ -13,6 +13,7 @@ import uuid
 import hashlib
 import logging
 import os
+import re
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone
 from pathlib import Path
@@ -895,6 +896,72 @@ class SQLiteProvider(StorageProvider):
             List of documents with relevance scores
         """
         logger.info(f"[SEARCH-DOCUMENTS] Searching for: '{query}' (embedding={'yes' if query_embedding else 'no'})")
+
+        def _tokenize_search_text(text: str) -> List[str]:
+            stopwords = {
+                "a", "an", "are", "as", "at", "be", "by", "do", "does", "for", "from",
+                "have", "in", "is", "it", "of", "on", "or", "the", "to", "was", "were",
+                "what", "when", "where", "who", "why", "with", "any", "document", "documents",
+                "archive", "content", "reference", "references", "mentioned", "mentions", "mention",
+                "place", "organization", "organizations", "person", "people", "related", "about",
+            }
+            tokens: List[str] = []
+            seen = set()
+            for raw_token in re.findall(r"[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)?", (text or "").lower()):
+                if len(raw_token) < 3 or raw_token in stopwords or raw_token in seen:
+                    continue
+                seen.add(raw_token)
+                tokens.append(raw_token)
+            return tokens
+
+        def _normalize_search_token(token: str) -> str:
+            normalized = re.sub(r"[^a-z0-9]+", "", (token or "").lower())
+            if len(normalized) > 4:
+                if normalized.endswith("ies"):
+                    return normalized[:-3] + "y"
+                if normalized.endswith("es") and len(normalized) > 5:
+                    return normalized[:-2]
+                if normalized.endswith("s") and len(normalized) > 4:
+                    return normalized[:-1]
+            return normalized
+
+        def _token_overlap_score(text: str, query_terms: List[str]) -> float:
+            if not text or not query_terms:
+                return 0.0
+
+            text_tokens = set(_tokenize_search_text(text))
+            normalized_text_tokens = {_normalize_search_token(token) for token in text_tokens}
+            if not text_tokens:
+                return 0.0
+
+            matched = []
+            for term in query_terms:
+                normalized_term = _normalize_search_token(term)
+                if term in text_tokens or normalized_term in text_tokens or normalized_term in normalized_text_tokens:
+                    matched.append(term)
+            if not matched:
+                return 0.0
+
+            overlap = len(matched) / max(len(query_terms), 1)
+            return min(0.45 + (overlap * 0.4), 0.9)
+
+        def _collect_searchable_text(value: Any, fragments: List[str]) -> None:
+            if value is None:
+                return
+            if isinstance(value, dict):
+                for key, nested_value in value.items():
+                    if key == 'embedding_vector':
+                        continue
+                    _collect_searchable_text(nested_value, fragments)
+                return
+            if isinstance(value, list):
+                for item in value:
+                    _collect_searchable_text(item, fragments)
+                return
+            if isinstance(value, (str, int, float, bool)):
+                text = str(value).strip()
+                if text:
+                    fragments.append(text)
         
         try:
             conn = sqlite3.connect(self.db_path)
@@ -917,6 +984,14 @@ class SQLiteProvider(StorageProvider):
             conn.close()
             
             logger.debug(f"[SEARCH-DOCUMENTS] Loaded {len(rows)} documents for searching")
+            query_terms = _tokenize_search_text(query)
+            logger.info(
+                "[SEARCH-DOCUMENTS] Query terms=%s min_confidence=%.2f include_original_content=%s row_count=%d",
+                query_terms,
+                min_confidence,
+                include_original_content,
+                len(rows),
+            )
             
             # Step 2: Score documents
             for row in rows:
@@ -936,6 +1011,8 @@ class SQLiteProvider(StorageProvider):
                 
                 relevance_score = 0.0
                 match_method = "none"
+                matched_path = None
+                matched_text = ""
                 
                 # Method 1: Semantic search using embeddings
                 if query_embedding:
@@ -961,6 +1038,16 @@ class SQLiteProvider(StorageProvider):
                             if similarity >= min_confidence:
                                 relevance_score = similarity
                                 match_method = "semantic"
+                                # Prefer a short excerpt from metadata or processed_data for semantic matches
+                                if metadata.get('summary'):
+                                    matched_text = metadata.get('summary', '')[:300]
+                                    matched_path = 'metadata.summary'
+                                elif isinstance(processed_data, dict) and processed_data.get('content'):
+                                    matched_text = processed_data.get('content', '')[:300]
+                                    matched_path = 'processed_data.content'
+                                else:
+                                    matched_text = ''
+                                    matched_path = 'semantic_embedding'
                                 logger.info(f"[SEARCH-DOCUMENTS] ✅ MATCH: {original_file} (score={similarity:.3f})")
                             else:
                                 logger.debug(f"[SEARCH-DOCUMENTS] Below threshold: {similarity:.4f} < {min_confidence}")
@@ -978,21 +1065,29 @@ class SQLiteProvider(StorageProvider):
                     # Check filename
                     if original_file and query_lower in original_file.lower():
                         keyword_score = max(keyword_score, 0.7)
+                        matched_path = 'original_file'
+                        matched_text = original_file
                     
                     # Check document type
                     if doc_type and query_lower in doc_type.lower():
                         keyword_score = max(keyword_score, 0.6)
+                        matched_path = 'type'
+                        matched_text = doc_type
                     
                     # Check metadata summaries and topics
                     if metadata:
                         if metadata.get('summary') and query_lower in metadata.get('summary', '').lower():
                             keyword_score = max(keyword_score, 0.6)
+                            matched_path = 'metadata.summary'
+                            matched_text = metadata.get('summary', '')
                         if metadata.get('topics'):
                             topics = metadata.get('topics', [])
                             if isinstance(topics, list):
                                 for topic in topics:
                                     if query_lower in str(topic).lower():
                                         keyword_score = max(keyword_score, 0.5)
+                                        matched_path = 'metadata.topics'
+                                        matched_text = str(topic)
                                         break
                         if metadata.get('places'):
                             places = metadata.get('places', [])
@@ -1000,6 +1095,8 @@ class SQLiteProvider(StorageProvider):
                                 for place in places:
                                     if query_lower in str(place).lower():
                                         keyword_score = max(keyword_score, 0.5)
+                                        matched_path = 'metadata.places'
+                                        matched_text = str(place)
                                         break
                     
                     # Check processed data
@@ -1007,14 +1104,63 @@ class SQLiteProvider(StorageProvider):
                         for key, val in processed_data.items():
                             if isinstance(val, str) and query_lower in val.lower():
                                 keyword_score = max(keyword_score, 0.5)
+                                matched_path = f'processed_data.{key}'
+                                matched_text = val if isinstance(val, str) else str(val)
                                 break
+
+                    if keyword_score < min_confidence:
+                        searchable_fields = []
+                        if original_file:
+                            searchable_fields.append(original_file)
+                        if doc_type:
+                            searchable_fields.append(doc_type)
+                        _collect_searchable_text(metadata, searchable_fields)
+                        _collect_searchable_text(processed_data, searchable_fields)
+
+                        overlap_score = 0.0
+                        best_field = ""
+                        best_field_full = ""
+                        for field_text in searchable_fields:
+                            field_score = _token_overlap_score(field_text, query_terms)
+                            if field_score > overlap_score:
+                                overlap_score = field_score
+                                best_field_full = field_text
+                                best_field = field_text[:160]
+
+                        logger.debug(
+                            "[SEARCH-DOCUMENTS] Keyword evaluation: file=%s fields=%d query_terms=%s overlap_score=%.3f best_field=%r",
+                            original_file,
+                            len(searchable_fields),
+                            query_terms,
+                            overlap_score,
+                            best_field,
+                        )
+
+                        # If overlap produced the best signal, prefer it for matched_text/path
+                        if overlap_score >= keyword_score:
+                            matched_path = 'searchable_field'
+                            matched_text = best_field_full
+                        keyword_score = max(keyword_score, overlap_score)
                     
+                    logger.info(f"[SEARCH-DOCUMENTS] After keyword matching: file={original_file} keyword_score={keyword_score:.4f} threshold={min_confidence} passes={keyword_score >= min_confidence}")
                     if keyword_score >= min_confidence:
                         relevance_score = keyword_score
                         match_method = "keyword"
-                        logger.debug(f"[SEARCH-DOCUMENTS] Keyword match: {original_file} (score={keyword_score:.3f})")
+                        logger.info(f"[SEARCH-DOCUMENTS] Keyword match: {original_file} (score={keyword_score:.3f})")
+                        match_method = "keyword"
+                        logger.info(f"[SEARCH-DOCUMENTS] Keyword match: {original_file} (score={keyword_score:.3f})")
+                    else:
+                        logger.debug(
+                            "[SEARCH-DOCUMENTS] No match: file=%s semantic=%s keyword_score=%.3f threshold=%.2f query_terms=%s",
+                            original_file,
+                            "yes" if query_embedding else "no",
+                            keyword_score,
+                            min_confidence,
+                            query_terms,
+                        )
                 
                 # Add to results if scored above threshold
+                logger.debug(f"[SEARCH-DOCUMENTS] Gating check: relevance_score={relevance_score:.4f} >= min_confidence={min_confidence}? {relevance_score >= min_confidence}")
                 if relevance_score >= min_confidence:
                     # Extract excerpt from metadata or processed data
                     excerpt = ""
@@ -1032,6 +1178,8 @@ class SQLiteProvider(StorageProvider):
                         'file_format': file_format,
                         'relevance_score': round(relevance_score, 3),
                         'match_method': match_method,
+                        'matched_path': matched_path,
+                        'matched_text': (matched_text or '')[:400],
                         'created_at': created_at,
                         'created_by': created_by,
                         'summary': metadata.get('summary', '') if isinstance(metadata, dict) else '',
@@ -1043,13 +1191,26 @@ class SQLiteProvider(StorageProvider):
                     if include_original_content:
                         result['original_file_data'] = processed_data.get('content', '') if isinstance(processed_data, dict) else ''
                     
+                    logger.info(f"[SEARCH-DOCUMENTS] ✅ Adding result: {original_file} (score={relevance_score:.3f}, method={match_method})")
                     results.append(result)
             
             # Step 3: Sort by relevance and limit
             results.sort(key=lambda x: x['relevance_score'], reverse=True)
             results = results[:limit]
             
-            logger.info(f"[SEARCH-DOCUMENTS] ✅ Search complete: {len(results)} results found")
+            logger.info(
+                "[SEARCH-DOCUMENTS] ✅ Search complete: %d results found; top_results=%s",
+                len(results),
+                [
+                    {
+                        "document_id": item.get("document_id"),
+                        "file": item.get("original_file"),
+                        "score": item.get("relevance_score"),
+                        "method": item.get("match_method"),
+                    }
+                    for item in results[:5]
+                ],
+            )
             return results
             
         except Exception as e:

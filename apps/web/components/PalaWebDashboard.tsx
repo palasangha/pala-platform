@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { ContentBrowser } from './ContentBrowser';
 
@@ -72,7 +72,7 @@ export function PalaWebDashboard() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 py-8">
-        {activeTab === 'chat' && <ChatPanel />}
+        {activeTab === 'chat' && <ChatPanel onOpenStorageExplorer={() => setActiveTab('storage')} />}
         {activeTab === 'developer' && <DeveloperPanel />}
         {activeTab === 'storage' && <StorageExplorer />}
       </main>
@@ -915,57 +915,264 @@ function DeveloperPanel() {
 
 
 // Chat Panel - Chat with documents using RAG
-function ChatPanel() {
-  const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string; sources?: any[] }>>([]);
+function ChatPanel({ onOpenStorageExplorer }: { onOpenStorageExplorer: () => void }) {
+  const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string; sources?: any[]; refinedQuery?: string; queryRefinement?: any }>>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [searchLimit, setSearchLimit] = useState(5);
-  const [minConfidence, setMinConfidence] = useState(0.5);
+  const [previewDocument, setPreviewDocument] = useState<any>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [showRawPreviewJson, setShowRawPreviewJson] = useState(false);
+  const [pinnedSources, setPinnedSources] = useState<any[]>([]);
+  const previewPanelRef = useRef<HTMLDivElement | null>(null);
   const { send } = useWebSocket();
+
+  const unwrapToolResult = (payload: any) => {
+    let current = payload;
+    let depth = 0;
+    while (current && typeof current === 'object' && 'result' in current && depth < 6) {
+      const next = current.result;
+      if (next === undefined) {
+        break;
+      }
+      current = next;
+      depth += 1;
+    }
+    return current || {};
+  };
+
+  const openSourcePreview = async (documentId: string) => {
+    if (!documentId) return;
+    setPreviewLoading(true);
+    setPreviewError(null);
+    setPreviewDocument(null);
+    setShowRawPreviewJson(false);
+
+    try {
+      // Retrieve document plus original file so the preview can render inline
+      const response: any = await send('tools/invoke', {
+        agentId: 'storage-agent',
+        name: 'retrieve_document',
+        arguments: {
+          document_id: documentId,
+          include_original_file: true,
+        },
+      });
+
+      const data = unwrapToolResult(response);
+      const payload = data?.document_id ? data : data?.result || data || {};
+      if (payload?.document_id) {
+        // Keep preview document metadata; UI will show matched_text when available
+        setPreviewDocument(payload);
+        requestAnimationFrame(() => {
+          previewPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      } else {
+        setPreviewError('Could not load document preview.');
+      }
+    } catch (error) {
+      setPreviewError(error instanceof Error ? error.message : 'Failed to load preview');
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const openFullDocument = async (documentId: string) => {
+    if (!documentId) return;
+    try {
+      setPreviewLoading(true);
+      const response: any = await send('tools/invoke', {
+        agentId: 'storage-agent',
+        name: 'retrieve_document',
+        arguments: {
+          document_id: documentId,
+          include_original_file: true,
+        },
+      });
+
+      const data = unwrapToolResult(response);
+      const payload = data?.document_id ? data : data?.result || data || {};
+      const b64 = payload?.original_file_data;
+      const mime = payload?.file_format ? (payload.file_format === 'pdf' ? 'application/pdf' : 'application/octet-stream') : 'application/octet-stream';
+      if (b64) {
+        // Convert base64 to blob and open in new tab
+        const byteChars = atob(b64);
+        const byteNumbers = new Array(byteChars.length);
+        for (let i = 0; i < byteChars.length; i++) {
+          byteNumbers[i] = byteChars.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: mime });
+        const url = URL.createObjectURL(blob);
+        window.open(url, '_blank');
+      } else {
+        setPreviewError('Original file not available for download.');
+      }
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : 'Failed to open document');
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const getPreviewText = (doc: any) => {
+    if (!doc) return '';
+    return (
+      doc.matched_text ||
+      doc.ocr_text ||
+      doc.processed_data?.text ||
+      doc.processed_data?.content ||
+      doc.enriched_metadata?.content?.summary ||
+      doc.summary ||
+      ''
+    );
+  };
+
+  const getPreviewMimeType = (doc: any) => {
+    if (!doc) return '';
+    if (doc.original_file_mime) return doc.original_file_mime;
+    if (doc.file_format === 'pdf') return 'application/pdf';
+    if (doc.file_format === 'json') return 'application/json';
+    if (doc.file_format === 'md') return 'text/markdown';
+    if (doc.file_format === 'txt') return 'text/plain';
+    return '';
+  };
+
+  const decodeBase64ToText = (base64Value: string) => {
+    try {
+      return atob(base64Value);
+    } catch {
+      return '';
+    }
+  };
+
+  const getInlinePreview = (doc: any) => {
+    if (!doc) return null;
+
+    const mimeType = getPreviewMimeType(doc);
+    const base64Value = doc.original_file_data;
+    const previewText = getPreviewText(doc);
+
+    if (base64Value && mimeType === 'application/pdf') {
+      return (
+        <iframe
+          title={`Preview ${doc.original_file || doc.document_id}`}
+          src={`data:application/pdf;base64,${base64Value}`}
+          className="w-full h-[28rem] rounded border border-slate-700 bg-slate-950"
+        />
+      );
+    }
+
+    if (base64Value && (mimeType.startsWith('text/') || mimeType === 'application/json' || doc.file_format === 'json')) {
+      const textContent = decodeBase64ToText(base64Value);
+      return (
+        <pre className="whitespace-pre-wrap break-words bg-slate-950 border border-slate-700 rounded p-4 text-sm text-slate-200 max-h-[28rem] overflow-auto">
+          {textContent || previewText || 'No text preview available.'}
+        </pre>
+      );
+    }
+
+    if (base64Value && (mimeType.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes((doc.file_format || '').toLowerCase()))) {
+      return (
+        <img
+          src={`data:${mimeType || 'image/*'};base64,${base64Value}`}
+          alt={doc.original_file || doc.document_id}
+          className="max-w-full max-h-[28rem] rounded border border-slate-700 bg-slate-950 object-contain"
+        />
+      );
+    }
+
+    return (
+      <div className="rounded border border-slate-700 bg-slate-950 p-4 text-sm text-slate-300">
+        {previewText ? <p className="whitespace-pre-wrap">{previewText}</p> : <p>No inline preview available for this file type.</p>}
+      </div>
+    );
+  };
+
+  const getSourcePreviewText = (source: any) => {
+    return source?.matched_text || source?.excerpt || source?.summary || source?.preview_text || '';
+  };
+
+  const getFriendlyMatchLabel = (matchedPath?: string) => {
+    if (!matchedPath) return '';
+    const normalized = matchedPath.toLowerCase();
+    if (normalized.includes('metadata')) return 'metadata';
+    if (normalized.includes('summary')) return 'summary';
+    if (normalized.includes('processed_data') || normalized.includes('ocr_text') || normalized.includes('content') || normalized.includes('text')) {
+      return 'document text';
+    }
+    if (normalized.includes('filename') || normalized.includes('file')) return 'filename';
+    return 'matched field';
+  };
+
+  const getAssistantHeadline = (msg: { content: string; sources?: any[] }) => {
+    if (msg.sources && msg.sources.length > 0) {
+      return `Found ${msg.sources.length} matching document${msg.sources.length === 1 ? '' : 's'}.`;
+    }
+    return msg.content;
+  };
+
+  const copySourceSnippet = async (source: any) => {
+    const text = getSourcePreviewText(source);
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // ignore clipboard failures in unsupported contexts
+    }
+  };
+
+  const togglePinnedSource = (source: any) => {
+    if (!source?.document_id) return;
+    setPinnedSources((current) => {
+      const exists = current.some((item) => item.document_id === source.document_id);
+      if (exists) {
+        return current.filter((item) => item.document_id !== source.document_id);
+      }
+      if (current.length >= 3) {
+        return [...current.slice(1), source];
+      }
+      return [...current, source];
+    });
+  };
+
+  const isPinnedSource = (documentId: string) => pinnedSources.some((item) => item.document_id === documentId);
+
+  const clearPinnedSources = () => setPinnedSources([]);
 
   const handleSendMessage = async () => {
     if (!input.trim()) return;
 
     const userMessage = input.trim();
     setInput('');
+    setPreviewDocument(null);
+    setPreviewError(null);
+    setShowRawPreviewJson(false);
     setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
     setLoading(true);
 
     try {
       const result: any = await send('tools/invoke', {
-        name: 'semantic_search_documents',
+        agentId: 'chat-agent',
+        name: 'chat_with_documents',
         arguments: {
           query: userMessage,
-          limit: searchLimit,
-          min_confidence: minConfidence,
-          include_original_content: false
+          include_original_content: false,
         }
       });
 
-      // Extract documents from nested result structure
-      // Response structure: result.result.documents (or result.result.result.documents)
-      let documents = [];
-      if (result.result?.result?.documents) {
-        documents = result.result.result.documents;
-      } else if (result.result?.documents) {
-        documents = result.result.documents;
-      }
+      const data = unwrapToolResult(result);
+      const documents = Array.isArray(data?.source_documents) ? data.source_documents : [];
       
       // Build response message
-      let content = '';
-      if (documents.length > 0) {
-        content = `Found ${documents.length} relevant document(s):\n\n`;
-        documents.forEach((doc: any, idx: number) => {
-          content += `${idx + 1}. ${doc.filename} (relevance: ${(doc.relevance_score * 100).toFixed(0)}%)\n`;
-        });
-      } else {
-        content = 'No documents found matching your query.';
-      }
+      const content = data?.answer || 'No documents found matching your query.';
 
       const assistantMessage = {
         role: 'assistant' as const,
         content: content,
-        sources: documents
+        sources: documents,
+        refinedQuery: data?.refined_query,
+        queryRefinement: data?.query_refinement,
       };
 
       setMessages(prev => [...prev, assistantMessage]);
@@ -985,64 +1192,237 @@ function ChatPanel() {
     <div className="space-y-6">
       <div className="bg-slate-800 rounded-lg border border-slate-700 p-6">
         <h2 className="text-xl font-bold text-white mb-4">Chat with Documents</h2>
-        
-        {/* Configuration */}
-        <div className="grid grid-cols-2 gap-4 mb-6">
-          <div>
-            <label className="block text-sm text-slate-300 mb-2">Search Limit</label>
-            <input
-              type="number"
-              min="1"
-              max="20"
-              value={searchLimit}
-              onChange={(e) => setSearchLimit(parseInt(e.target.value))}
-              className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-slate-300 mb-2">Min Confidence</label>
-            <input
-              type="number"
-              min="0"
-              max="1"
-              step="0.1"
-              value={minConfidence}
-              onChange={(e) => setMinConfidence(parseFloat(e.target.value))}
-              className="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-            />
-          </div>
-        </div>
+        <p className="text-sm text-slate-400 mb-4">
+          Retrieval-first mode: the chat returns matched documents and excerpts, not free-form answers.
+        </p>
 
         {/* Chat Messages */}
-        <div className="bg-slate-900 rounded h-96 overflow-y-auto mb-4 p-4 space-y-4">
-          {messages.length === 0 ? (
-            <div className="text-slate-500 text-center pt-12">
-              <p>Start a conversation by asking a question about your documents.</p>
-            </div>
-          ) : (
-            messages.map((msg, idx) => (
-              <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div
-                  className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
-                    msg.role === 'user'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-slate-700 text-slate-100'
-                  }`}
-                >
-                  <p className="text-sm">{msg.content}</p>
-                  
-                  {/* Show sources for assistant messages */}
-                  {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-slate-600 text-xs">
-                      <p className="font-semibold mb-2">📄 Sources:</p>
-                      <div className="space-y-1">
-                        {msg.sources.map((source: any, sidx: number) => (
-                          <div key={sidx} className="bg-slate-600 bg-opacity-50 rounded p-2">
-                            <p className="font-mono text-slate-200">{source.filename || source.document_id}</p>
-                            <p className="text-slate-300">Score: {(source.relevance_score * 100).toFixed(0)}%</p>
-                            {source.summary && (
-                              <p className="text-slate-400 mt-1 line-clamp-2">{source.summary}</p>
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_24rem] gap-4 items-start">
+          <div className="bg-slate-900 rounded h-96 overflow-y-auto p-4 space-y-4">
+            {messages.length === 0 ? (
+              <div className="text-slate-500 text-center pt-12">
+                <p>Start a conversation by asking a question about your documents.</p>
+              </div>
+            ) : (
+              messages.map((msg, idx) => (
+                <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div
+                    className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+                      msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-100'
+                    }`}
+                  >
+                    <p className="text-sm">
+                      {msg.role === 'assistant' ? getAssistantHeadline(msg) : msg.content}
+                    </p>
+
+                    {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && (
+                      <p className="text-xs text-slate-400 mt-2">Open a source to inspect the exact hit location.</p>
+                    )}
+
+                    {msg.role === 'assistant' && (msg.refinedQuery || msg.queryRefinement || msg.content) && (
+                      <details className="mt-2 text-xs text-slate-300">
+                        <summary className="cursor-pointer text-slate-400">Details</summary>
+                        <div className="mt-2 space-y-2">
+                          {msg.refinedQuery && <p>Refined query: {msg.refinedQuery}</p>}
+                          {msg.queryRefinement?.search_method && <p>Search method: {msg.queryRefinement.search_method}</p>}
+                          <p className="whitespace-pre-wrap text-slate-300">{msg.content}</p>
+                        </div>
+                      </details>
+                    )}
+
+                    {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-slate-600 text-xs">
+                        <p className="font-semibold mb-2">📄 Sources:</p>
+                        <div className="space-y-1">
+                          {msg.sources.map((source: any, sidx: number) => (
+                            <div
+                              key={sidx}
+                              onClick={() => openSourcePreview(source.document_id)}
+                              className="w-full cursor-pointer text-left bg-slate-600 bg-opacity-50 rounded p-3 hover:bg-slate-500 transition-colors"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <p className="font-medium text-slate-200 break-words">{source.filename || 'Matched document'}</p>
+                                </div>
+                                {isPinnedSource(source.document_id) && (
+                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-900 text-amber-100">Pinned</span>
+                                )}
+                              </div>
+
+                              {getSourcePreviewText(source) && (
+                                <p className="text-slate-400 mt-2 line-clamp-2">{getSourcePreviewText(source)}</p>
+                              )}
+
+                                <details className="mt-2 text-[10px] text-slate-300">
+                                  <summary className="cursor-pointer text-slate-400">Details</summary>
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    <span className="px-2 py-0.5 rounded-full bg-blue-900 text-blue-100">
+                                      {Math.round((source.relevance_score || 0) * 100)}%
+                                    </span>
+                                    {source.matched_path && (
+                                      <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-200">
+                                        {getFriendlyMatchLabel(source.matched_path)}
+                                      </span>
+                                    )}
+                                    {source.match_method && (
+                                      <span className="px-2 py-0.5 rounded-full bg-emerald-900 text-emerald-100">
+                                        {source.match_method}
+                                      </span>
+                                    )}
+                                  </div>
+                                </details>
+
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    openSourcePreview(source.document_id);
+                                  }}
+                                  className="px-2 py-1 rounded bg-slate-700 text-slate-100 hover:bg-slate-600"
+                                >
+                                  Jump to hit
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    copySourceSnippet(source);
+                                  }}
+                                  className="px-2 py-1 rounded bg-slate-700 text-slate-100 hover:bg-slate-600"
+                                >
+                                  Copy snippet
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    togglePinnedSource(source);
+                                  }}
+                                  className="px-2 py-1 rounded bg-slate-700 text-slate-100 hover:bg-slate-600"
+                                >
+                                  {isPinnedSource(source.document_id) ? 'Unpin' : 'Pin compare'}
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+
+            {loading && (
+              <div className="flex justify-start">
+                <div className="bg-slate-700 text-slate-100 px-4 py-2 rounded-lg">
+                  <p className="text-sm">Thinking...</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <aside className="space-y-4 lg:sticky lg:top-4">
+            {previewDocument ? (
+              <div ref={previewPanelRef} className="rounded-lg border border-slate-700 bg-slate-900 p-4">
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div>
+                    <h3 className="text-white font-semibold">Document Preview</h3>
+                    <p className="text-xs text-slate-400 break-words">{previewDocument.original_file || previewDocument.document_id}</p>
+                    {previewDocument.matched_path && (
+                      <p className="text-[10px] text-slate-500 mt-1">Matched in: {getFriendlyMatchLabel(previewDocument.matched_path)}</p>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2 justify-end">
+                    <button
+                      type="button"
+                      onClick={() => openFullDocument(previewDocument.document_id)}
+                      className="text-xs px-2 py-1 rounded bg-slate-700 text-slate-100 hover:bg-slate-600"
+                    >
+                      Open Full
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onOpenStorageExplorer()}
+                      className="text-xs px-2 py-1 rounded bg-slate-600 text-slate-200 hover:bg-slate-500"
+                    >
+                      Explorer
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPreviewDocument(null);
+                        setPreviewError(null);
+                      }}
+                      className="text-xs px-2 py-1 rounded bg-slate-700 text-slate-100 hover:bg-slate-600"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-4 text-sm text-slate-200">
+                  {getInlinePreview(previewDocument)}
+
+                  <div className="rounded border border-slate-700 bg-slate-950">
+                    <button
+                      type="button"
+                      onClick={() => setShowRawPreviewJson((prev) => !prev)}
+                      className="flex w-full items-center justify-between px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-900"
+                    >
+                      <span>Raw JSON details</span>
+                      <span>{showRawPreviewJson ? 'Hide' : 'Show'}</span>
+                    </button>
+                    {showRawPreviewJson && (
+                      <pre className="max-h-64 overflow-x-auto border-t border-slate-700 bg-slate-900 p-3 text-xs text-slate-400">
+{JSON.stringify(previewDocument, null, 2)}
+                      </pre>
+                    )}
+                  </div>
+
+                  {pinnedSources.length > 0 && (
+                    <div className="rounded border border-slate-700 bg-slate-950 p-3">
+                      <div className="flex items-center justify-between gap-2 mb-3">
+                        <h4 className="text-xs font-semibold text-slate-200">Compare pinned results</h4>
+                        <button
+                          type="button"
+                          onClick={clearPinnedSources}
+                          className="text-[10px] px-2 py-1 rounded bg-slate-700 text-slate-200 hover:bg-slate-600"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                      <div className="space-y-2">
+                        {pinnedSources.slice(0, 3).map((source: any) => (
+                          <div key={source.document_id} className="rounded border border-slate-700 bg-slate-900 p-2 text-xs">
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="font-medium text-slate-200 break-words">{source.filename || 'Matched document'}</p>
+                              <button
+                                type="button"
+                                onClick={() => openSourcePreview(source.document_id)}
+                                className="text-[10px] px-2 py-1 rounded bg-slate-700 text-slate-100 hover:bg-slate-600"
+                              >
+                                Open
+                              </button>
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-2 text-[10px]">
+                              <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-200">Pinned result</span>
+                            </div>
+                            {getSourcePreviewText(source) && (
+                              <p className="mt-2 text-slate-400 line-clamp-3">{getSourcePreviewText(source)}</p>
                             )}
+                            <details className="mt-2 text-[10px] text-slate-300">
+                              <summary className="cursor-pointer text-slate-400">Details</summary>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                <span className="px-2 py-0.5 rounded-full bg-blue-900 text-blue-100">
+                                  {(source.relevance_score * 100).toFixed(0)}%
+                                </span>
+                                {source.matched_path && (
+                                  <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-200">{getFriendlyMatchLabel(source.matched_path)}</span>
+                                )}
+                              </div>
+                            </details>
                           </div>
                         ))}
                       </div>
@@ -1050,16 +1430,37 @@ function ChatPanel() {
                   )}
                 </div>
               </div>
-            ))
-          )}
-          {loading && (
-            <div className="flex justify-start">
-              <div className="bg-slate-700 text-slate-100 px-4 py-2 rounded-lg">
-                <p className="text-sm">Thinking...</p>
+            ) : (
+              <div className="rounded-lg border border-slate-700 bg-slate-900 p-4 text-sm text-slate-400">
+                No preview selected.
               </div>
-            </div>
-          )}
+            )}
+
+            {previewLoading && (
+              <div className="rounded-lg border border-slate-700 bg-slate-900 p-4 text-sm text-slate-400">
+                Loading document preview...
+              </div>
+            )}
+
+            {previewError && (
+              <div className="rounded-lg border border-red-700 bg-red-950 p-4 text-sm text-red-200">
+                {previewError}
+              </div>
+            )}
+          </aside>
         </div>
+
+        {previewLoading && (
+          <div className="mt-4 rounded-lg border border-slate-700 bg-slate-900 p-4 text-sm text-slate-400">
+            Loading document preview...
+          </div>
+        )}
+
+        {previewError && (
+          <div className="mt-4 rounded-lg border border-red-700 bg-red-950 p-4 text-sm text-red-200">
+            {previewError}
+          </div>
+        )}
 
         {/* Input Area */}
         <div className="flex gap-2">
