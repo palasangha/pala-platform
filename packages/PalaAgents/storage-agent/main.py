@@ -198,6 +198,137 @@ def combine_searchable_text(metadata: Dict[str, Any], processed_data: Dict[str, 
     return searchable_text
 
 
+def build_compact_document_index(doc) -> Dict[str, Any]:
+    """Build a compact, searchable projection for list/timeline views."""
+    metadata = getattr(doc, 'metadata', {}) or {}
+    processed_data = getattr(doc, 'processed_data', {}) or {}
+
+    pala = metadata.get('pala_metadata', {}) if isinstance(metadata, dict) else {}
+    result_payload = processed_data.get('result', {}) if isinstance(processed_data, dict) else {}
+    if not isinstance(result_payload, dict):
+        result_payload = {}
+
+    pala_result = result_payload.get('pala_metadata', {}) if isinstance(result_payload, dict) else {}
+    if not isinstance(pala_result, dict):
+        pala_result = {}
+
+    archipelago_result = result_payload.get('archipelago_metadata', {}) if isinstance(result_payload, dict) else {}
+    if not isinstance(archipelago_result, dict):
+        archipelago_result = {}
+
+    def _extract_text(*values):
+        for value in values:
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ''
+
+    def _collect_names(value):
+        if not value:
+            return []
+        items = value if isinstance(value, list) else [value]
+        names = []
+        for item in items:
+            if isinstance(item, str) and item.strip():
+                if item not in names:
+                    names.append(item.strip())
+            elif isinstance(item, dict):
+                name = _extract_text(item.get('name'), item.get('title'), item.get('label'), item.get('value'))
+                if name and name not in names:
+                    names.append(name)
+        return names
+
+    def _first_sequence(*values):
+        for value in values:
+            if value:
+                return value
+        return []
+
+    summary = _extract_text(
+        metadata.get('summary'),
+        metadata.get('content', {}).get('summary') if isinstance(metadata.get('content'), dict) else '',
+        pala.get('content', {}).get('summary') if isinstance(pala.get('content'), dict) else '',
+        result_payload.get('summary', {}).get('text') if isinstance(result_payload.get('summary'), dict) else '',
+        result_payload.get('summary') if isinstance(result_payload.get('summary'), str) else '',
+        pala_result.get('content', {}).get('summary', {}).get('text') if isinstance(pala_result.get('content'), dict) and isinstance(pala_result.get('content', {}).get('summary'), dict) else '',
+        archipelago_result.get('description'),
+        archipelago_result.get('summary'),
+        processed_data.get('text'),
+    )
+
+    metadata_topics = metadata.get('topics')
+    if not metadata_topics and isinstance(metadata.get('content'), dict):
+        metadata_topics = metadata.get('content', {}).get('topics')
+    pala_topics = pala.get('content', {}).get('topics') if isinstance(pala.get('content'), dict) else []
+    extracted_topics = result_payload.get('key_topics') or result_payload.get('topics')
+    pala_result_topics = pala_result.get('content', {}).get('topics') if isinstance(pala_result.get('content'), dict) else []
+    processed_topics = processed_data.get('topics')
+
+    topics = _collect_names(
+        _first_sequence(metadata_topics, pala_topics, extracted_topics, pala_result_topics, processed_topics)
+    )
+
+    metadata_people = metadata.get('people')
+    if not metadata_people and isinstance(pala, dict):
+        metadata_people = (pala.get('parties', {}) or {}).get('people')
+    result_people = result_payload.get('people')
+    if not result_people and isinstance(pala_result, dict):
+        result_people = (pala_result.get('parties', {}) or {}).get('people')
+    people = _collect_names(_first_sequence(metadata_people, result_people, processed_data.get('people')))
+
+    metadata_places = metadata.get('places')
+    if not metadata_places and isinstance(metadata.get('locations'), list):
+        metadata_places = metadata.get('locations')
+    if not metadata_places and isinstance(pala, dict):
+        metadata_places = (pala.get('places', {}) or {}).get('locations')
+    result_places = result_payload.get('locations')
+    if not result_places and isinstance(pala_result, dict):
+        result_places = (pala_result.get('places', {}) or {}).get('locations')
+    if not result_places and isinstance(archipelago_result, dict):
+        result_places = archipelago_result.get('locations') or archipelago_result.get('places')
+    places = _collect_names(_first_sequence(metadata_places, result_places, processed_data.get('locations')))
+
+    document_date = _extract_text(
+        metadata.get('document', {}).get('date', {}).get('value') if isinstance(metadata.get('document'), dict) else '',
+        metadata.get('date', {}).get('value') if isinstance(metadata.get('date'), dict) else '',
+        metadata.get('date'),
+        result_payload.get('document_date', {}).get('value') if isinstance(result_payload.get('document_date'), dict) else '',
+        result_payload.get('document_date'),
+        processed_data.get('date'),
+        result_payload.get('document_date', {}).get('value') if isinstance(result_payload.get('document_date'), dict) else '',
+        pala_result.get('document_metadata', {}).get('date', {}).get('value') if isinstance(pala_result.get('document_metadata'), dict) and isinstance(pala_result.get('document_metadata', {}).get('date'), dict) else '',
+        getattr(doc, 'created_at', ''),
+    )
+
+    def _collect_all_text(value, fragments):
+        if value is None:
+            return
+        if isinstance(value, dict):
+            for nested_value in value.values():
+                _collect_all_text(nested_value, fragments)
+            return
+        if isinstance(value, list):
+            for item in value:
+                _collect_all_text(item, fragments)
+            return
+        text = str(value).strip()
+        if text:
+            fragments.append(text)
+
+    searchable_fragments = []
+    _collect_all_text(metadata, searchable_fragments)
+    _collect_all_text(processed_data, searchable_fragments)
+    _collect_all_text(result_payload, searchable_fragments)
+
+    return {
+        'summary': summary,
+        'people': people,
+        'places': places,
+        'topics': topics,
+        'document_date': document_date,
+        'search_text': combine_searchable_text(metadata, processed_data, getattr(doc, 'original_file', '')) + "\n" + "\n".join(searchable_fragments),
+    }
+
+
 def generate_embedding(text: str, embedding_model_instance=None) -> Optional[list]:
     """Generate embedding vector for text"""
     if embedding_model_instance is None:
@@ -667,18 +798,33 @@ async def tool_list_documents(params: Dict[str, Any]) -> Dict[str, Any]:
 
         documents = []
         for doc in result['documents']:
+            full_doc = doc
+            try:
+                retrieved = await provider.retrieve_document(doc.id)
+                if retrieved:
+                    full_doc = retrieved
+            except Exception as detail_error:
+                logger.debug(f"tool_list_documents: retrieve_document fallback failed for doc.id={doc.id}: {detail_error}")
+
+            compact_index = build_compact_document_index(full_doc)
             doc_info = {
-                'document_id': doc.id,
-                'type': doc.type,
-                'original_file': doc.original_file,
-                'file_format': doc.file_format,
-                'created_by': doc.created_by,
-                'created_at': doc.created_at,
-                'version': doc.version,
-                'storage_location': getattr(doc, 'storage_location', None),
-                'provider_id': getattr(doc, 'provider_id', None)
+                'document_id': full_doc.id,
+                'type': full_doc.type,
+                'original_file': full_doc.original_file,
+                'file_format': full_doc.file_format,
+                'created_by': full_doc.created_by,
+                'created_at': full_doc.created_at,
+                'version': full_doc.version,
+                'storage_location': getattr(full_doc, 'storage_location', None),
+                'provider_id': getattr(full_doc, 'provider_id', None),
+                'summary': compact_index['summary'],
+                'people': compact_index['people'],
+                'places': compact_index['places'],
+                'topics': compact_index['topics'],
+                'document_date': compact_index['document_date'],
+                'search_text': compact_index['search_text'],
             }
-            logger.debug(f"tool_list_documents: doc.id={doc.id}, storage_location={doc_info['storage_location']}, provider_id={doc_info['provider_id']}")
+            logger.debug(f"tool_list_documents: doc.id={full_doc.id}, storage_location={doc_info['storage_location']}, provider_id={doc_info['provider_id']}")
             documents.append(doc_info)
         result_dict = {
             'count': result['count'],

@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import Link from 'next/link';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { ContentBrowser } from './ContentBrowser';
 
@@ -66,6 +67,12 @@ export function PalaWebDashboard() {
             >
               Storage Explorer
             </button>
+            <Link
+              href="/timeline"
+              className="px-4 py-2 border-b-2 font-medium text-sm transition-colors border-transparent text-slate-400 hover:text-slate-300"
+            >
+              Timeline
+            </Link>
           </div>
         </div>
       </header>

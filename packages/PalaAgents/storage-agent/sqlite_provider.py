@@ -22,15 +22,32 @@ from storage_provider import StorageProvider, Document, Extraction
 logger = logging.getLogger(__name__)
 
 
+def _resolve_storage_db_path(path_value: Optional[str], default_name: str) -> str:
+    """Resolve storage DB paths relative to the storage-agent package directory.
+
+    This keeps the SQLite files stable regardless of the current working directory,
+    so store and search always read and write the same database files.
+    """
+    base_dir = Path(__file__).resolve().parent
+    candidate = Path(path_value or default_name)
+    if not candidate.is_absolute():
+        candidate = base_dir / candidate
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    return str(candidate.resolve())
+
+
 class SQLiteProvider(StorageProvider):
     """SQLite-based storage provider"""
 
     def __init__(self, db_path: str = "./storage_metadata.db"):
-        self.db_path = db_path
+        self.db_path = _resolve_storage_db_path(db_path, "storage_metadata.db")
         
         # Replica config
         self.replica_enabled = os.getenv('SQLITE_ENABLE_REPLICA', 'false').lower() == 'true'
-        self.replica_db_path = os.getenv('SQLITE_REPLICA_DB_PATH', './storage_metadata_replica.db')
+        self.replica_db_path = _resolve_storage_db_path(
+            os.getenv('SQLITE_REPLICA_DB_PATH', './storage_metadata_replica.db'),
+            'storage_metadata_replica.db',
+        )
         
         logger.info(f"[SQLiteProvider] PRIMARY: db_path={self.db_path}")
         if self.replica_enabled:

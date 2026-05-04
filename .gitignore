@@ -40,3 +40,9 @@ Thumbs.db
 # Logs
 logs
 *.log
+
+# Runtime SQLite metadata stores
+/storage_metadata.db
+/storage_metadata_replica.db
+/packages/PalaAgents/storage-agent/storage_metadata.db
+/packages/PalaAgents/storage-agent/storage_metadata_replica.db

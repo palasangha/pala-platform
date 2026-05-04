@@ -18,6 +18,9 @@ export function useWebSocket(url?: string) {
   const wsRef = useRef<WebSocket | null>(null);
   const messageHandlerRef = useRef<Map<number, (response: unknown) => void>>(new Map());
   const messageIdRef = useRef(0);
+  const log = useCallback((message: string, payload?: unknown) => {
+    console.log(`[WS] ${message}`, payload ?? '');
+  }, []);
 
   // Default URL if not provided
   const [wsUrl, setWsUrl] = useState(url || '');
@@ -42,14 +45,16 @@ export function useWebSocket(url?: string) {
 
     ws.onopen = () => {
       console.log('WebSocket connected');
+      log('connected', { url: effectiveUrl });
       setConnected(true);
       setError(null);
     };
 
     ws.onmessage = (event) => {
-      console.log('[WS] [RECV] Raw message:', event.data);
+      log('recv raw', event.data);
       try {
         const message = JSON.parse(event.data);
+        log('recv parsed', { id: message.id, method: message.method, keys: Object.keys(message || {}) });
         if (message.id && messageHandlerRef.current.has(message.id)) {
           const handler = messageHandlerRef.current.get(message.id)!;
           handler(message);
@@ -62,11 +67,13 @@ export function useWebSocket(url?: string) {
 
     ws.onerror = (event) => {
       console.error('WebSocket error:', event);
+      log('error', event);
       setError('Connection error');
     };
 
     ws.onclose = () => {
       console.log('WebSocket disconnected');
+      log('disconnected', { url: effectiveUrl });
       setConnected(false);
     };
 
@@ -82,16 +89,20 @@ export function useWebSocket(url?: string) {
   const send = useCallback((method: string, params?: unknown): Promise<unknown> => {
     return new Promise((resolve, reject) => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        console.log('[WS] send blocked: socket not connected', { method, params });
         reject(new Error('WebSocket not connected'));
         return;
       }
 
       const id = ++messageIdRef.current;
       const message = { jsonrpc: '2.0', method, params, id };
+      console.log('[WS] send', { id, method, params });
 
       messageHandlerRef.current.set(id, (response: unknown) => {
         const resp = response as any;
+        console.log('[WS] response received', { id, method, hasError: Boolean(resp?.error), keys: Object.keys(resp || {}) });
         if (resp.error) {
+          console.log('[WS] response error', { id, method, error: resp.error });
           reject(new Error(resp.error.message));
         } else {
           resolve(resp.result);
@@ -104,10 +115,12 @@ export function useWebSocket(url?: string) {
         setTimeout(() => {
           if (messageHandlerRef.current.has(id)) {
             messageHandlerRef.current.delete(id);
+            console.log('[WS] request timeout', { id, method });
             reject(new Error('Request timeout'));
           }
         }, 1800000);
       } catch (err) {
+        console.log('[WS] send exception', { id, method, err });
         reject(err);
       }
     });
