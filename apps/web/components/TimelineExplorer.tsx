@@ -27,6 +27,10 @@ type TimelineDocument = {
   app_data?: any;
   original_file_data?: string;
   original_file_mime?: string;
+  excerpt?: string;
+  matched_text?: string;
+  matched_path?: string;
+  relevance_score?: number;
 };
 
 type TimelineItem = {
@@ -43,7 +47,48 @@ type TimelineItem = {
   createdBy: string;
   fileFormat: string;
   source: TimelineDocument;
+  passage: string;
+  matchedPath: string;
+  relevanceScore: number;
 };
+
+const SEARCH_STOPWORDS = new Set([
+  'a',
+  'an',
+  'and',
+  'any',
+  'are',
+  'as',
+  'at',
+  'be',
+  'but',
+  'by',
+  'for',
+  'from',
+  'has',
+  'have',
+  'how',
+  'in',
+  'is',
+  'it',
+  'of',
+  'on',
+  'or',
+  'reference',
+  'show',
+  'that',
+  'the',
+  'there',
+  'this',
+  'to',
+  'was',
+  'were',
+  'what',
+  'when',
+  'where',
+  'who',
+  'with',
+]);
 
 function unwrapToolResult(payload: any) {
   let current = payload;
@@ -200,6 +245,20 @@ function getPreviewMimeType(doc: TimelineDocument) {
   return '';
 }
 
+function getPreviewText(doc: TimelineDocument) {
+  if (!doc) return '';
+  return (
+    doc.matched_text ||
+    doc.excerpt ||
+    doc.search_text ||
+    toText(doc.processed_data?.text) ||
+    toText(doc.processed_data?.content) ||
+    toText(doc.metadata?.content?.summary) ||
+    doc.summary ||
+    ''
+  );
+}
+
 function decodeBase64(base64Value: string) {
   try {
     return atob(base64Value);
@@ -249,9 +308,83 @@ function renderInlinePreview(doc: TimelineDocument) {
   );
 }
 
+function escapeHtml(text: string) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function highlightText(text: string, query: string) {
+  if (!query) return escapeHtml(text);
+  const escapedTerms = extractMeaningfulTerms(query)
+    .map((term) => term.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'));
+
+  if (escapedTerms.length === 0) return escapeHtml(text);
+
+  const re = new RegExp(escapedTerms.join('|'), 'gi');
+  return escapeHtml(text).replace(re, (match) => `<mark class="rounded bg-blue-400/30 text-blue-100 px-1">${match}</mark>`);
+}
+
+function sentenceWindow(text: string, query: string) {
+  const clean = toText(text).replace(/\s+/g, ' ').trim();
+  if (!clean) return '';
+
+  const terms = extractMeaningfulTerms(query);
+  if (terms.length === 0) return clean.slice(0, 240);
+
+  const sentences = clean.split(/(?<=[.!?])\s+/);
+  const hitIndex = sentences.findIndex((sentence) => {
+    const lower = sentence.toLowerCase();
+    return terms.some((term) => lower.includes(term));
+  });
+
+  if (hitIndex === -1) return clean.slice(0, 240);
+
+  const start = Math.max(0, hitIndex - 2);
+  const end = Math.min(sentences.length, hitIndex + 3);
+  return sentences.slice(start, end).join(' ').slice(0, 320);
+}
+
+function extractMeaningfulTerms(text: string) {
+  return Array.from(
+    new Set(
+      text
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .map((term) => term.trim())
+        .filter((term) => term.length > 2 && !SEARCH_STOPWORDS.has(term))
+    )
+  );
+}
+
+function buildExpandedTimelineQuery(query: string, filter: TimelineFilter, year: string, item?: TimelineItem | null) {
+  const parts: string[] = [];
+  const trimmed = query.trim();
+  const terms = extractMeaningfulTerms(trimmed);
+  if (trimmed) parts.push(trimmed);
+  if (terms.length > 0) parts.push(terms.join(' '));
+
+  if (filter !== 'all') parts.push(`filter:${filter}`);
+  if (year !== 'all') parts.push(`year:${year}`);
+
+  const lower = trimmed.toLowerCase();
+  const intentHints: string[] = [];
+  if (/\bwhen\b|\bdate\b|\byear\b/.test(lower)) intentHints.push('date', 'dated', 'time');
+  if (/\bwhere\b|\bbodhgaya\b|\blocation\b/.test(lower)) intentHints.push('bodhgaya', 'location', 'place');
+  if (/\bspoken\b|\bsaid\b|\buttered\b|\btaught\b|\bdiscourse\b/.test(lower)) intentHints.push('spoken', 'said', 'discourse', 'teaching');
+  if (/\bpeople\b|\bwho\b/.test(lower)) intentHints.push('speaker', 'author', 'person');
+
+  if (item) {
+    const relatedTerms = [...item.people, ...item.places, ...item.topics].filter(Boolean);
+    if (relatedTerms.length > 0) parts.push(`related:${relatedTerms.slice(0, 12).join(' OR ')}`);
+  }
+
+  if (intentHints.length > 0) parts.push(`intent:${Array.from(new Set(intentHints)).join(' OR ')}`);
+  return parts.join(' | ');
+}
+
 export function TimelineExplorer() {
   const { connected, send } = useWebSocket();
   const [documents, setDocuments] = useState<TimelineDocument[]>([]);
+  const [queryResults, setQueryResults] = useState<TimelineDocument[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -261,6 +394,8 @@ export function TimelineExplorer() {
   const [selectedDetails, setSelectedDetails] = useState<TimelineDocument | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [showRawJson, setShowRawJson] = useState(false);
+  const [showFullFile, setShowFullFile] = useState(false);
+  const [openingDocumentId, setOpeningDocumentId] = useState<string | null>(null);
 
   console.log('[TimelineExplorer] component rendered', { connected, documentsLength: documents.length });
 
@@ -329,6 +464,121 @@ export function TimelineExplorer() {
     }
   }, [connected, send]);
 
+  const searchDocuments = useCallback(async (searchText: string) => {
+    if (!connected) return;
+
+    const trimmed = searchText.trim();
+    if (!trimmed) {
+      setQueryResults([]);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const expandedQuery = buildExpandedTimelineQuery(trimmed, selectedFilter, selectedYear);
+      console.log('[TimelineExplorer] searchDocuments start', { trimmed, expandedQuery, selectedFilter, selectedYear });
+
+      const response: any = await send('tools/invoke', {
+        agentId: 'storage-agent',
+        name: 'semantic_search_documents',
+        arguments: {
+          query: expandedQuery,
+          limit: 100,
+          min_confidence: 0.32,
+          include_original_content: true,
+        },
+      });
+
+      const data = unwrapToolResult(response);
+      const docs = Array.isArray(data.documents) ? data.documents : [];
+      console.log('[TimelineExplorer] semantic_search_documents returned', { documentCount: docs.length, searchMethod: data.search_method });
+
+      if (docs.length === 0) {
+        console.log('[TimelineExplorer] semantic search returned no documents; using local keyword fallback');
+        const queryTerms = extractMeaningfulTerms(trimmed);
+        const fallback = documents.filter((doc) => {
+          const searchable = [
+            doc.summary,
+            doc.document_date,
+            doc.original_file,
+            doc.type,
+            doc.created_by,
+            doc.file_format,
+            doc.search_text,
+            doc.matched_text,
+            doc.matched_path,
+            doc.metadata ? JSON.stringify(doc.metadata) : '',
+            doc.processed_data ? JSON.stringify(doc.processed_data) : '',
+            doc.people?.join(' '),
+            doc.places?.join(' '),
+            doc.topics?.join(' '),
+          ].join(' ').toLowerCase();
+          return queryTerms.length === 0 || queryTerms.some((term) => searchable.includes(term));
+        });
+        setQueryResults(fallback.map((doc) => normalizeTimelineDocument(doc)));
+        return;
+      }
+
+      const mapped = docs
+        .map((doc: any) => {
+          const matchedText = toText(doc.matched_text);
+          const excerptText = toText(doc.excerpt);
+          const summaryText = toText(doc.summary);
+          const snippetSource = matchedText || excerptText || summaryText;
+
+          console.log('[TimelineExplorer] search result payload', {
+            document_id: doc.document_id || doc.id,
+            matched_text_len: matchedText.length,
+            excerpt_len: excerptText.length,
+            summary_len: summaryText.length,
+            matched_path: doc.matched_path || doc.match_method,
+            snippet_source: matchedText ? 'matched_text' : excerptText ? 'excerpt' : summaryText ? 'summary' : 'none',
+          });
+
+          const source: TimelineDocument = normalizeTimelineDocument({
+            document_id: toText(doc.document_id || doc.id),
+            original_file: toText(doc.filename || doc.original_file),
+            type: toText(doc.type),
+            file_format: toText(doc.file_format),
+            created_at: toText(doc.created_at),
+            summary: snippetSource,
+            people: Array.isArray(doc.people) ? doc.people : extractNames(doc.people),
+            places: Array.isArray(doc.places) ? doc.places : extractNames(doc.places),
+            topics: Array.isArray(doc.topics) ? doc.topics : extractNames(doc.topics),
+            original_file_data: doc.original_file_data,
+            original_file_mime: doc.original_file_mime,
+            matched_text: matchedText,
+            excerpt: excerptText,
+            matched_path: toText(doc.matched_path || doc.match_method),
+            relevance_score: typeof doc.relevance_score === 'number' ? doc.relevance_score : Number(doc.relevance_score || 0),
+          });
+
+          if (!source.document_id) return null;
+
+          // Backend now returns real file passages in matched_text
+          // Use matched_text (real passage) > excerpt > summary
+          let passageSource = source.matched_text || source.excerpt || source.summary || '';
+          
+          const passage = passageSource ? toText(passageSource).slice(0, 400) : '';
+
+          return {
+            ...source,
+            summary: passage,
+          };
+        })
+        .filter(Boolean) as TimelineDocument[];
+
+      setQueryResults(mapped);
+    } catch (err) {
+      console.log('[TimelineExplorer] searchDocuments error', { error: err instanceof Error ? err.message : String(err) });
+      setQueryResults([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [connected, send, selectedFilter, selectedYear, documents]);
+
   const loadDocumentDetails = useCallback(async (documentId: string) => {
     if (!documentId) return;
 
@@ -369,14 +619,31 @@ export function TimelineExplorer() {
     console.debug(`[TimelineExplorer] ${message}`, payload ?? '');
   }, []);
 
+  const visibleDocuments = useMemo(() => {
+    if (query.trim()) return queryResults;
+    return documents;
+  }, [documents, query, queryResults]);
+
   useEffect(() => {
     if (connected) {
       void loadDocuments();
     }
   }, [connected, loadDocuments]);
 
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (!query.trim()) {
+        setQueryResults([]);
+        return;
+      }
+      void searchDocuments(query);
+    }, 300);
+
+    return () => clearTimeout(t);
+  }, [query, searchDocuments]);
+
   const timelineItems = useMemo<TimelineItem[]>(() => {
-    return documents
+    return visibleDocuments
       .map((doc, idx) => {
         const metadata = doc.metadata || {};
         const processed = doc.processed_data || {};
@@ -418,6 +685,8 @@ export function TimelineExplorer() {
         const people = normalized.people || [];
         const places = normalized.places || [];
         const topics = normalized.topics || [];
+        const passageSource = normalized.matched_text || normalized.excerpt || normalized.summary || normalized.search_text || normalized.original_file_data || summary;
+        const passage = sentenceWindow(passageSource, query) || toText(passageSource).slice(0, 400) || summary;
 
         return {
           documentId: toText(doc.document_id || doc.id),
@@ -433,14 +702,15 @@ export function TimelineExplorer() {
           createdBy: toText(doc.created_by),
           fileFormat: toText(doc.file_format),
           source: normalized,
+          passage,
+          matchedPath: toText(doc.matched_path || doc.match_method),
+          relevanceScore: Number(doc.relevance_score || 0),
         };
       })
       .filter((item) => item.documentId);
-  }, [documents]);
+  }, [query, visibleDocuments]);
 
   const filteredItems = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-
     return timelineItems
       .filter((item) => {
         if (selectedYear !== 'all' && item.year !== selectedYear) return false;
@@ -449,26 +719,14 @@ export function TimelineExplorer() {
         if (selectedFilter === 'places' && item.places.length === 0) return false;
         if (selectedFilter === 'topics' && item.topics.length === 0) return false;
 
-        if (!normalizedQuery) return true;
-
-        const searchable = [
-          item.title,
-          item.summary,
-          item.documentType,
-          item.createdBy,
-          item.fileFormat,
-          item.year,
-          item.people.join(' '),
-          item.places.join(' '),
-          item.topics.join(' '),
-          item.source.search_text,
-        ]
-          .join(' ')
-          .toLowerCase();
-
-        return searchable.includes(normalizedQuery);
+        return true;
       })
-      .sort((a, b) => a.sortDate.localeCompare(b.sortDate));
+      .sort((a, b) => {
+        if (query.trim()) {
+          return (b.relevanceScore - a.relevanceScore) || a.sortDate.localeCompare(b.sortDate);
+        }
+        return a.sortDate.localeCompare(b.sortDate);
+      });
   }, [query, selectedFilter, selectedYear, timelineItems]);
 
   useEffect(() => {
@@ -478,17 +736,6 @@ export function TimelineExplorer() {
   useEffect(() => {
     log('filtered items updated', { total: timelineItems.length, filtered: filteredItems.length });
   }, [filteredItems.length, log, timelineItems.length]);
-
-  const years = useMemo(() => {
-    return Array.from(new Set(timelineItems.map((item) => item.year).filter(Boolean))).sort((a, b) => Number(b) - Number(a));
-  }, [timelineItems]);
-
-  const stats = useMemo(() => {
-    const dated = timelineItems.filter((item) => item.dateLabel !== 'Unknown date').length;
-    const peopleCount = timelineItems.filter((item) => item.people.length > 0).length;
-    const placesCount = timelineItems.filter((item) => item.places.length > 0).length;
-    return { total: timelineItems.length, dated, peopleCount, placesCount };
-  }, [timelineItems]);
 
   const selectedTimelineItem = useMemo(() => {
     if (!selectedDocument && filteredItems.length > 0) return filteredItems[0];
@@ -517,8 +764,32 @@ export function TimelineExplorer() {
     setSelectedDocument({ document_id: item.documentId, ...item.source });
     setSelectedDetails(null);
     setShowRawJson(false);
+    setShowFullFile(false);
     void loadDocumentDetails(item.documentId);
   }, [loadDocumentDetails]);
+
+  const openFullFile = useCallback(() => {
+    if (!selectedTimelineItem) return;
+    setShowFullFile(true);
+    setShowRawJson(false);
+    if (!selectedDetails || selectedDetails.document_id !== selectedTimelineItem.documentId) {
+      void loadDocumentDetails(selectedTimelineItem.documentId);
+    }
+  }, [loadDocumentDetails, selectedDetails, selectedTimelineItem]);
+
+  const openFileInNewWindow = useCallback(
+    (documentId: string) => {
+      if (!documentId) return;
+      const item = filteredItems.find((i) => i.documentId === documentId);
+      if (!item) return;
+      setSelectedDocument({ document_id: documentId, ...item.source });
+      setSelectedDetails(null);
+      setShowRawJson(false);
+      setShowFullFile(true);
+      void loadDocumentDetails(documentId);
+    },
+    [filteredItems, loadDocumentDetails]
+  );
 
   useEffect(() => {
     if (filteredItems.length === 0) return;
@@ -533,25 +804,7 @@ export function TimelineExplorer() {
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100">
-      <header className="bg-slate-950 border-b border-slate-800">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                <span className="text-white font-bold text-lg">P</span>
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold text-white">Timeline Explorer</h1>
-                <p className="text-xs text-slate-400">Browse the archive by date, entity, and theme</p>
-              </div>
-            </div>
-          </div>
-
-          <div className={`px-3 py-1 rounded-full text-sm font-medium ${connected ? 'bg-green-900 text-green-200' : 'bg-red-900 text-red-200'}`}>
-            {connected ? '● Connected' : '● Disconnected'}
-          </div>
-        </div>
-      </header>
+      {/* Header/banner removed as requested */}
 
       <main className="max-w-7xl mx-auto px-4 py-6">
         <div className="flex items-center justify-between gap-3 mb-6">
@@ -567,273 +820,193 @@ export function TimelineExplorer() {
           </button>
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-[19rem_minmax(0,1fr)_24rem] gap-6 items-start">
-          <aside className="space-y-4">
-            <div className="rounded-xl border border-slate-800 bg-slate-800 p-4">
-              <label className="block text-sm font-medium text-slate-200 mb-2">Search</label>
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search titles, summaries, people..."
-                className="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
+        <div className="space-y-6">
+          <div className="rounded-xl border border-slate-800 bg-slate-800 p-4">
+            <label className="block text-sm font-medium text-slate-200 mb-2">Search</label>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search titles, summaries, people, places, and metadata..."
+              className="w-full rounded-lg bg-slate-900 border border-slate-700 px-4 py-3 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
 
-            <div className="rounded-xl border border-slate-800 bg-slate-800 p-4 space-y-4">
-              <div>
-                <p className="text-sm font-medium text-slate-200 mb-2">Filter</p>
-                <div className="flex flex-wrap gap-2">
-                  {(['all', 'dated', 'people', 'places', 'topics'] as TimelineFilter[]).map((filter) => (
-                    <button
-                      key={filter}
-                      type="button"
-                      onClick={() => setSelectedFilter(filter)}
-                      className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${
-                        selectedFilter === filter
-                          ? 'bg-blue-600 text-white border-blue-500'
-                          : 'bg-slate-900 text-slate-300 border-slate-700 hover:bg-slate-700'
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_24rem] gap-6 items-start">
+            <section className="space-y-4">
+              <div className="flex items-center justify-between gap-3 text-sm text-slate-400">
+                <p>{filteredItems.length} matching documents</p>
+                {loading && <p>Loading...</p>}
+              </div>
+
+              {error && (
+                <div className="rounded-xl border border-red-700 bg-red-950 p-4 text-sm text-red-200">
+                  {error}
+                </div>
+              )}
+
+              {!loading && filteredItems.length === 0 && (
+                <div className="rounded-xl border border-slate-800 bg-slate-800 p-10 text-center text-slate-400">
+                  No timeline items match your filters.
+                </div>
+              )}
+
+              <div className="space-y-3">
+                {filteredItems.map((item) => {
+                  const isSelected = item.documentId === selectedTimelineItem?.documentId;
+                  const isOpening = openingDocumentId === item.documentId;
+
+                  return (
+                    <div
+                      key={item.documentId}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => openItem(item)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          openItem(item);
+                        }
+                      }}
+                      className={`relative w-full text-left rounded-xl border p-4 transition-colors cursor-pointer ${
+                        isSelected
+                          ? 'bg-slate-700 border-blue-500 shadow-lg'
+                          : 'bg-slate-800 border-slate-700 hover:bg-slate-700/80'
                       }`}
                     >
-                      {filter}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <p className="text-sm font-medium text-slate-200 mb-2">Year</p>
-                <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto pr-1">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedYear('all')}
-                    className={`px-3 py-1.5 rounded-full text-xs border ${selectedYear === 'all' ? 'bg-slate-200 text-slate-900 border-slate-200' : 'bg-slate-900 text-slate-300 border-slate-700'}`}
-                  >
-                    All
-                  </button>
-                  {years.map((year) => (
-                    <button
-                      key={year}
-                      type="button"
-                      onClick={() => setSelectedYear(year)}
-                      className={`px-3 py-1.5 rounded-full text-xs border ${selectedYear === year ? 'bg-slate-200 text-slate-900 border-slate-200' : 'bg-slate-900 text-slate-300 border-slate-700'}`}
-                    >
-                      {year}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div className="rounded-lg bg-slate-900 p-3">
-                  <p className="text-[11px] text-slate-400">Documents</p>
-                  <p className="text-xl font-semibold text-white">{stats.total}</p>
-                </div>
-                <div className="rounded-lg bg-slate-900 p-3">
-                  <p className="text-[11px] text-slate-400">Dated</p>
-                  <p className="text-xl font-semibold text-white">{stats.dated}</p>
-                </div>
-                <div className="rounded-lg bg-slate-900 p-3">
-                  <p className="text-[11px] text-slate-400">People</p>
-                  <p className="text-xl font-semibold text-white">{stats.peopleCount}</p>
-                </div>
-                <div className="rounded-lg bg-slate-900 p-3">
-                  <p className="text-[11px] text-slate-400">Places</p>
-                  <p className="text-xl font-semibold text-white">{stats.placesCount}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-slate-800 bg-slate-800 p-4 text-sm text-slate-300">
-              <p className="font-medium text-slate-200 mb-2">How to use</p>
-              <ul className="space-y-2 text-sm list-disc pl-5">
-                <li>Search by person, place, topic, or title.</li>
-                <li>Click a timeline item to inspect the document.</li>
-                <li>Use the detail panel to jump to related items.</li>
-              </ul>
-            </div>
-          </aside>
-
-          <section className="space-y-4">
-            <div className="rounded-xl border border-slate-800 bg-slate-800 p-4 flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold text-white">Archive timeline</h2>
-                <p className="text-sm text-slate-400">{filteredItems.length} matching documents</p>
-              </div>
-              {loading && <p className="text-sm text-slate-400">Loading...</p>}
-            </div>
-
-            {error && (
-              <div className="rounded-xl border border-red-700 bg-red-950 p-4 text-sm text-red-200">
-                {error}
-              </div>
-            )}
-
-            {!loading && filteredItems.length === 0 && (
-              <div className="rounded-xl border border-slate-800 bg-slate-800 p-10 text-center text-slate-400">
-                No timeline items match your filters.
-              </div>
-            )}
-
-            <div className="space-y-3">
-              {filteredItems.map((item) => {
-                const isSelected = item.documentId === selectedTimelineItem?.documentId;
-
-                return (
-                  <button
-                    key={item.documentId}
-                    type="button"
-                    onClick={() => openItem(item)}
-                    className={`relative w-full text-left rounded-xl border p-4 transition-colors ${
-                      isSelected
-                        ? 'bg-slate-700 border-blue-500 shadow-lg'
-                        : 'bg-slate-800 border-slate-700 hover:bg-slate-700/80'
-                    }`}
-                  >
-                    <div className="flex gap-4">
-                      <div className="relative flex flex-col items-center pt-1">
-                        <div className={`w-3 h-3 rounded-full ${isSelected ? 'bg-blue-400' : 'bg-slate-500'}`} />
-                        <div className="w-px flex-1 bg-slate-700 mt-2" />
-                      </div>
-
-                      <div className="flex-1 min-w-0">
-                        <div className="flex flex-wrap items-center gap-2 mb-2">
-                          <span className="text-xs px-2 py-0.5 rounded-full bg-slate-900 text-slate-300 border border-slate-700">
-                            {item.dateLabel}
-                          </span>
-                          {item.documentType && (
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-blue-900 text-blue-100 border border-blue-700">
-                              {item.documentType}
-                            </span>
-                          )}
-                          {item.fileFormat && (
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-slate-900 text-slate-300 border border-slate-700">
-                              {item.fileFormat}
-                            </span>
-                          )}
+                      <div className="flex gap-4">
+                        <div className="relative flex flex-col items-center pt-1">
+                          <div className={`w-3 h-3 rounded-full ${isSelected ? 'bg-blue-400' : 'bg-slate-500'}`} />
+                          <div className="w-px flex-1 bg-slate-700 mt-2" />
                         </div>
 
-                        <h3 className="text-base font-semibold text-white break-words">{item.title}</h3>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-slate-900 text-slate-300 border border-slate-700">
+                                {item.dateLabel}
+                              </span>
+                              {item.documentType && (
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-900 text-blue-100 border border-blue-700">
+                                  {item.documentType}
+                                </span>
+                              )}
+                              {item.fileFormat && (
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-slate-900 text-slate-300 border border-slate-700">
+                                  {item.fileFormat}
+                                </span>
+                              )}
+                            </div>
 
-                        {item.summary && <p className="mt-2 text-sm text-slate-300 line-clamp-2">{item.summary}</p>}
-
-                        <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
-                          {item.people.slice(0, 4).map((person) => (
-                            <span key={person} className="px-2 py-0.5 rounded-full bg-emerald-900 text-emerald-100 border border-emerald-700">
-                              {person}
-                            </span>
-                          ))}
-                          {item.places.slice(0, 4).map((place) => (
-                            <span key={place} className="px-2 py-0.5 rounded-full bg-amber-900 text-amber-100 border border-amber-700">
-                              {place}
-                            </span>
-                          ))}
-                          {item.topics.slice(0, 4).map((topic) => (
-                            <span key={topic} className="px-2 py-0.5 rounded-full bg-indigo-900 text-indigo-100 border border-indigo-700">
-                              {topic}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-
-          <aside className="space-y-4 lg:sticky lg:top-4">
-            {selectedTimelineItem ? (
-              <div className="rounded-xl border border-slate-800 bg-slate-800 p-4 space-y-4">
-                <div>
-                  <p className="text-xs text-slate-400">Selected document</p>
-                  <h3 className="text-lg font-semibold text-white break-words">{selectedTimelineItem.title}</h3>
-                  <p className="text-sm text-slate-400 mt-1">{selectedTimelineItem.dateLabel}</p>
-                </div>
-
-                <div className="flex flex-wrap gap-2 text-[11px]">
-                  {selectedTimelineItem.people.map((person) => (
-                    <span key={person} className="px-2 py-0.5 rounded-full bg-emerald-900 text-emerald-100 border border-emerald-700">
-                      {person}
-                    </span>
-                  ))}
-                  {selectedTimelineItem.places.map((place) => (
-                    <span key={place} className="px-2 py-0.5 rounded-full bg-amber-900 text-amber-100 border border-amber-700">
-                      {place}
-                    </span>
-                  ))}
-                  {selectedTimelineItem.topics.map((topic) => (
-                    <span key={topic} className="px-2 py-0.5 rounded-full bg-indigo-900 text-indigo-100 border border-indigo-700">
-                      {topic}
-                    </span>
-                  ))}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => void loadDocumentDetails(selectedTimelineItem.documentId)}
-                  className="w-full px-3 py-2 rounded bg-slate-700 text-slate-100 hover:bg-slate-600 text-sm"
-                >
-                  Refresh details
-                </button>
-
-                {detailsLoading && <p className="text-sm text-slate-400">Loading document details...</p>}
-
-                {selectedDetails && (
-                  <div className="space-y-4">
-                    <div className="rounded border border-slate-700 bg-slate-900 p-3 text-sm text-slate-300">
-                      <p><span className="text-slate-500">File:</span> {selectedDetails.original_file || selectedDetails.document_id}</p>
-                      <p><span className="text-slate-500">Type:</span> {selectedDetails.type || 'unknown'}</p>
-                      <p><span className="text-slate-500">Created by:</span> {selectedDetails.created_by || 'unknown'}</p>
-                      <p><span className="text-slate-500">Format:</span> {selectedDetails.file_format || 'unknown'}</p>
-                    </div>
-
-                    {renderInlinePreview(selectedDetails)}
-
-                    <div className="rounded border border-slate-700 bg-slate-900 p-3">
-                      <button
-                        type="button"
-                        onClick={() => setShowRawJson((current) => !current)}
-                        className="w-full flex items-center justify-between text-sm text-slate-200"
-                      >
-                        <span>Raw JSON</span>
-                        <span>{showRawJson ? 'Hide' : 'Show'}</span>
-                      </button>
-                      {showRawJson && (
-                        <pre className="mt-3 max-h-72 overflow-auto text-xs text-slate-300 whitespace-pre-wrap">
-                          {JSON.stringify(selectedDetails, null, 2)}
-                        </pre>
-                      )}
-                    </div>
-
-                    {relatedDocuments.length > 0 && (
-                      <div className="rounded border border-slate-700 bg-slate-900 p-3">
-                        <p className="text-sm font-semibold text-slate-200 mb-3">Related documents</p>
-                        <div className="space-y-2">
-                          {relatedDocuments.map((item) => (
                             <button
-                              key={item.documentId}
                               type="button"
-                              onClick={() => openItem(item)}
-                              className="w-full text-left rounded border border-slate-700 bg-slate-950 p-2 hover:bg-slate-800"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void openFileInNewWindow(item.documentId);
+                              }}
+                              className="shrink-0 rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-100 hover:bg-slate-700 disabled:opacity-60"
+                              disabled={isOpening}
                             >
-                              <p className="text-sm text-slate-100 break-words">{item.title}</p>
-                              <p className="text-xs text-slate-400">{item.dateLabel}</p>
+                              {isOpening ? 'Opening...' : 'Open File'}
                             </button>
-                          ))}
+                          </div>
+
+                          <h3 className="text-base font-semibold text-white truncate">{item.title}</h3>
+
+                          {(item.passage || item.summary) && (
+                            <p
+                              className="mt-2 text-sm text-slate-300 line-clamp-5"
+                              dangerouslySetInnerHTML={{ __html: highlightText(item.passage || item.summary, query) }}
+                            />
+                          )}
+
+                          {item.matchedPath && (
+                            <p className="mt-2 text-[11px] uppercase tracking-wide text-slate-500">
+                              Hit: {item.matchedPath}
+                            </p>
+                          )}
+
+                          <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+                            {item.people.slice(0, 4).map((person) => (
+                              <span key={person} className="px-2 py-0.5 rounded-full bg-emerald-900 text-emerald-100 border border-emerald-700">
+                                {person}
+                              </span>
+                            ))}
+                            {item.places.slice(0, 4).map((place) => (
+                              <span key={place} className="px-2 py-0.5 rounded-full bg-amber-900 text-amber-100 border border-amber-700">
+                                {place}
+                              </span>
+                            ))}
+                            {item.topics.slice(0, 4).map((topic) => (
+                              <span key={topic} className="px-2 py-0.5 rounded-full bg-indigo-900 text-indigo-100 border border-indigo-700">
+                                {topic}
+                              </span>
+                            ))}
+                          </div>
                         </div>
                       </div>
-                    )}
-                  </div>
-                )}
+                    </div>
+                  );
+                })}
               </div>
-            ) : (
-              <div className="rounded-xl border border-slate-800 bg-slate-800 p-4 text-sm text-slate-400">
-                Click a timeline item to see more detail.
-              </div>
-            )}
-          </aside>
+            </section>
+          </div>
         </div>
       </main>
+
+      {showFullFile && selectedTimelineItem && (
+        <div className="fixed inset-0 z-50 bg-black flex flex-col">
+          <div className="flex items-center justify-between gap-4 border-b border-slate-800 px-6 py-4 bg-slate-950">
+            <div className="flex-1 min-w-0">
+              <p className="text-xs uppercase tracking-wide text-slate-400">Full file view</p>
+              <h3 className="text-xl font-semibold text-white break-words">{selectedTimelineItem.title}</h3>
+              <p className="text-sm text-slate-400 mt-1">{selectedTimelineItem.dateLabel}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowFullFile(false)}
+              className="shrink-0 rounded border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-200 hover:bg-slate-800"
+            >
+              Close
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-auto bg-slate-900">
+            {detailsLoading && <p className="p-6 text-sm text-slate-400">Loading document details...</p>}
+            {selectedDetails ? (
+              <div className="p-6 space-y-6">
+                <div className="rounded border border-slate-700 bg-slate-950 p-4 text-sm text-slate-300">
+                  <p><span className="text-slate-400">File:</span> {selectedDetails.original_file || selectedDetails.document_id}</p>
+                  <p><span className="text-slate-400">Type:</span> {selectedDetails.type || 'unknown'}</p>
+                  <p><span className="text-slate-400">Created by:</span> {selectedDetails.created_by || 'unknown'}</p>
+                  <p><span className="text-slate-400">Format:</span> {selectedDetails.file_format || 'unknown'}</p>
+                </div>
+
+                <div className="max-w-4xl">
+                  {renderInlinePreview(selectedDetails)}
+                </div>
+
+                <div className="rounded border border-slate-700 bg-slate-950 p-4">
+                  <button
+                    type="button"
+                    onClick={() => setShowRawJson((current) => !current)}
+                    className="w-full flex items-center justify-between text-sm text-slate-200 font-medium"
+                  >
+                    <span>Raw JSON</span>
+                    <span>{showRawJson ? '▼' : '▶'}</span>
+                  </button>
+                  {showRawJson && (
+                    <pre className="mt-4 max-h-96 overflow-auto text-xs text-slate-300 whitespace-pre-wrap font-mono">
+                      {JSON.stringify(selectedDetails, null, 2)}
+                    </pre>
+                  )}
+                </div>
+              </div>
+            ) : (
+              !detailsLoading && <p className="p-6 text-sm text-slate-400">No file details available yet.</p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
