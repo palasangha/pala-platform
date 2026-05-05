@@ -46,3 +46,25 @@ logs
 /storage_metadata_replica.db
 /packages/PalaAgents/storage-agent/storage_metadata.db
 /packages/PalaAgents/storage-agent/storage_metadata_replica.db
+
+# Python virtual environments
+**/venv/
+**/.venv/
+venv/
+.venv/
+
+# MinIO data (local buckets)
+.minio-data/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Large binary libs
+**/libtorch_*
+**/*.dylib
+
+# Ignore generated virtualenv site-packages (safety)
+**/site-packages/
+
