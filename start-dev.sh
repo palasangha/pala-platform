@@ -22,6 +22,78 @@ ROOT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 AGENT_VENV_DIR="$(cd "$ROOT_DIR/.." && pwd)/agent-venv"
 cd "$ROOT_DIR"
 
+is_python_healthy() {
+    local py="$1"
+    "$py" -c "import xml.parsers.expat, ensurepip" >/dev/null 2>&1
+}
+
+select_python_cmd() {
+    local candidates=()
+    if [ -n "${PALA_PYTHON:-}" ]; then
+        candidates+=("$PALA_PYTHON")
+    fi
+    candidates+=("python3.12" "python3.11" "python3.10" "python3" "/usr/bin/python3")
+
+    local candidate
+    local resolved
+    for candidate in "${candidates[@]}"; do
+        if [[ "$candidate" == /* ]]; then
+            resolved="$candidate"
+            [ -x "$resolved" ] || continue
+        else
+            resolved="$(command -v "$candidate" 2>/dev/null || true)"
+            [ -n "$resolved" ] || continue
+        fi
+
+        if is_python_healthy "$resolved"; then
+            printf '%s' "$resolved"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+ensure_agent_venv() {
+    local agent_dir="$1"
+    local label="$2"
+
+    if [ ! -d "$agent_dir/venv" ]; then
+        echo -e "${YELLOW}[$label] Creating virtual environment with $BOOTSTRAP_PYTHON...${NC}"
+        "$BOOTSTRAP_PYTHON" -m venv "$agent_dir/venv" || return 1
+    fi
+
+    if [ -x "$agent_dir/venv/bin/python" ]; then
+        if ! "$agent_dir/venv/bin/python" -c "import xml.parsers.expat" >/dev/null 2>&1; then
+            echo -e "${YELLOW}[$label] Existing venv uses broken Python; recreating...${NC}"
+            rm -rf "$agent_dir/venv"
+            "$BOOTSTRAP_PYTHON" -m venv "$agent_dir/venv" || return 1
+        fi
+    fi
+}
+
+get_python_for_agent() {
+    local agent_dir="$1"
+    local agent_python=""
+
+    # Prefer shared agent venv only if it has a working pip
+    if [ -f "$AGENT_VENV_DIR/bin/python" ] && [ -x "$AGENT_VENV_DIR/bin/pip" ] && "$AGENT_VENV_DIR/bin/python" -c "import xml.parsers.expat" >/dev/null 2>&1; then
+        agent_python="$AGENT_VENV_DIR/bin/python"
+    elif [ -f "$AGENT_VENV_DIR/bin/python3" ] && [ -x "$AGENT_VENV_DIR/bin/pip" ] && "$AGENT_VENV_DIR/bin/python3" -c "import xml.parsers.expat" >/dev/null 2>&1; then
+        agent_python="$AGENT_VENV_DIR/bin/python3"
+    elif [ -f "$agent_dir/venv/bin/python" ]; then
+        agent_python="$agent_dir/venv/bin/python"
+    elif [ -f "$agent_dir/venv/bin/python3" ]; then
+        agent_python="$agent_dir/venv/bin/python3"
+    elif [ -f "$agent_dir/venv/Scripts/python.exe" ]; then
+        agent_python="$agent_dir/venv/Scripts/python.exe"
+    elif command -v python3 >/dev/null 2>&1; then
+        agent_python="$(command -v python3)"
+    fi
+
+    printf '%s' "$agent_python"
+}
+
 # Function to cleanup background processes on exit
 cleanup() {
     echo -e "\n${YELLOW}Shutting down services...${NC}"
@@ -60,6 +132,14 @@ cleanup() {
 }
 
 trap cleanup SIGINT SIGTERM
+
+BOOTSTRAP_PYTHON="$(select_python_cmd || true)"
+if [ -z "$BOOTSTRAP_PYTHON" ]; then
+    echo -e "${RED}No healthy Python interpreter found (expat/ensurepip failed).${NC}"
+    echo -e "${YELLOW}Set PALA_PYTHON to a working Python, e.g.:${NC} PALA_PYTHON=$(command -v python3.11) ./start-dev.sh"
+    exit 1
+fi
+echo -e "${GREEN}Using Python interpreter:${NC} $BOOTSTRAP_PYTHON"
 
 # Preflight: clear stale listeners on required ports
 clear_port() {
@@ -157,20 +237,20 @@ sleep 3
 # 2. Start Sample Agent
 echo -e "${GREEN}[2/6] Starting Sample Agent...${NC}"
 cd "$ROOT_DIR/packages/PalaAgents/sample-agent"
-if [ ! -d "venv" ]; then
-    echo -e "${YELLOW}Creating virtual environment...${NC}"
-    /usr/bin/python3 -m venv venv
-fi
-# Use venv python directly (avoids activate script issues on Python 3.14)
-VENV_PYTHON=""
-if [ -f "venv/bin/python" ]; then
-    VENV_PYTHON="venv/bin/python"
-elif [ -f "venv/Scripts/python.exe" ]; then
-    VENV_PYTHON="venv/Scripts/python.exe"
-fi
-if [ -n "$VENV_PYTHON" ]; then
-    $VENV_PYTHON -m pip install --upgrade pip setuptools wheel -q 2>/dev/null || true
-    $VENV_PYTHON -m pip install -q -r requirements.txt 2>/dev/null || true
+    ensure_agent_venv "$ROOT_DIR/packages/PalaAgents/sample-agent" "sample-agent" || true
+    # Determine python interpreter for this agent (prefer per-agent venv if shared venv broken)
+    VENV_PYTHON="$(get_python_for_agent "$ROOT_DIR/packages/PalaAgents/sample-agent")"
+    if [ -n "$VENV_PYTHON" ]; then
+        echo "[sample-agent] Using python: $VENV_PYTHON"
+        # Ensure pip is available and show output if installs fail
+        if ! $VENV_PYTHON -m pip --version >/dev/null 2>&1; then
+            echo "[sample-agent] pip missing in venv, attempting ensurepip..."
+            $VENV_PYTHON -m ensurepip --upgrade || true
+        fi
+        $VENV_PYTHON -m pip install --upgrade pip setuptools wheel || true
+        if [ -f requirements.txt ]; then
+            $VENV_PYTHON -m pip install -r requirements.txt || echo "[sample-agent] pip install failed (see output)"
+        fi
     export MCP_SERVER_URL="ws://localhost:3010"
     export MCP_AGENT_ID="sample-agent"
     $VENV_PYTHON main.py > "$ROOT_DIR/logs/sample-agent.log" 2>&1 &
@@ -185,20 +265,18 @@ sleep 2
 # 3. Start Metadata Extraction Agent
 echo -e "${GREEN}[3/6] Starting Metadata Extraction Agent...${NC}"
 cd "$ROOT_DIR/packages/PalaAgents/metadata-extraction-agent"
-if [ ! -d "venv" ]; then
-    echo -e "${YELLOW}Creating virtual environment...${NC}"
-    /usr/bin/python3 -m venv venv
-fi
-# Use venv python directly (avoids activate script issues on Python 3.14)
-VENV_PYTHON=""
-if [ -f "venv/bin/python" ]; then
-    VENV_PYTHON="venv/bin/python"
-elif [ -f "venv/Scripts/python.exe" ]; then
-    VENV_PYTHON="venv/Scripts/python.exe"
-fi
-if [ -n "$VENV_PYTHON" ]; then
-    $VENV_PYTHON -m pip install --upgrade pip setuptools wheel -q 2>/dev/null || true
-    $VENV_PYTHON -m pip install -q -r requirements.txt 2>/dev/null || true
+    ensure_agent_venv "$ROOT_DIR/packages/PalaAgents/metadata-extraction-agent" "metadata-agent" || true
+    VENV_PYTHON="$(get_python_for_agent "$ROOT_DIR/packages/PalaAgents/metadata-extraction-agent")"
+    if [ -n "$VENV_PYTHON" ]; then
+        echo "[metadata-agent] Using python: $VENV_PYTHON"
+        if ! $VENV_PYTHON -m pip --version >/dev/null 2>&1; then
+            echo "[metadata-agent] pip missing in venv, attempting ensurepip..."
+            $VENV_PYTHON -m ensurepip --upgrade || true
+        fi
+        $VENV_PYTHON -m pip install --upgrade pip setuptools wheel || true
+        if [ -f requirements.txt ]; then
+            $VENV_PYTHON -m pip install -r requirements.txt || echo "[metadata-agent] pip install failed (see output)"
+        fi
     export MCP_SERVER_URL="ws://localhost:3010"
     export MCP_AGENT_ID="metadata-extraction-agent"
     $VENV_PYTHON main.py > "$ROOT_DIR/logs/metadata-agent.log" 2>&1 &
@@ -213,20 +291,18 @@ sleep 2
 # 4. Start Storage Agent
 echo -e "${GREEN}[4/6] Starting Storage Agent...${NC}"
 cd "$ROOT_DIR/packages/PalaAgents/storage-agent"
-if [ ! -d "venv" ]; then
-    echo -e "${YELLOW}Creating virtual environment...${NC}"
-    /usr/bin/python3 -m venv venv
-fi
-# Use venv python directly (avoids activate script issues on Python 3.14)
-VENV_PYTHON=""
-if [ -f "venv/bin/python" ]; then
-    VENV_PYTHON="venv/bin/python"
-elif [ -f "venv/Scripts/python.exe" ]; then
-    VENV_PYTHON="venv/Scripts/python.exe"
-fi
-if [ -n "$VENV_PYTHON" ]; then
-    $VENV_PYTHON -m pip install --upgrade pip setuptools wheel -q 2>/dev/null || true
-    $VENV_PYTHON -m pip install -q -r requirements.txt 2>/dev/null || true
+    ensure_agent_venv "$ROOT_DIR/packages/PalaAgents/storage-agent" "storage-agent" || true
+    VENV_PYTHON="$(get_python_for_agent "$ROOT_DIR/packages/PalaAgents/storage-agent")"
+    if [ -n "$VENV_PYTHON" ]; then
+        echo "[storage-agent] Using python: $VENV_PYTHON"
+        if ! $VENV_PYTHON -m pip --version >/dev/null 2>&1; then
+            echo "[storage-agent] pip missing in venv, attempting ensurepip..."
+            $VENV_PYTHON -m ensurepip --upgrade || true
+        fi
+        $VENV_PYTHON -m pip install --upgrade pip setuptools wheel || true
+        if [ -f requirements.txt ]; then
+            $VENV_PYTHON -m pip install -r requirements.txt || echo "[storage-agent] pip install failed (see output)"
+        fi
     export MCP_SERVER_URL="ws://localhost:3010"
     export MCP_AGENT_ID="storage-agent"
     $VENV_PYTHON main.py > "$ROOT_DIR/logs/storage-agent.log" 2>&1 &
@@ -241,20 +317,18 @@ sleep 2
 # 5. Start Chat Agent
 echo -e "${GREEN}[5/6] Starting Chat Agent...${NC}"
 cd "$ROOT_DIR/packages/PalaAgents/chat-agent"
-if [ ! -d "venv" ]; then
-    echo -e "${YELLOW}Creating virtual environment...${NC}"
-    /usr/bin/python3 -m venv venv
-fi
-# Use venv python directly (avoids activate script issues on Python 3.14)
-VENV_PYTHON=""
-if [ -f "venv/bin/python" ]; then
-    VENV_PYTHON="venv/bin/python"
-elif [ -f "venv/Scripts/python.exe" ]; then
-    VENV_PYTHON="venv/Scripts/python.exe"
-fi
-if [ -n "$VENV_PYTHON" ]; then
-    $VENV_PYTHON -m pip install --upgrade pip setuptools wheel -q 2>/dev/null || true
-    $VENV_PYTHON -m pip install -q -r requirements.txt 2>/dev/null || true
+    ensure_agent_venv "$ROOT_DIR/packages/PalaAgents/chat-agent" "chat-agent" || true
+    VENV_PYTHON="$(get_python_for_agent "$ROOT_DIR/packages/PalaAgents/chat-agent")"
+    if [ -n "$VENV_PYTHON" ]; then
+        echo "[chat-agent] Using python: $VENV_PYTHON"
+        if ! $VENV_PYTHON -m pip --version >/dev/null 2>&1; then
+            echo "[chat-agent] pip missing in venv, attempting ensurepip..."
+            $VENV_PYTHON -m ensurepip --upgrade || true
+        fi
+        $VENV_PYTHON -m pip install --upgrade pip setuptools wheel || true
+        if [ -f requirements.txt ]; then
+            $VENV_PYTHON -m pip install -r requirements.txt || echo "[chat-agent] pip install failed (see output)"
+        fi
     export MCP_SERVER_URL="ws://localhost:3010"
     export MCP_AGENT_ID="chat-agent"
     $VENV_PYTHON main.py > "$ROOT_DIR/logs/chat-agent.log" 2>&1 &

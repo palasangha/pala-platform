@@ -1,35 +1,3 @@
-ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-# --- Python venv for agent ---
-AGENT_VENV_DIR="$ROOT_DIR/agent-venv"
-echo "[setup-dev] Setting up Python venv for agent at $AGENT_VENV_DIR..."
-if [[ ! -d "$AGENT_VENV_DIR" ]]; then
-    python3 -m venv "$AGENT_VENV_DIR"
-    echo "[setup-dev] Created venv at $AGENT_VENV_DIR"
-else
-    echo "[setup-dev] venv already exists at $AGENT_VENV_DIR"
-fi
-
-echo "[setup-dev] Installing agent Python dependencies (python-dotenv, boto3, websockets)..."
-success=false
-"$AGENT_VENV_DIR/bin/pip" install --upgrade pip >/dev/null 2>&1 && \
-"$AGENT_VENV_DIR/bin/pip" install python-dotenv boto3 websockets >/dev/null 2>&1 && \
-success=true
-if [[ "$success" != "true" ]]; then
-    echo "[setup-dev] WARNING: Could not install agent Python dependencies"
-    echo "[setup-dev] WORKAROUND: Agents will use system Python directly"
-    echo "[setup-dev] If you need the agent-venv, run:"
-    echo "[setup-dev]   brew reinstall python@3.13  # or python@3.14"
-    echo "[setup-dev]   $ROOT_DIR/setup-dev.sh"
-else
-    echo "[setup-dev] Python dependencies installed in venv."
-fi
-
-echo "[setup-dev] To run the agent, use:"
-echo "  source $AGENT_VENV_DIR/bin/activate"
-echo "  python packages/PalaAgents/storage-agent/main.py"
-echo "Or run directly:"
-echo "  $AGENT_VENV_DIR/bin/python packages/PalaAgents/storage-agent/main.py"
-echo "[setup-dev] Python setup complete."
 #!/bin/bash
 
 # Pala Platform - Development Environment Setup Gate
@@ -45,6 +13,71 @@ NC='\033[0m'
 
 command_exists() {
     command -v "$1" >/dev/null 2>&1
+}
+
+is_python_healthy() {
+    local py="$1"
+    "$py" -c "import xml.parsers.expat, ensurepip" >/dev/null 2>&1
+}
+
+select_python_cmd() {
+    local candidates=()
+    if [[ -n "${PALA_PYTHON:-}" ]]; then
+        candidates+=("$PALA_PYTHON")
+    fi
+    candidates+=("python3.12" "python3.11" "python3.10" "python3" "/usr/bin/python3")
+
+    local candidate
+    local resolved
+    for candidate in "${candidates[@]}"; do
+        if [[ "$candidate" == /* ]]; then
+            resolved="$candidate"
+            [[ -x "$resolved" ]] || continue
+        else
+            resolved="$(command -v "$candidate" 2>/dev/null || true)"
+            [[ -n "$resolved" ]] || continue
+        fi
+
+        if is_python_healthy "$resolved"; then
+            printf '%s' "$resolved"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+setup_shared_agent_venv() {
+    AGENT_VENV_DIR="$ROOT_DIR/agent-venv"
+    echo "[setup-dev] Setting up Python venv for agent at $AGENT_VENV_DIR..."
+
+    if [[ ! -d "$AGENT_VENV_DIR" ]]; then
+        "$BOOTSTRAP_PYTHON" -m venv "$AGENT_VENV_DIR" || true
+        echo "[setup-dev] Created venv at $AGENT_VENV_DIR"
+    fi
+
+    if [[ -x "$AGENT_VENV_DIR/bin/python" ]] && ! "$AGENT_VENV_DIR/bin/python" -c "import xml.parsers.expat" >/dev/null 2>&1; then
+        echo "[setup-dev] WARNING: shared venv uses broken Python; recreating..."
+        rm -rf "$AGENT_VENV_DIR"
+        "$BOOTSTRAP_PYTHON" -m venv "$AGENT_VENV_DIR" || true
+    fi
+
+    if [[ -x "$AGENT_VENV_DIR/bin/python" ]]; then
+        "$AGENT_VENV_DIR/bin/python" -m ensurepip --upgrade || true
+        "$AGENT_VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel || true
+    fi
+
+    echo "[setup-dev] Installing agent Python dependencies (python-dotenv, boto3, websockets)..."
+    if [[ -x "$AGENT_VENV_DIR/bin/python" ]]; then
+        if "$AGENT_VENV_DIR/bin/python" -m pip install python-dotenv boto3 websockets; then
+            echo "[setup-dev] Python dependencies installed in shared venv."
+        else
+            echo "[setup-dev] WARNING: Could not install one or more dependencies into $AGENT_VENV_DIR"
+            echo "[setup-dev] Pip output above shows the root cause."
+        fi
+    else
+        echo "[setup-dev] WARNING: shared venv python missing; per-agent venvs will be used"
+    fi
 }
 
 ollama_model_installed() {
@@ -207,12 +240,21 @@ prepare_workspace() {
         for agent_dir in "$pala_agents_dir"/*; do
             if [[ -d "$agent_dir" && -f "$agent_dir/requirements.txt" ]]; then
                 if [[ ! -d "$agent_dir/venv" ]]; then
-                    /usr/bin/python3 -m venv "$agent_dir/venv" >/dev/null 2>&1 || true
+                    "$BOOTSTRAP_PYTHON" -m venv "$agent_dir/venv" >/dev/null 2>&1 || true
+                fi
+                if [[ -x "$agent_dir/venv/bin/python" ]] && ! "$agent_dir/venv/bin/python" -c "import xml.parsers.expat" >/dev/null 2>&1; then
+                    echo "[setup-dev] WARNING: Recreating broken venv for $agent_dir"
+                    rm -rf "$agent_dir/venv"
+                    "$BOOTSTRAP_PYTHON" -m venv "$agent_dir/venv" >/dev/null 2>&1 || true
                 fi
                 if [[ -d "$agent_dir/venv" ]]; then
                     # Use venv python directly instead of sourcing activate
-                    if [[ -f "$agent_dir/venv/bin/python" ]]; then
-                        "$agent_dir/venv/bin/python" -m pip install -q -r "$agent_dir/requirements.txt" >/dev/null 2>&1 || true
+                    if [[ -x "$agent_dir/venv/bin/python" ]]; then
+                        "$agent_dir/venv/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 || true
+                        "$agent_dir/venv/bin/python" -m pip install --upgrade pip setuptools wheel >/dev/null 2>&1 || true
+                        if ! "$agent_dir/venv/bin/python" -m pip install -r "$agent_dir/requirements.txt"; then
+                            echo "[setup-dev] WARNING: Failed to install requirements for $agent_dir. See pip output above."
+                        fi
                     fi
                 fi
             fi
@@ -225,12 +267,21 @@ prepare_workspace() {
         for agent_dir in "$agents_dir"/*; do
             if [[ -d "$agent_dir" && -f "$agent_dir/requirements.txt" ]]; then
                 if [[ ! -d "$agent_dir/venv" ]]; then
-                    /usr/bin/python3 -m venv "$agent_dir/venv" >/dev/null 2>&1 || true
+                    "$BOOTSTRAP_PYTHON" -m venv "$agent_dir/venv" >/dev/null 2>&1 || true
+                fi
+                if [[ -x "$agent_dir/venv/bin/python" ]] && ! "$agent_dir/venv/bin/python" -c "import xml.parsers.expat" >/dev/null 2>&1; then
+                    echo "[setup-dev] WARNING: Recreating broken venv for $agent_dir"
+                    rm -rf "$agent_dir/venv"
+                    "$BOOTSTRAP_PYTHON" -m venv "$agent_dir/venv" >/dev/null 2>&1 || true
                 fi
                 if [[ -d "$agent_dir/venv" ]]; then
                     # Use venv python directly instead of sourcing activate
-                    if [[ -f "$agent_dir/venv/bin/python" ]]; then
-                        "$agent_dir/venv/bin/python" -m pip install -q -r "$agent_dir/requirements.txt" >/dev/null 2>&1 || true
+                    if [[ -x "$agent_dir/venv/bin/python" ]]; then
+                        "$agent_dir/venv/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 || true
+                        "$agent_dir/venv/bin/python" -m pip install --upgrade pip setuptools wheel >/dev/null 2>&1 || true
+                        if ! "$agent_dir/venv/bin/python" -m pip install -r "$agent_dir/requirements.txt"; then
+                            echo "[setup-dev] WARNING: Failed to install requirements for $agent_dir. See pip output above."
+                        fi
                     fi
                 fi
             fi
@@ -241,6 +292,15 @@ prepare_workspace() {
 OS=$(get_os)
 ROOT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 MISSING=()
+BOOTSTRAP_PYTHON="$(select_python_cmd || true)"
+
+if [[ -z "$BOOTSTRAP_PYTHON" ]]; then
+    echo -e "${RED}No healthy Python interpreter found (expat/ensurepip failed).${NC}"
+    echo -e "${YELLOW}Set PALA_PYTHON to a working interpreter, e.g.:${NC} PALA_PYTHON=$(command -v python3.11) ./setup-dev.sh"
+    exit 1
+fi
+
+echo -e "${GREEN}[setup-dev] Using Python interpreter:${NC} $BOOTSTRAP_PYTHON"
 # Ollama model for metadata extraction agent (can be overridden with OLLAMA_MODEL env var)
 # Recommended models: mistral, neural-chat, or other instruction-tuned models
 OLLAMA_MODEL_REQUIRED="${OLLAMA_MODEL:-mistral}"
@@ -271,6 +331,7 @@ fi
 
 echo -e "${GREEN}✓ All required dependencies are installed${NC}"
 echo -e "${BLUE}Phase 2/2: Prepare local workspace deps${NC}"
+setup_shared_agent_venv
 prepare_workspace
 
 

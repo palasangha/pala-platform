@@ -52,6 +52,11 @@ logs
 **/.venv/
 venv/
 .venv/
+agent-venv/
+
+# Python caches
+**/__pycache__/
+*.pyc
 
 # MinIO data (local buckets)
 .minio-data/

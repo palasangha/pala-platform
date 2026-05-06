@@ -6,6 +6,8 @@ import { useWebSocket } from '@/hooks/useWebSocket';
 interface StoredContent {
   document_id: string;
   type: string;
+  metadata_score?: number;
+  missing_metadata_fields?: string[];
   file_hash?: string;
   original_file: string;
   file_format: string;
@@ -55,6 +57,7 @@ export function ContentBrowser() {
   const [contents, setContents] = useState<StoredContent[]>([]);
   const [loading, setLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [savingMetadataId, setSavingMetadataId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pagination, setPagination] = useState<PaginationState>({
     page: 1,
@@ -66,9 +69,11 @@ export function ContentBrowser() {
     search: '',
     type: '',
   });
+  const [reviewOnly, setReviewOnly] = useState(true);
   const [selectedContent, setSelectedContent] = useState<StoredContent | null>(
     null
   );
+  const [metadataDraft, setMetadataDraft] = useState('{}');
 
   const extractToolResult = (response: any): any => {
     const candidates = [
@@ -86,6 +91,11 @@ export function ContentBrowser() {
     return undefined;
   };
 
+  const formatMetadataScore = (score?: number) => {
+    const safeScore = typeof score === 'number' ? score : 0;
+    return `${safeScore.toFixed(0)}%`;
+  };
+
   const fetchContent = useCallback(() => {
     if (!connected || !client) return;
 
@@ -98,6 +108,9 @@ export function ContentBrowser() {
         offset: (pagination.page - 1) * pagination.pageSize,
         ...(filters.type && { type: filters.type }),
         ...(filters.createdBy && { created_by: filters.createdBy }),
+        needs_metadata: reviewOnly,
+        sort_by: 'metadata_score',
+        ...(reviewOnly ? { score_lt: 100 } : {}),
       };
 
       const request = {
@@ -157,14 +170,14 @@ export function ContentBrowser() {
       setError(err instanceof Error ? err.message : 'Failed to fetch documents');
       setLoading(false);
     }
-  }, [connected, client, pagination.page, pagination.pageSize, filters]);
+  }, [connected, client, pagination.page, pagination.pageSize, filters, reviewOnly]);
 
   useEffect(() => {
     fetchContent();
   }, [fetchContent]);
 
   const viewDocument = useCallback(
-    (documentId: string, includeOriginalFile: boolean = false) => {
+    (documentId: string, includeOriginalFile: boolean = false, editMetadata: boolean = false) => {
       if (!client || !connected) return;
 
       setLoading(true);
@@ -203,6 +216,9 @@ export function ContentBrowser() {
             if (fullDoc?.document_id) {
               console.log('[ContentBrowser] Document retrieved successfully:', fullDoc);
               setSelectedContent(fullDoc as StoredContent);
+              if (editMetadata) {
+                setMetadataDraft(JSON.stringify(fullDoc.metadata || {}, null, 2));
+              }
             } else {
               setError('Could not find document in response');
               console.error('[ContentBrowser] Document not found in response');
@@ -220,6 +236,14 @@ export function ContentBrowser() {
       client.addEventListener('message', handleMessage);
     },
     [client, connected]
+  );
+
+  const openMetadataEditor = useCallback(
+    (doc: StoredContent) => {
+      console.log('[ContentBrowser] Opening metadata editor for:', doc.document_id);
+      viewDocument(doc.document_id, false, true);
+    },
+    [viewDocument]
   );
 
   const downloadOriginalDocument = useCallback(
@@ -364,17 +388,128 @@ export function ContentBrowser() {
     [client, connected, fetchContent, selectedContent]
   );
 
+  const saveMetadata = useCallback(() => {
+    if (!client || !connected || !selectedContent) return;
+
+    setSavingMetadataId(selectedContent.document_id);
+    setError(null);
+
+    let parsedMetadata: Record<string, any>;
+    try {
+      parsedMetadata = JSON.parse(metadataDraft || '{}');
+    } catch (parseError) {
+      setError(parseError instanceof Error ? parseError.message : 'Invalid metadata JSON');
+      setSavingMetadataId(null);
+      return;
+    }
+
+    const requestId = `update-metadata-${Date.now()}`;
+    const request = {
+      jsonrpc: '2.0',
+      method: 'tools/invoke',
+      params: {
+        agentId: 'storage-agent',
+        toolName: 'update_document_metadata',
+        arguments: {
+          document_id: selectedContent.document_id,
+          metadata: parsedMetadata,
+          updated_by: 'web-storage-browser',
+          replace: false,
+        },
+      },
+      id: requestId,
+    };
+
+    console.log('[ContentBrowser] Saving metadata for document:', selectedContent.document_id);
+    client.send(JSON.stringify(request));
+
+    const handleMessage = (event: MessageEvent) => {
+      try {
+        const response = JSON.parse(event.data);
+        if (response.id !== requestId) {
+          return;
+        }
+
+        if (response.error) {
+          setError(response.error.message || 'Failed to update metadata');
+          console.error('[ContentBrowser] Error updating metadata:', response.error);
+        } else {
+          const result = extractToolResult(response);
+          if (result?.success) {
+            setSelectedContent((current) =>
+              current
+                ? {
+                    ...current,
+                    metadata: result.metadata || parsedMetadata,
+                    updated_at: result.updated_at || current.updated_at,
+                    version: result.version || current.version,
+                    metadata_score: result.metadata_score ?? current.metadata_score,
+                    missing_metadata_fields: result.missing_metadata_fields ?? current.missing_metadata_fields,
+                  }
+                : current
+            );
+            setMetadataDraft(JSON.stringify(result.metadata || parsedMetadata, null, 2));
+            fetchContent();
+            console.log('[ContentBrowser] Metadata updated successfully:', result);
+          } else {
+            setError(result?.message || 'Metadata update did not succeed');
+          }
+        }
+      } catch (e) {
+        setError('Failed to parse metadata update response');
+        console.error('[ContentBrowser] Failed to parse metadata update response:', e);
+      } finally {
+        setSavingMetadataId(null);
+        client.removeEventListener('message', handleMessage);
+      }
+    };
+
+    client.addEventListener('message', handleMessage);
+  }, [client, connected, fetchContent, metadataDraft, selectedContent]);
+
   const totalPages = Math.ceil(pagination.total / pagination.pageSize);
+  const visibleContents = contents.filter((content) => {
+    const query = filters.search.trim().toLowerCase();
+    if (!query) return true;
+    return [
+      content.document_id,
+      content.original_file,
+      content.created_by,
+      content.type,
+      ...(content.missing_metadata_fields || []),
+    ]
+      .join(' ')
+      .toLowerCase()
+      .includes(query);
+  });
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-slate-900">
-          Stored Content
-        </h2>
-        <span className="text-sm text-slate-600">
-          {pagination.total} items
-        </span>
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">
+            Metadata Review
+          </h2>
+          <p className="text-sm text-slate-600">
+            Low-score items first. Edit one document at a time.
+          </p>
+        </div>
+        <div className="text-right">
+          <span className="text-sm text-slate-600 block">
+            {pagination.total} items
+          </span>
+          <label className="inline-flex items-center gap-2 text-xs text-slate-500 mt-1">
+            <input
+              type="checkbox"
+              checked={reviewOnly}
+              onChange={(e) => {
+                setReviewOnly(e.target.checked);
+                setPagination((p) => ({ ...p, page: 1 }));
+              }}
+            />
+            Show only incomplete
+          </label>
+        </div>
       </div>
 
       {/* Filters */}
@@ -450,6 +585,12 @@ export function ContentBrowser() {
                   Document ID
                 </th>
                 <th className="px-4 py-2 text-left font-medium text-slate-300">
+                  Score
+                </th>
+                <th className="px-4 py-2 text-left font-medium text-slate-300">
+                  Missing Metadata
+                </th>
+                <th className="px-4 py-2 text-left font-medium text-slate-300">
                   Type
                 </th>
                 <th className="px-4 py-2 text-left font-medium text-slate-300">
@@ -469,26 +610,55 @@ export function ContentBrowser() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-6 text-center">
+                  <td colSpan={7} className="px-4 py-6 text-center">
                     <div className="flex justify-center">
                       <div className="animate-spin h-5 w-5 text-blue-500"></div>
                     </div>
                   </td>
                 </tr>
-              ) : contents.length === 0 ? (
+              ) : visibleContents.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
+                  <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
                     No documents found
                   </td>
                 </tr>
               ) : (
-                contents.map((content) => (
+                visibleContents.map((content) => (
                   <tr
                     key={content.document_id}
                     className="border-b border-slate-600 hover:bg-slate-600"
                   >
                     <td className="px-4 py-2 font-mono text-xs text-slate-400">
                       {content.document_id.substring(0, 12)}...
+                    </td>
+                    <td className="px-4 py-2 text-slate-100">
+                      <span
+                        className={`inline-flex items-center px-2 py-1 text-xs rounded-full ${
+                          (content.metadata_score || 0) >= 80
+                            ? 'bg-emerald-900 text-emerald-200'
+                            : (content.metadata_score || 0) >= 50
+                              ? 'bg-amber-900 text-amber-200'
+                              : 'bg-red-900 text-red-200'
+                        }`}
+                      >
+                        {formatMetadataScore(content.metadata_score)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-slate-300">
+                      <div className="flex flex-wrap gap-1">
+                        {(content.missing_metadata_fields || []).length > 0 ? (
+                          content.missing_metadata_fields?.map((field) => (
+                            <span
+                              key={field}
+                              className="inline-block px-2 py-1 bg-slate-800 text-slate-200 text-[11px] rounded"
+                            >
+                              {field}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-emerald-300 text-xs">Complete</span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-2 text-slate-100">
                       <span className="inline-block px-2 py-1 bg-blue-900 text-blue-200 text-xs rounded">
@@ -513,6 +683,12 @@ export function ContentBrowser() {
                           className="text-blue-400 hover:text-blue-300 text-xs font-medium"
                         >
                           View
+                        </button>
+                        <button
+                          onClick={() => openMetadataEditor(content)}
+                          className="text-emerald-400 hover:text-emerald-300 text-xs font-medium"
+                        >
+                          Update metadata
                         </button>
                         <button
                           onClick={() => deleteDocument(content.document_id)}
@@ -647,16 +823,67 @@ export function ContentBrowser() {
                 </div>
               </div>
 
-              {selectedContent.metadata && Object.keys(selectedContent.metadata).length > 0 && (
-                <div className="bg-slate-50 p-3 rounded text-sm space-y-2">
+              <div className="bg-slate-50 p-3 rounded text-sm space-y-2 border border-slate-200">
+                <div className="flex items-center justify-between gap-3">
                   <label className="text-xs font-medium text-slate-600">
-                    Metadata
+                    Metadata score
                   </label>
-                  <pre className="text-xs text-slate-700 overflow-auto max-h-40 bg-white p-2 rounded border border-slate-200">
-                    {JSON.stringify(selectedContent.metadata, null, 2)}
-                  </pre>
+                  <span className="text-xs text-slate-500">
+                    {formatMetadataScore(selectedContent.metadata_score)}
+                  </span>
                 </div>
-              )}
+                <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-blue-600"
+                    style={{ width: `${selectedContent.metadata_score || 0}%` }}
+                  />
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {(selectedContent.missing_metadata_fields || []).length > 0 ? (
+                    selectedContent.missing_metadata_fields?.map((field) => (
+                      <span
+                        key={field}
+                        className="inline-block px-2 py-1 bg-slate-800 text-slate-200 text-[11px] rounded"
+                      >
+                        {field}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-emerald-700 text-xs">No missing fields</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-slate-50 p-3 rounded text-sm space-y-2 border border-slate-200">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="text-xs font-medium text-slate-600">
+                    Metadata JSON
+                  </label>
+                  <span className="text-[11px] text-slate-500">
+                    Edit one item at a time, then save.
+                  </span>
+                </div>
+                <textarea
+                  value={metadataDraft}
+                  onChange={(e) => setMetadataDraft(e.target.value)}
+                  className="w-full min-h-56 px-3 py-2 text-xs font-mono bg-white border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={saveMetadata}
+                    disabled={savingMetadataId === selectedContent.document_id}
+                    className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    {savingMetadataId === selectedContent.document_id ? 'Saving...' : 'Save Metadata'}
+                  </button>
+                  <button
+                    onClick={() => setMetadataDraft(JSON.stringify(selectedContent.metadata || {}, null, 2))}
+                    className="px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-900 hover:bg-slate-50"
+                  >
+                    Reset
+                  </button>
+                </div>
+              </div>
 
               {selectedContent.processed_data !== undefined && selectedContent.processed_data !== null && (
                 <div className="bg-slate-50 p-3 rounded text-sm space-y-2">

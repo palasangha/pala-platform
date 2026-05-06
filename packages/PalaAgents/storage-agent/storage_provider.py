@@ -77,6 +77,17 @@ class StorageProvider(ABC):
         pass
 
     @abstractmethod
+    async def update_document_metadata(
+        self,
+        document_id: str,
+        metadata: Dict[str, Any],
+        updated_by: str = 'api',
+        replace: bool = False,
+    ) -> Optional[Document]:
+        """Update document metadata (merge by default)."""
+        pass
+
+    @abstractmethod
     async def list_documents(
         self,
         doc_type: Optional[str] = None,

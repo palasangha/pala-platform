@@ -37,6 +37,7 @@ import websockets
 from providers.s3_provider_real import S3ProviderReal
 
 from provider_factory import ProviderFactory, get_provider
+from metadata_utils import extract_metadata_health
 from storage_provider import StorageProvider
 
 
@@ -327,6 +328,18 @@ def build_compact_document_index(doc) -> Dict[str, Any]:
         'document_date': document_date,
         'search_text': combine_searchable_text(metadata, processed_data, getattr(doc, 'original_file', '')) + "\n" + "\n".join(searchable_fragments),
     }
+
+
+def build_metadata_health(doc) -> Dict[str, Any]:
+    """Build an equal-weight metadata completeness summary for a document."""
+    metadata = getattr(doc, 'metadata', {}) or {}
+    processed_data = getattr(doc, 'processed_data', {}) or {}
+    health = extract_metadata_health(metadata, processed_data)
+    logger.info(
+        f"[METADATA-SCORE] doc_id={getattr(doc, 'id', 'unknown')} score={health['score']} "
+        f"missing={health['missing_fields']}"
+    )
+    return health
 
 
 def generate_embedding(text: str, embedding_model_instance=None) -> Optional[list]:
@@ -736,6 +749,9 @@ async def tool_retrieve_document(params: Dict[str, Any]) -> Dict[str, Any]:
             'message': message,
             'duplicate': duplicate_status
         }
+        metadata_health = build_metadata_health(doc)
+        result['metadata_score'] = metadata_health['score']
+        result['missing_metadata_fields'] = metadata_health['missing_fields']
         
         # Retrieve original file if requested
         original_file_data = None
@@ -788,12 +804,15 @@ async def tool_list_documents(params: Dict[str, Any]) -> Dict[str, Any]:
         created_by = params.get('created_by')
         limit = int(params.get('limit', 100))
         offset = int(params.get('offset', 0))
+        needs_metadata = bool(params.get('needs_metadata', False))
+        score_lt = params.get('score_lt')
+        sort_by = params.get('sort_by', 'created_at')
 
         result = await provider.list_documents(
             doc_type=doc_type,
             created_by=created_by,
-            limit=limit,
-            offset=offset
+            limit=max(limit, 10000) if (needs_metadata or score_lt is not None or sort_by == 'metadata_score') else limit,
+            offset=0 if (needs_metadata or score_lt is not None or sort_by == 'metadata_score') else offset,
         )
 
         documents = []
@@ -807,6 +826,11 @@ async def tool_list_documents(params: Dict[str, Any]) -> Dict[str, Any]:
                 logger.debug(f"tool_list_documents: retrieve_document fallback failed for doc.id={doc.id}: {detail_error}")
 
             compact_index = build_compact_document_index(full_doc)
+            metadata_health = build_metadata_health(full_doc)
+            if score_lt is not None and metadata_health['score'] >= float(score_lt):
+                continue
+            if needs_metadata and metadata_health['score'] >= 100:
+                continue
             doc_info = {
                 'document_id': full_doc.id,
                 'type': full_doc.type,
@@ -823,18 +847,74 @@ async def tool_list_documents(params: Dict[str, Any]) -> Dict[str, Any]:
                 'topics': compact_index['topics'],
                 'document_date': compact_index['document_date'],
                 'search_text': compact_index['search_text'],
+                'metadata_score': metadata_health['score'],
+                'missing_metadata_fields': metadata_health['missing_fields'],
             }
             logger.debug(f"tool_list_documents: doc.id={full_doc.id}, storage_location={doc_info['storage_location']}, provider_id={doc_info['provider_id']}")
             documents.append(doc_info)
+
+        if needs_metadata or sort_by == 'metadata_score' or score_lt is not None:
+            documents.sort(key=lambda item: (item.get('metadata_score', 100.0), item.get('created_at', '')), reverse=False)
+
+        total_count = len(documents)
+        paged_documents = documents[offset: offset + limit]
         result_dict = {
-            'count': result['count'],
-            'total': result['total'],
-            'limit': result['limit'],
-            'offset': result['offset'],
-            'documents': documents
+            'count': len(paged_documents),
+            'total': total_count,
+            'limit': limit,
+            'offset': offset,
+            'documents': paged_documents
         }
         logger.info(f"[TOOL-RETURN] list_documents returned: {json.dumps(result_dict)[:500]}")
         return result_dict
+
+    except Exception as e:
+        logger.error(f"Error in update_document_metadata: {e}", exc_info=True)
+        raise
+
+
+async def tool_update_document_metadata(params: Dict[str, Any]) -> Dict[str, Any]:
+    logger.info(f"[TOOL-INVOKE] update_document_metadata called with params: {json.dumps(params)[:500]}")
+    for h in logger.handlers:
+        try:
+            h.flush()
+        except Exception:
+            pass
+    try:
+        document_id = params.get('document_id')
+        metadata = params.get('metadata')
+        updated_by = params.get('updated_by', 'ui')
+        replace = bool(params.get('replace', False))
+
+        if not document_id:
+            raise ValueError('document_id is required')
+        if metadata is None:
+            raise ValueError('metadata is required')
+
+        logger.info(f"[METADATA-UPDATE] document_id={document_id} updated_by={updated_by} replace={replace}")
+        updated_doc = await provider.update_document_metadata(
+            document_id=document_id,
+            metadata=metadata,
+            updated_by=updated_by,
+            replace=replace,
+        )
+
+        if not updated_doc:
+            return {'success': False, 'message': f'Document not found: {document_id}'}
+
+        health = build_metadata_health(updated_doc)
+        result = {
+            'success': True,
+            'document_id': updated_doc.id,
+            'updated_at': updated_doc.updated_at,
+            'version': updated_doc.version,
+            'metadata': updated_doc.metadata,
+            'metadata_score': health['score'],
+            'missing_metadata_fields': health['missing_fields'],
+            'message': 'Metadata updated successfully',
+        }
+        logger.info(f"[TOOL-RETURN] update_document_metadata returned: {json.dumps(result)[:500]}")
+        return result
 
     except Exception as e:
         logger.error(f"Error in list_documents: {e}", exc_info=True)
@@ -1201,6 +1281,7 @@ TOOLS: Dict[str, Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]] = {
     "store_document": tool_store_document,
     "retrieve_document": tool_retrieve_document,
     "list_documents": tool_list_documents,
+    "update_document_metadata": tool_update_document_metadata,
     "semantic_search_documents": tool_semantic_search_documents,
     "store_extraction": tool_store_extraction,
     "retrieve_extraction": tool_retrieve_extraction,
@@ -1278,8 +1359,26 @@ async def register_tools(ws: websockets.WebSocketClientProtocol, agent_id: str) 
                     "type": {"type": "string", "description": "Filter by document type"},
                     "created_by": {"type": "string", "description": "Filter by creator"},
                     "limit": {"type": "number", "default": 100},
-                    "offset": {"type": "number", "default": 0}
+                    "offset": {"type": "number", "default": 0},
+                    "needs_metadata": {"type": "boolean", "default": False, "description": "Only include documents with incomplete metadata"},
+                    "score_lt": {"type": "number", "description": "Only include documents with metadata score below this threshold"},
+                    "sort_by": {"type": "string", "default": "created_at", "description": "Sort mode (created_at or metadata_score)"},
                 }
+            }
+        },
+        {
+            "name": "update_document_metadata",
+            "description": "Update metadata fields for a single stored document",
+            "agentId": agent_id,
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "document_id": {"type": "string"},
+                    "metadata": {"type": "object", "description": "Partial or full metadata object to merge into the document"},
+                    "updated_by": {"type": "string", "default": "ui"},
+                    "replace": {"type": "boolean", "default": False, "description": "Replace metadata instead of merging"}
+                },
+                "required": ["document_id", "metadata"]
             }
         },
         {
@@ -1400,7 +1499,8 @@ async def handle_invoke(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
         result = await TOOLS[name](arguments)
         duration_ms = int((time.time() - start_time) * 1000)
         logger.info(f"[TOOL-SUCCESS] {name} completed in {duration_ms}ms")
-        return {"result": result}
+        # Return the tool's result directly (don't double-wrap in a 'result' key)
+        return result
     except Exception as e:
         duration_ms = int((time.time() - start_time) * 1000)
         logger.error(f"[TOOL-FAILED] {name} failed after {duration_ms}ms: {e}")

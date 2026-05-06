@@ -18,6 +18,7 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone
 from pathlib import Path
 from storage_provider import StorageProvider, Document, Extraction
+from metadata_utils import deep_merge_dict
 
 logger = logging.getLogger(__name__)
 
@@ -486,6 +487,83 @@ class SQLiteProvider(StorageProvider):
         )
         logger.debug(f"retrieve_document: doc.id={doc.id}, storage_location={doc.storage_location}, provider_id={doc.provider_id}")
         return doc
+
+    async def update_document_metadata(
+        self,
+        document_id: str,
+        metadata: Dict[str, Any],
+        updated_by: str = 'api',
+        replace: bool = False,
+    ) -> Optional[Document]:
+        """Update metadata for a single document and return the refreshed row."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute(
+                'SELECT metadata, version FROM documents WHERE id = ? AND deleted_at IS NULL',
+                (document_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                logger.warning(f"[METADATA-UPDATE] Document not found: {document_id}")
+                conn.close()
+                return None
+
+            current_metadata = json.loads(row[0]) if row[0] else {}
+            next_metadata = metadata or {}
+            merged_metadata = next_metadata if replace else deep_merge_dict(current_metadata, next_metadata)
+            next_version = int(row[1] or 1) + 1
+            now = datetime.now(timezone.utc).isoformat()
+
+            cursor.execute(
+                'UPDATE documents SET metadata = ?, updated_at = ?, version = ? WHERE id = ?',
+                (json.dumps(merged_metadata), now, next_version, document_id),
+            )
+            conn.commit()
+
+            cursor.execute('''
+                SELECT id, type, original_file, file_format, processed_data, metadata,
+                       app_data, created_by, created_at, updated_at, version, deleted_at, file_hash,
+                       replication, s3_result, message
+                FROM documents WHERE id = ? AND deleted_at IS NULL
+            ''', (document_id,))
+            refreshed = cursor.fetchone()
+            conn.close()
+
+            logger.info(
+                f"[METADATA-UPDATE] document_id={document_id} updated_by={updated_by} "
+                f"replace={replace} version={next_version}"
+            )
+
+            if not refreshed:
+                return None
+
+            return Document(
+                id=refreshed[0],
+                type=refreshed[1],
+                original_file=refreshed[2],
+                file_format=refreshed[3],
+                processed_data=json.loads(refreshed[4]),
+                metadata=json.loads(refreshed[5]),
+                app_data=json.loads(refreshed[6]),
+                created_by=refreshed[7],
+                created_at=refreshed[8],
+                updated_at=refreshed[9],
+                version=refreshed[10],
+                deleted_at=refreshed[11],
+                file_hash=refreshed[12],
+                storage_location=refreshed[2] if refreshed[2] else None,
+                provider_id='sqlite',
+                replication=json.loads(refreshed[13]) if refreshed[13] else None,
+                s3_result=json.loads(refreshed[14]) if refreshed[14] else None,
+                message=refreshed[15],
+            )
+
+        except Exception as e:
+            conn.close()
+            logger.error(f"Error updating document metadata for {document_id}: {e}", exc_info=True)
+            raise
 
     async def retrieve_document_file(self, document_id: str) -> Optional[bytes]:
         """Retrieve the original file BLOB for a document by ID"""

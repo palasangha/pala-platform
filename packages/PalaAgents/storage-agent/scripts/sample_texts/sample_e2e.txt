@@ -1,0 +1,8 @@
+This is a small sample file for E2E reupload testing.
+It contains a unique marker token that the reupload script will search for:
+
+E2E_REUPLOAD_SAMPLE_TOKEN_12345
+
+The file mentions Rangoon and other test phrases to ensure snippet extraction works.
+
+End of sample.
