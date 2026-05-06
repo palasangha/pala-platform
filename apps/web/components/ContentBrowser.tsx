@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useWebSocket } from '@/hooks/useWebSocket';
 
 interface StoredContent {
@@ -352,7 +352,6 @@ export function ContentBrowser() {
     type: '',
   });
   const [sortBy, setSortBy] = useState<'created_at' | 'metadata_score'>('metadata_score');
-  const [scoreFilter, setScoreFilter] = useState<'all' | 'lt_100' | 'lt_80' | 'lt_50'>('lt_100');
   const [selectedContent, setSelectedContent] = useState<StoredContent | null>(
     null
   );
@@ -379,19 +378,6 @@ export function ContentBrowser() {
     return `${safeScore.toFixed(0)}%`;
   };
 
-  const scoreFilterParams = useMemo(() => {
-    switch (scoreFilter) {
-      case 'lt_100':
-        return { needs_metadata: true, score_lt: 100 };
-      case 'lt_80':
-        return { score_lt: 80 };
-      case 'lt_50':
-        return { score_lt: 50 };
-      default:
-        return {};
-    }
-  }, [scoreFilter]);
-
   const fetchContent = useCallback(() => {
     if (!connected || !client) return;
 
@@ -405,7 +391,6 @@ export function ContentBrowser() {
         ...(filters.type && { type: filters.type }),
         ...(filters.createdBy && { created_by: filters.createdBy }),
         sort_by: sortBy,
-        ...scoreFilterParams,
       };
 
       const request = {
@@ -465,7 +450,7 @@ export function ContentBrowser() {
       setError(err instanceof Error ? err.message : 'Failed to fetch documents');
       setLoading(false);
     }
-  }, [connected, client, pagination.page, pagination.pageSize, filters, scoreFilterParams, sortBy]);
+  }, [connected, client, pagination.page, pagination.pageSize, filters, sortBy]);
 
   useEffect(() => {
     fetchContent();
@@ -867,25 +852,6 @@ export function ContentBrowser() {
             placeholder="Search filename..."
             className="w-full px-3 py-2 border border-slate-600 bg-slate-800 rounded-md text-sm text-slate-100"
           />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-slate-300 mb-1">
-            Score Filter
-          </label>
-          <select
-            value={scoreFilter}
-            onChange={(e) => {
-              setScoreFilter(e.target.value as typeof scoreFilter);
-              setPagination((p) => ({ ...p, page: 1 }));
-            }}
-            className="w-full px-3 py-2 border border-slate-600 bg-slate-800 rounded-md text-sm text-slate-100"
-          >
-            <option value="lt_100">Needs metadata (&lt; 100%)</option>
-            <option value="lt_80">Below 80%</option>
-            <option value="lt_50">Below 50%</option>
-            <option value="all">All documents</option>
-          </select>
         </div>
 
         <div>
