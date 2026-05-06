@@ -492,6 +492,7 @@ class SQLiteProvider(StorageProvider):
         self,
         document_id: str,
         metadata: Dict[str, Any],
+        app_data: Optional[Dict[str, Any]] = None,
         updated_by: str = 'api',
         replace: bool = False,
     ) -> Optional[Document]:
@@ -501,7 +502,7 @@ class SQLiteProvider(StorageProvider):
 
         try:
             cursor.execute(
-                'SELECT metadata, version FROM documents WHERE id = ? AND deleted_at IS NULL',
+                'SELECT metadata, app_data, version FROM documents WHERE id = ? AND deleted_at IS NULL',
                 (document_id,),
             )
             row = cursor.fetchone()
@@ -511,14 +512,16 @@ class SQLiteProvider(StorageProvider):
                 return None
 
             current_metadata = json.loads(row[0]) if row[0] else {}
+            current_app_data = json.loads(row[1]) if row[1] else {}
             next_metadata = metadata or {}
             merged_metadata = next_metadata if replace else deep_merge_dict(current_metadata, next_metadata)
-            next_version = int(row[1] or 1) + 1
+            merged_app_data = current_app_data if app_data is None else deep_merge_dict(current_app_data, app_data)
+            next_version = int(row[2] or 1) + 1
             now = datetime.now(timezone.utc).isoformat()
 
             cursor.execute(
-                'UPDATE documents SET metadata = ?, updated_at = ?, version = ? WHERE id = ?',
-                (json.dumps(merged_metadata), now, next_version, document_id),
+                'UPDATE documents SET metadata = ?, app_data = ?, updated_at = ?, version = ? WHERE id = ?',
+                (json.dumps(merged_metadata), json.dumps(merged_app_data), now, next_version, document_id),
             )
             conn.commit()
 

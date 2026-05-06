@@ -16,6 +16,27 @@ REVIEW_FIELDS = [
     "organizations",
 ]
 
+FIELD_KEY_CANDIDATES = {
+    "summary": ("summary", "text", "description", "abstract", "body"),
+    "document_date": ("document_date", "date_issued", "published", "issued", "date"),
+    "language": ("language", "lang"),
+    "people": ("people", "person", "names"),
+    "places": ("places", "locations", "location", "spatial_coverage"),
+    "topics": ("topics", "topic", "key_topics", "subjects"),
+    "organizations": ("organizations", "organization", "institutions", "orgs"),
+}
+
+PREFERRED_CONTAINER_KEYS = (
+    "content",
+    "document",
+    "pala_metadata",
+    "archipelago_metadata",
+    "result",
+    "metadata",
+    "parties",
+    "places",
+)
+
 
 def _has_value(value: Any) -> bool:
     if value is None:
@@ -36,64 +57,87 @@ def _first_non_empty(*values: Any) -> Any:
     return None
 
 
+def _search_nested_value(value: Any, candidate_keys: tuple[str, ...], depth: int = 0, max_depth: int = 6) -> Any:
+    if value is None or depth > max_depth:
+        return None
+
+    if isinstance(value, dict):
+        for candidate_key in candidate_keys:
+            if candidate_key in value and _has_value(value[candidate_key]):
+                return value[candidate_key]
+
+        for container_key in PREFERRED_CONTAINER_KEYS:
+            if container_key in value:
+                found = _search_nested_value(value.get(container_key), candidate_keys, depth + 1, max_depth)
+                if _has_value(found):
+                    return found
+
+        for nested_value in value.values():
+            found = _search_nested_value(nested_value, candidate_keys, depth + 1, max_depth)
+            if _has_value(found):
+                return found
+
+    if isinstance(value, (list, tuple, set)):
+        for nested_value in value:
+            found = _search_nested_value(nested_value, candidate_keys, depth + 1, max_depth)
+            if _has_value(found):
+                return found
+
+    return None
+
+
+def _field_value(*sources: Any, candidate_keys: tuple[str, ...]) -> Any:
+    for source in sources:
+        found = _search_nested_value(source, candidate_keys)
+        if _has_value(found):
+            return found
+    return None
+
+
 def extract_metadata_health(metadata: Dict[str, Any] | None, processed_data: Dict[str, Any] | None = None) -> Dict[str, Any]:
     """Compute equal-weight completeness for the metadata review fields."""
     metadata = metadata or {}
     processed_data = processed_data or {}
 
-    content = metadata.get("content") if isinstance(metadata.get("content"), dict) else {}
-    document = metadata.get("document") if isinstance(metadata.get("document"), dict) else {}
-    document_date = metadata.get("date") if not isinstance(metadata.get("date"), dict) else metadata.get("date", {})
-
-    people = _first_non_empty(
-        metadata.get("people"),
-        (metadata.get("parties", {}) or {}).get("people") if isinstance(metadata.get("parties"), dict) else None,
-        content.get("people") if isinstance(content, dict) else None,
-        processed_data.get("people"),
-    )
-    places = _first_non_empty(
-        metadata.get("places"),
-        metadata.get("locations"),
-        (metadata.get("places", {}) or {}).get("locations") if isinstance(metadata.get("places"), dict) else None,
-        content.get("places") if isinstance(content, dict) else None,
-        processed_data.get("locations"),
-    )
-    topics = _first_non_empty(
-        metadata.get("topics"),
-        content.get("topics") if isinstance(content, dict) else None,
-        processed_data.get("topics"),
-    )
-    organizations = _first_non_empty(
-        metadata.get("organizations"),
-        (metadata.get("parties", {}) or {}).get("organizations") if isinstance(metadata.get("parties"), dict) else None,
-        content.get("organizations") if isinstance(content, dict) else None,
-        processed_data.get("organizations"),
-    )
+    metadata_sources = (metadata, metadata.get("pala_metadata"), metadata.get("archipelago_metadata"))
+    processed_sources = (processed_data, processed_data.get("result") if isinstance(processed_data, dict) else None)
 
     fields = {
-        "summary": _first_non_empty(
-            metadata.get("summary"),
-            content.get("summary"),
-            document.get("summary") if isinstance(document, dict) else None,
-            processed_data.get("summary"),
-            processed_data.get("text"),
+        "summary": _field_value(
+            *metadata_sources,
+            *processed_sources,
+            candidate_keys=FIELD_KEY_CANDIDATES["summary"],
         ),
-        "document_date": _first_non_empty(
-            document.get("date", {}).get("value") if isinstance(document.get("date"), dict) else None,
-            document_date.get("value") if isinstance(document_date, dict) else None,
-            metadata.get("document_date"),
-            metadata.get("date"),
-            processed_data.get("date"),
+        "document_date": _field_value(
+            *metadata_sources,
+            *processed_sources,
+            candidate_keys=FIELD_KEY_CANDIDATES["document_date"],
         ),
-        "language": _first_non_empty(
-            metadata.get("language"),
-            content.get("language") if isinstance(content, dict) else None,
-            processed_data.get("language"),
+        "language": _field_value(
+            *metadata_sources,
+            *processed_sources,
+            candidate_keys=FIELD_KEY_CANDIDATES["language"],
         ),
-        "people": people,
-        "places": places,
-        "topics": topics,
-        "organizations": organizations,
+        "people": _field_value(
+            *metadata_sources,
+            *processed_sources,
+            candidate_keys=FIELD_KEY_CANDIDATES["people"],
+        ),
+        "places": _field_value(
+            *metadata_sources,
+            *processed_sources,
+            candidate_keys=FIELD_KEY_CANDIDATES["places"],
+        ),
+        "topics": _field_value(
+            *metadata_sources,
+            *processed_sources,
+            candidate_keys=FIELD_KEY_CANDIDATES["topics"],
+        ),
+        "organizations": _field_value(
+            *metadata_sources,
+            *processed_sources,
+            candidate_keys=FIELD_KEY_CANDIDATES["organizations"],
+        ),
     }
 
     present_fields = [name for name, value in fields.items() if _has_value(value)]

@@ -37,7 +37,7 @@ import websockets
 from providers.s3_provider_real import S3ProviderReal
 
 from provider_factory import ProviderFactory, get_provider
-from metadata_utils import extract_metadata_health
+from metadata_utils import deep_merge_dict, extract_metadata_health
 from storage_provider import StorageProvider
 
 
@@ -138,6 +138,29 @@ except Exception as e:
 def combine_searchable_text(metadata: Dict[str, Any], processed_data: Dict[str, Any], original_file: str) -> str:
     """Combine metadata, processed data, and file info into searchable text"""
     parts = []
+
+    def _append_text(label: str, value: Any) -> None:
+        if isinstance(value, str) and value.strip():
+            parts.append(f"{label}: {value.strip()}")
+        elif isinstance(value, (int, float, bool)):
+            parts.append(f"{label}: {value}")
+
+    def _append_collection(label: str, value: Any) -> None:
+        if isinstance(value, dict):
+            candidates = value.get(label) or value.get(f"{label[:-1]}") or value.get('names') or value.get('items')
+            value = candidates
+        if isinstance(value, (list, tuple, set)):
+            items = []
+            for item in value:
+                if isinstance(item, str) and item.strip():
+                    items.append(item.strip())
+                elif isinstance(item, dict):
+                    for key in ('name', 'title', 'label', 'value'):
+                        if isinstance(item.get(key), str) and item.get(key).strip():
+                            items.append(item.get(key).strip())
+                            break
+            if items:
+                parts.append(f"{label.capitalize()}: {', '.join(items)}")
     
     # Add filename
     if original_file:
@@ -145,6 +168,14 @@ def combine_searchable_text(metadata: Dict[str, Any], processed_data: Dict[str, 
     
     # Add metadata summaries
     if metadata and isinstance(metadata, dict):
+        _append_text('Summary', metadata.get('summary'))
+        _append_text('Document date', metadata.get('document_date'))
+        _append_text('Language', metadata.get('language'))
+        _append_collection('people', metadata.get('people'))
+        _append_collection('places', metadata.get('places'))
+        _append_collection('topics', metadata.get('topics'))
+        _append_collection('organizations', metadata.get('organizations'))
+
         pala = metadata.get('pala_metadata', {})
         if pala:
             content = pala.get('content', {})
@@ -335,10 +366,21 @@ def build_metadata_health(doc) -> Dict[str, Any]:
     metadata = getattr(doc, 'metadata', {}) or {}
     processed_data = getattr(doc, 'processed_data', {}) or {}
     health = extract_metadata_health(metadata, processed_data)
+    metadata_keys = list(metadata.keys()) if isinstance(metadata, dict) else []
+    processed_keys = list(processed_data.keys()) if isinstance(processed_data, dict) else []
     logger.info(
         f"[METADATA-SCORE] doc_id={getattr(doc, 'id', 'unknown')} score={health['score']} "
-        f"missing={health['missing_fields']}"
+        f"present={health['present_fields']} missing={health['missing_fields']}"
     )
+    logger.debug(
+        f"[METADATA-SCORE] doc_id={getattr(doc, 'id', 'unknown')} metadata_keys={metadata_keys} "
+        f"processed_data_keys={processed_keys}"
+    )
+    if health['score'] == 0 and (metadata_keys or processed_keys):
+        logger.warning(
+            f"[METADATA-SCORE] doc_id={getattr(doc, 'id', 'unknown')} scored 0 despite data being present; "
+            f"check nested field extraction"
+        )
     return health
 
 
@@ -892,9 +934,30 @@ async def tool_update_document_metadata(params: Dict[str, Any]) -> Dict[str, Any
             raise ValueError('metadata is required')
 
         logger.info(f"[METADATA-UPDATE] document_id={document_id} updated_by={updated_by} replace={replace}")
+        refreshed_app_data = None
+        existing_doc = await provider.retrieve_document(document_id)
+        if existing_doc:
+            merged_metadata = metadata if replace else deep_merge_dict(existing_doc.metadata, metadata)
+            refreshed_searchable_text = combine_searchable_text(
+                merged_metadata,
+                existing_doc.processed_data,
+                existing_doc.original_file,
+            )
+            refreshed_embedding_vector = None
+            if embedding_model:
+                refreshed_embedding_vector = generate_embedding(refreshed_searchable_text, embedding_model)
+
+            refreshed_app_data = dict(existing_doc.app_data or {})
+            refreshed_app_data['searchable_text'] = refreshed_searchable_text
+            refreshed_app_data['embedding_generated'] = bool(refreshed_embedding_vector)
+            refreshed_app_data['embedding_model'] = 'all-MiniLM-L6-v2' if refreshed_embedding_vector else None
+            refreshed_app_data['embedding_timestamp'] = datetime.now(timezone.utc).isoformat()
+            refreshed_app_data['embedding_vector'] = refreshed_embedding_vector
+
         updated_doc = await provider.update_document_metadata(
             document_id=document_id,
             metadata=metadata,
+            app_data=refreshed_app_data,
             updated_by=updated_by,
             replace=replace,
         )
@@ -911,6 +974,7 @@ async def tool_update_document_metadata(params: Dict[str, Any]) -> Dict[str, Any
             'metadata': updated_doc.metadata,
             'metadata_score': health['score'],
             'missing_metadata_fields': health['missing_fields'],
+            'search_index_refreshed': refreshed_app_data is not None,
             'message': 'Metadata updated successfully',
         }
         logger.info(f"[TOOL-RETURN] update_document_metadata returned: {json.dumps(result)[:500]}")

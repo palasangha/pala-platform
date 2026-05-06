@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useWebSocket } from '@/hooks/useWebSocket';
 
 interface StoredContent {
@@ -52,6 +52,288 @@ interface PaginationState {
   total: number;
 }
 
+interface MetadataFormState {
+  summary: string;
+  documentDate: string;
+  language: string;
+  people: string;
+  places: string;
+  topics: string;
+  organizations: string;
+}
+
+const EMPTY_METADATA_FORM: MetadataFormState = {
+  summary: '',
+  documentDate: '',
+  language: '',
+  people: '',
+  places: '',
+  topics: '',
+  organizations: '',
+};
+
+function isPlainObject(value: unknown): value is Record<string, any> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function firstDefined(...values: any[]): any {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== '') {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function toText(value: any): string {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) {
+    return value.map(toText).filter(Boolean).join(', ');
+  }
+  if (isPlainObject(value)) {
+    return toText(firstDefined(value.text, value.value, value.name, value.title));
+  }
+  return '';
+}
+
+function toStringList(value: any): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((item) => toStringList(item))
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(/[\n,]/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  }
+  if (isPlainObject(value)) {
+    const directValue = firstDefined(
+      value.name,
+      value.title,
+      value.label,
+      value.value,
+      value.text,
+      value.location,
+      value.place,
+      value.city,
+      value.state,
+      value.country,
+    );
+    if (directValue !== undefined && directValue !== null && directValue !== '') {
+      return toStringList(directValue);
+    }
+    return toStringList(firstDefined(
+      value.items,
+      value.values,
+      value.names,
+      value.locations,
+      value.people,
+      value.topics,
+      value.creator,
+      value.contributor,
+      value.subject,
+      value.summary,
+    ));
+  }
+  return [];
+}
+
+function mergeCommaValues(...values: any[]): string {
+  const seen = new Set<string>();
+  const items: string[] = [];
+
+  values.forEach((value) => {
+    toStringList(value).forEach((entry) => {
+      const normalized = entry.toLowerCase();
+      if (!seen.has(normalized)) {
+        seen.add(normalized);
+        items.push(entry);
+      }
+    });
+  });
+
+  return items.join(', ');
+}
+
+function splitCommaList(value: string): string[] {
+  return value
+    .split(/[\n,]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function buildMetadataFormState(metadata?: Record<string, any> | null, processedData?: Record<string, any> | string | null): MetadataFormState {
+  const metadataObject = isPlainObject(metadata) ? metadata : {};
+  const processedObject = isPlainObject(processedData) ? processedData : {};
+  const metadataPala = isPlainObject(metadataObject.pala_metadata) ? metadataObject.pala_metadata : {};
+  const metadataContent = isPlainObject(metadataObject.content) ? metadataObject.content : {};
+  const metadataDocument = isPlainObject(metadataObject.document) ? metadataObject.document : {};
+  const processedResult = isPlainObject(processedObject.result) ? processedObject.result : {};
+  const processedMetadata = isPlainObject(processedObject.metadata) ? processedObject.metadata : {};
+  const processedResultMetadata = isPlainObject(processedResult.metadata) ? processedResult.metadata : {};
+  const processedPala = isPlainObject(processedResult.pala_metadata) ? processedResult.pala_metadata : {};
+  const processedArchipelago = isPlainObject(processedResult.archipelago_metadata) ? processedResult.archipelago_metadata : {};
+  const processedExtractedFields = isPlainObject(processedObject.extracted_fields)
+    ? processedObject.extracted_fields
+    : isPlainObject(processedResult.extracted_fields)
+      ? processedResult.extracted_fields
+      : {};
+
+  return {
+    summary: toText(firstDefined(
+      metadataObject.summary,
+      metadataContent.summary,
+      metadataPala.content?.summary,
+      metadataDocument.summary,
+      processedObject.summary,
+      processedObject.text,
+      processedResult.summary?.text,
+      processedPala.content?.summary,
+      processedPala.content?.summary?.text,
+      processedPala.description,
+      processedArchipelago.description,
+      processedExtractedFields.summary?.text,
+      processedPala.content?.summary?.text,
+    )),
+    documentDate: toText(firstDefined(
+      metadataObject.document_date,
+      metadataObject.date,
+      metadataDocument.date?.value,
+      metadataPala.document?.date?.value,
+      metadataPala.document_metadata?.date?.value,
+      processedObject.document_date,
+      processedObject.date,
+      processedResult.document_date,
+      processedPala.document?.date?.value,
+      processedPala.document_metadata?.date?.value,
+      processedArchipelago.date_issued,
+      processedArchipelago.date_created,
+      processedExtractedFields.document_date?.value,
+    )),
+    language: toText(firstDefined(
+      metadataObject.language,
+      metadataContent.language,
+      metadataPala.content?.language,
+      metadataPala.document_metadata?.language,
+      processedObject.language,
+      processedResult.language,
+      processedPala.document_metadata?.language,
+      processedArchipelago.language,
+    )),
+    people: mergeCommaValues(
+      metadataObject.people,
+      metadataObject.parties?.people,
+      metadataContent.people,
+      metadataPala.parties?.people,
+      processedObject.people,
+      processedResult.people,
+      processedPala.parties?.people,
+      processedExtractedFields.people,
+      processedArchipelago.creator,
+      processedArchipelago.contributor,
+    ),
+    places: mergeCommaValues(
+      metadataObject.places,
+      metadataObject.locations,
+      metadataContent.places,
+      metadataPala.places?.locations,
+      metadataPala.places,
+      processedObject.locations,
+      processedMetadata.places,
+      processedResult.locations,
+      processedResultMetadata.places,
+      processedPala.places?.locations,
+      processedPala.places,
+      processedExtractedFields.locations,
+      processedArchipelago.spatial_coverage,
+    ),
+    topics: mergeCommaValues(
+      metadataObject.topics,
+      metadataContent.topics,
+      metadataPala.content?.topics,
+      processedObject.topics,
+      processedResult.topics,
+      processedPala.content?.topics,
+      processedExtractedFields.topics,
+      processedArchipelago.subject,
+    ),
+    organizations: mergeCommaValues(
+      metadataObject.organizations,
+      metadataObject.parties?.organizations,
+      metadataContent.organizations,
+      metadataPala.parties?.organizations,
+      processedObject.organizations,
+      processedResult.organizations,
+      processedPala.parties?.organizations,
+      processedExtractedFields.organizations,
+    ),
+  };
+}
+
+function buildMetadataPatch(form: MetadataFormState): Record<string, any> {
+  const patch: Record<string, any> = {};
+  const content: Record<string, any> = {};
+  const document: Record<string, any> = {};
+
+  const summary = form.summary.trim();
+  const documentDate = form.documentDate.trim();
+  const language = form.language.trim();
+  const people = splitCommaList(form.people);
+  const places = splitCommaList(form.places);
+  const topics = splitCommaList(form.topics);
+  const organizations = splitCommaList(form.organizations);
+
+  if (summary) {
+    patch.summary = summary;
+    content.summary = summary;
+    document.summary = summary;
+  }
+  if (documentDate) {
+    patch.document_date = documentDate;
+    patch.date = documentDate;
+    document.date = { value: documentDate };
+  }
+  if (language) {
+    patch.language = language;
+    content.language = language;
+  }
+  if (people.length > 0) {
+    patch.people = people;
+    patch.parties = { people: people.map((name) => ({ name })) };
+    content.people = people;
+  }
+  if (places.length > 0) {
+    patch.places = places;
+    patch.locations = places;
+    content.places = places;
+  }
+  if (topics.length > 0) {
+    patch.topics = topics;
+    content.topics = topics;
+  }
+  if (organizations.length > 0) {
+    patch.organizations = organizations;
+    patch.parties = {
+      ...(patch.parties || {}),
+      organizations: organizations.map((name) => ({ name })),
+    };
+    content.organizations = organizations;
+  }
+
+  if (Object.keys(content).length > 0) {
+    patch.content = content;
+  }
+  if (Object.keys(document).length > 0) {
+    patch.document = document;
+  }
+
+  return patch;
+}
+
 export function ContentBrowser() {
   const { client, connected } = useWebSocket();
   const [contents, setContents] = useState<StoredContent[]>([]);
@@ -69,11 +351,12 @@ export function ContentBrowser() {
     search: '',
     type: '',
   });
-  const [reviewOnly, setReviewOnly] = useState(true);
+  const [sortBy, setSortBy] = useState<'created_at' | 'metadata_score'>('metadata_score');
+  const [scoreFilter, setScoreFilter] = useState<'all' | 'lt_100' | 'lt_80' | 'lt_50'>('lt_100');
   const [selectedContent, setSelectedContent] = useState<StoredContent | null>(
     null
   );
-  const [metadataDraft, setMetadataDraft] = useState('{}');
+  const [metadataForm, setMetadataForm] = useState<MetadataFormState>(EMPTY_METADATA_FORM);
 
   const extractToolResult = (response: any): any => {
     const candidates = [
@@ -96,6 +379,19 @@ export function ContentBrowser() {
     return `${safeScore.toFixed(0)}%`;
   };
 
+  const scoreFilterParams = useMemo(() => {
+    switch (scoreFilter) {
+      case 'lt_100':
+        return { needs_metadata: true, score_lt: 100 };
+      case 'lt_80':
+        return { score_lt: 80 };
+      case 'lt_50':
+        return { score_lt: 50 };
+      default:
+        return {};
+    }
+  }, [scoreFilter]);
+
   const fetchContent = useCallback(() => {
     if (!connected || !client) return;
 
@@ -108,9 +404,8 @@ export function ContentBrowser() {
         offset: (pagination.page - 1) * pagination.pageSize,
         ...(filters.type && { type: filters.type }),
         ...(filters.createdBy && { created_by: filters.createdBy }),
-        needs_metadata: reviewOnly,
-        sort_by: 'metadata_score',
-        ...(reviewOnly ? { score_lt: 100 } : {}),
+        sort_by: sortBy,
+        ...scoreFilterParams,
       };
 
       const request = {
@@ -170,7 +465,7 @@ export function ContentBrowser() {
       setError(err instanceof Error ? err.message : 'Failed to fetch documents');
       setLoading(false);
     }
-  }, [connected, client, pagination.page, pagination.pageSize, filters, reviewOnly]);
+  }, [connected, client, pagination.page, pagination.pageSize, filters, scoreFilterParams, sortBy]);
 
   useEffect(() => {
     fetchContent();
@@ -217,7 +512,12 @@ export function ContentBrowser() {
               console.log('[ContentBrowser] Document retrieved successfully:', fullDoc);
               setSelectedContent(fullDoc as StoredContent);
               if (editMetadata) {
-                setMetadataDraft(JSON.stringify(fullDoc.metadata || {}, null, 2));
+                const normalizedForm = buildMetadataFormState(fullDoc.metadata, fullDoc.processed_data);
+                setMetadataForm(normalizedForm);
+                console.log('[ContentBrowser] Metadata form initialized:', {
+                  documentId,
+                  fields: normalizedForm,
+                });
               }
             } else {
               setError('Could not find document in response');
@@ -236,6 +536,16 @@ export function ContentBrowser() {
       client.addEventListener('message', handleMessage);
     },
     [client, connected]
+  );
+
+  const handleMetadataFieldChange = useCallback(
+    (fieldName: keyof MetadataFormState, value: string) => {
+      setMetadataForm((current) => ({
+        ...current,
+        [fieldName]: value,
+      }));
+    },
+    []
   );
 
   const openMetadataEditor = useCallback(
@@ -394,14 +704,17 @@ export function ContentBrowser() {
     setSavingMetadataId(selectedContent.document_id);
     setError(null);
 
-    let parsedMetadata: Record<string, any>;
-    try {
-      parsedMetadata = JSON.parse(metadataDraft || '{}');
-    } catch (parseError) {
-      setError(parseError instanceof Error ? parseError.message : 'Invalid metadata JSON');
+    const parsedMetadata = buildMetadataPatch(metadataForm);
+    if (Object.keys(parsedMetadata).length === 0) {
+      setError('Enter at least one metadata field before saving.');
       setSavingMetadataId(null);
       return;
     }
+
+    console.log('[ContentBrowser] Saving metadata patch:', {
+      documentId: selectedContent.document_id,
+      patchKeys: Object.keys(parsedMetadata),
+    });
 
     const requestId = `update-metadata-${Date.now()}`;
     const request = {
@@ -444,11 +757,11 @@ export function ContentBrowser() {
                     updated_at: result.updated_at || current.updated_at,
                     version: result.version || current.version,
                     metadata_score: result.metadata_score ?? current.metadata_score,
-                    missing_metadata_fields: result.missing_metadata_fields ?? current.missing_metadata_fields,
                   }
                 : current
             );
-            setMetadataDraft(JSON.stringify(result.metadata || parsedMetadata, null, 2));
+            const nextForm = buildMetadataFormState(result.metadata || parsedMetadata, selectedContent.processed_data);
+            setMetadataForm(nextForm);
             fetchContent();
             console.log('[ContentBrowser] Metadata updated successfully:', result);
           } else {
@@ -465,7 +778,7 @@ export function ContentBrowser() {
     };
 
     client.addEventListener('message', handleMessage);
-  }, [client, connected, fetchContent, metadataDraft, selectedContent]);
+  }, [client, connected, fetchContent, metadataForm, selectedContent]);
 
   const totalPages = Math.ceil(pagination.total / pagination.pageSize);
   const visibleContents = contents.filter((content) => {
@@ -476,7 +789,6 @@ export function ContentBrowser() {
       content.original_file,
       content.created_by,
       content.type,
-      ...(content.missing_metadata_fields || []),
     ]
       .join(' ')
       .toLowerCase()
@@ -498,22 +810,11 @@ export function ContentBrowser() {
           <span className="text-sm text-slate-600 block">
             {pagination.total} items
           </span>
-          <label className="inline-flex items-center gap-2 text-xs text-slate-500 mt-1">
-            <input
-              type="checkbox"
-              checked={reviewOnly}
-              onChange={(e) => {
-                setReviewOnly(e.target.checked);
-                setPagination((p) => ({ ...p, page: 1 }));
-              }}
-            />
-            Show only incomplete
-          </label>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-slate-700 rounded-lg">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-4 bg-slate-700 rounded-lg">
         <div>
           <label className="block text-sm font-medium text-slate-300 mb-1">
             Created By
@@ -567,6 +868,42 @@ export function ContentBrowser() {
             className="w-full px-3 py-2 border border-slate-600 bg-slate-800 rounded-md text-sm text-slate-100"
           />
         </div>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-300 mb-1">
+            Score Filter
+          </label>
+          <select
+            value={scoreFilter}
+            onChange={(e) => {
+              setScoreFilter(e.target.value as typeof scoreFilter);
+              setPagination((p) => ({ ...p, page: 1 }));
+            }}
+            className="w-full px-3 py-2 border border-slate-600 bg-slate-800 rounded-md text-sm text-slate-100"
+          >
+            <option value="lt_100">Needs metadata (&lt; 100%)</option>
+            <option value="lt_80">Below 80%</option>
+            <option value="lt_50">Below 50%</option>
+            <option value="all">All documents</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-300 mb-1">
+            Sort By
+          </label>
+          <select
+            value={sortBy}
+            onChange={(e) => {
+              setSortBy(e.target.value as typeof sortBy);
+              setPagination((p) => ({ ...p, page: 1 }));
+            }}
+            className="w-full px-3 py-2 border border-slate-600 bg-slate-800 rounded-md text-sm text-slate-100"
+          >
+            <option value="metadata_score">Metadata score</option>
+            <option value="created_at">Created date</option>
+          </select>
+        </div>
       </div>
 
       {error && (
@@ -585,10 +922,7 @@ export function ContentBrowser() {
                   Document ID
                 </th>
                 <th className="px-4 py-2 text-left font-medium text-slate-300">
-                  Score
-                </th>
-                <th className="px-4 py-2 text-left font-medium text-slate-300">
-                  Missing Metadata
+                  Metadata available
                 </th>
                 <th className="px-4 py-2 text-left font-medium text-slate-300">
                   Type
@@ -643,22 +977,6 @@ export function ContentBrowser() {
                       >
                         {formatMetadataScore(content.metadata_score)}
                       </span>
-                    </td>
-                    <td className="px-4 py-2 text-slate-300">
-                      <div className="flex flex-wrap gap-1">
-                        {(content.missing_metadata_fields || []).length > 0 ? (
-                          content.missing_metadata_fields?.map((field) => (
-                            <span
-                              key={field}
-                              className="inline-block px-2 py-1 bg-slate-800 text-slate-200 text-[11px] rounded"
-                            >
-                              {field}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="text-emerald-300 text-xs">Complete</span>
-                        )}
-                      </div>
                     </td>
                     <td className="px-4 py-2 text-slate-100">
                       <span className="inline-block px-2 py-1 bg-blue-900 text-blue-200 text-xs rounded">
@@ -838,46 +1156,93 @@ export function ContentBrowser() {
                     style={{ width: `${selectedContent.metadata_score || 0}%` }}
                   />
                 </div>
-                <div className="flex flex-wrap gap-1">
-                  {(selectedContent.missing_metadata_fields || []).length > 0 ? (
-                    selectedContent.missing_metadata_fields?.map((field) => (
-                      <span
-                        key={field}
-                        className="inline-block px-2 py-1 bg-slate-800 text-slate-200 text-[11px] rounded"
-                      >
-                        {field}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-emerald-700 text-xs">No missing fields</span>
-                  )}
-                </div>
+                <p className="text-[11px] text-slate-500">Score is calculated from common metadata fields.</p>
               </div>
 
               <div className="bg-slate-50 p-3 rounded text-sm space-y-2 border border-slate-200">
                 <div className="flex items-center justify-between gap-3">
                   <label className="text-xs font-medium text-slate-600">
-                    Metadata JSON
+                    Edit metadata fields
                   </label>
                   <span className="text-[11px] text-slate-500">
-                    Edit one item at a time, then save.
+                    Enter values in plain language; lists are comma-separated.
                   </span>
                 </div>
-                <textarea
-                  value={metadataDraft}
-                  onChange={(e) => setMetadataDraft(e.target.value)}
-                  className="w-full min-h-56 px-3 py-2 text-xs font-mono bg-white border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <div className="flex items-center gap-2">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <label className="space-y-1 md:col-span-2">
+                    <span className="block text-xs font-medium text-slate-600">Summary</span>
+                    <textarea
+                      value={metadataForm.summary}
+                      onChange={(e) => handleMetadataFieldChange('summary', e.target.value)}
+                      className="w-full min-h-24 px-3 py-2 text-sm bg-white border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Short summary or abstract"
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="block text-xs font-medium text-slate-600">Document date</span>
+                    <input
+                      value={metadataForm.documentDate}
+                      onChange={(e) => handleMetadataFieldChange('documentDate', e.target.value)}
+                      className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="YYYY-MM-DD or a readable date"
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="block text-xs font-medium text-slate-600">Language</span>
+                    <input
+                      value={metadataForm.language}
+                      onChange={(e) => handleMetadataFieldChange('language', e.target.value)}
+                      className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="en, hi, bo..."
+                    />
+                  </label>
+                  <label className="space-y-1 md:col-span-2">
+                    <span className="block text-xs font-medium text-slate-600">People</span>
+                    <textarea
+                      value={metadataForm.people}
+                      onChange={(e) => handleMetadataFieldChange('people', e.target.value)}
+                      className="w-full min-h-20 px-3 py-2 text-sm bg-white border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Person 1, Person 2"
+                    />
+                  </label>
+                  <label className="space-y-1 md:col-span-2">
+                    <span className="block text-xs font-medium text-slate-600">Places</span>
+                    <textarea
+                      value={metadataForm.places}
+                      onChange={(e) => handleMetadataFieldChange('places', e.target.value)}
+                      className="w-full min-h-20 px-3 py-2 text-sm bg-white border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Place 1, Place 2"
+                    />
+                  </label>
+                  <label className="space-y-1 md:col-span-2">
+                    <span className="block text-xs font-medium text-slate-600">Topics</span>
+                    <textarea
+                      value={metadataForm.topics}
+                      onChange={(e) => handleMetadataFieldChange('topics', e.target.value)}
+                      className="w-full min-h-20 px-3 py-2 text-sm bg-white border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Topic 1, Topic 2"
+                    />
+                  </label>
+                  <label className="space-y-1 md:col-span-2">
+                    <span className="block text-xs font-medium text-slate-600">Organizations</span>
+                    <textarea
+                      value={metadataForm.organizations}
+                      onChange={(e) => handleMetadataFieldChange('organizations', e.target.value)}
+                      className="w-full min-h-20 px-3 py-2 text-sm bg-white border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Organization 1, Organization 2"
+                    />
+                  </label>
+                </div>
+                <div className="flex items-center gap-2 pt-1">
                   <button
                     onClick={saveMetadata}
                     disabled={savingMetadataId === selectedContent.document_id}
                     className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50"
                   >
-                    {savingMetadataId === selectedContent.document_id ? 'Saving...' : 'Save Metadata'}
+                    {savingMetadataId === selectedContent.document_id ? 'Saving...' : 'Save metadata'}
                   </button>
                   <button
-                    onClick={() => setMetadataDraft(JSON.stringify(selectedContent.metadata || {}, null, 2))}
+                    onClick={() => setMetadataForm(buildMetadataFormState(selectedContent.metadata, selectedContent.processed_data))}
                     className="px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-900 hover:bg-slate-50"
                   >
                     Reset

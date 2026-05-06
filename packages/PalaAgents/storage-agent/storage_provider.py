@@ -81,6 +81,7 @@ class StorageProvider(ABC):
         self,
         document_id: str,
         metadata: Dict[str, Any],
+        app_data: Optional[Dict[str, Any]] = None,
         updated_by: str = 'api',
         replace: bool = False,
     ) -> Optional[Document]:
