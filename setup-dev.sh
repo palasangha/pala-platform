@@ -182,10 +182,38 @@ install_ollama_model() {
         return
     fi
 
+    ensure_ollama_running() {
+        if ! command_exists ollama; then
+            return 1
+        fi
+
+        if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+            return 0
+        fi
+
+        echo -e "${YELLOW}Starting Ollama server for model setup...${NC}"
+        ollama serve > "$ROOT_DIR/logs/ollama.log" 2>&1 &
+        local ollama_pid=$!
+
+        local attempt
+        for attempt in $(seq 1 20); do
+            if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+                echo -e "${GREEN}✓ Ollama server is ready (PID: $ollama_pid)${NC}"
+                return 0
+            fi
+            sleep 1
+        done
+
+        echo -e "${YELLOW}Ollama server did not become ready in time. Check $ROOT_DIR/logs/ollama.log${NC}"
+        return 1
+    }
+
     if ollama_model_installed "$model"; then
         echo -e "${GREEN}✓ Ollama model '$model' already installed${NC}"
         return
     fi
+
+    ensure_ollama_running || true
 
     echo -e "${YELLOW}Installing Ollama model '$model'...${NC}"
     if ! ollama pull "$model"; then
