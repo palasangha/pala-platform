@@ -5,12 +5,14 @@ import Link from 'next/link';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { ContentBrowser } from './ContentBrowser';
 import Browse from './Browse';
+import DocumentBrowser from './DocumentBrowser';
 
-type Tab = 'explore' | 'browse' | 'storage' | 'developer';
+type Tab = 'browse' | 'storage' | 'developer';
 
 export function PalaWebDashboard() {
-  const [activeTab, setActiveTab] = useState<Tab>('explore');
+  const [activeTab, setActiveTab] = useState<Tab>('browse');
   const { connected, send } = useWebSocket();
+  const [openDocId, setOpenDocId] = useState<string | null>(null);
 
   return (
     <div className="min-h-screen bg-slate-900">
@@ -38,17 +40,7 @@ export function PalaWebDashboard() {
 
           {/* Navigation */}
           <div className="flex gap-1 border-b border-slate-800">
-            <Link
-              href="/explore"
-              className={`px-4 py-2 border-b-2 font-medium text-sm transition-colors ${
-                activeTab === 'explore'
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-slate-400 hover:text-slate-300'
-              }`}
-              onClick={() => setActiveTab('explore')}
-            >
-              Explore
-            </Link>
+            {/* Explore moved into Browse. Default entry point is Browse. */}
             <button
               onClick={() => setActiveTab('developer')}
               className={`px-4 py-2 border-b-2 font-medium text-sm transition-colors ${
@@ -85,12 +77,26 @@ export function PalaWebDashboard() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 py-8">
-        {activeTab === 'explore' && (
-          <iframe src="/explore" className="w-full min-h-[60vh] border-none" title="Explore" />
-        )}
-        {activeTab === 'browse' && (
+        {openDocId ? (
           <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-            <Browse send={send} className="min-h-[60vh]" />
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-slate-100">Viewing document: {openDocId}</h2>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setOpenDocId(null)}
+                  className="px-3 py-1 rounded bg-slate-800 text-slate-200 hover:bg-slate-700"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <DocumentBrowser connected={connected} send={send} initialDocumentId={openDocId} />
+          </div>
+        ) : null}
+
+        {activeTab === 'browse' && !openDocId && (
+          <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+            <Browse send={send} className="min-h-[60vh]" onOpenDocument={(id) => setOpenDocId(id)} />
           </div>
         )}
         {activeTab === 'developer' && <DeveloperPanel />}

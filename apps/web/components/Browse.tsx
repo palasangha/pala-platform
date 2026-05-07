@@ -5,6 +5,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 interface BrowseProps {
   className?: string;
   send?: (method: string, params: any) => Promise<any>;
+  onOpenDocument?: (documentId: string) => void;
 }
 
 interface Document {
@@ -28,7 +29,7 @@ type BrowseMode = 'explore' | 'date' | 'tags' | 'entities';
 const annotateMonthNodes = (year: number, months: BrowseNode[]) =>
   months.map(month => ({ ...month, year }));
 
-export function Browse({ className = '', send }: BrowseProps) {
+export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
   const [browseMode, setBrowseMode] = useState<BrowseMode>('explore');
   const [hierarchy, setHierarchy] = useState<BrowseNode[]>([]);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
@@ -396,7 +397,13 @@ export function Browse({ className = '', send }: BrowseProps) {
                     {filteredDocuments.map((doc) => (
                       <button
                         key={doc.id}
-                        onClick={() => setSelectedDoc(doc)}
+                        onClick={() => {
+                          if (onOpenDocument) {
+                            onOpenDocument(doc.id);
+                          } else {
+                            setSelectedDoc(doc);
+                          }
+                        }}
                         className={`w-full text-left p-3 rounded-lg border-2 transition ${
                           selectedDoc?.id === doc.id
                             ? 'border-blue-500/70 bg-blue-500/10'

@@ -79,9 +79,10 @@ interface DocumentContent {
 interface DocumentBrowserProps {
   connected: boolean;
   send: (method: string, params: any) => Promise<any>;
+  initialDocumentId?: string | null;
 }
 
-export default function DocumentBrowser({ connected, send }: DocumentBrowserProps) {
+export default function DocumentBrowser({ connected, send, initialDocumentId }: DocumentBrowserProps) {
   const unwrapMcpResult = (payload: any) => {
     let current = payload;
     let depth = 0;
@@ -253,6 +254,17 @@ export default function DocumentBrowser({ connected, send }: DocumentBrowserProp
       setLoadingDetails(false);
     });
   };
+
+  // Auto-load initial document if provided
+  useEffect(() => {
+    if (initialDocumentId && connected) {
+      try {
+        viewDocument(initialDocumentId);
+      } catch (err) {
+        console.error('[DocumentBrowser] Failed to auto-load initial document', err);
+      }
+    }
+  }, [initialDocumentId, connected]);
 
   // Initial load
   useEffect(() => {
