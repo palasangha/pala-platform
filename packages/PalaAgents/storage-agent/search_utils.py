@@ -164,6 +164,35 @@ def extract_passage_around_query(content: str, query_terms: List[str], window_si
     return passage
 
 
+def extract_line_window_around_query(content: str, query_terms: List[str], window_lines: int = 3) -> str:
+    """Extract a small line window around the first matching line."""
+    if not content:
+        return ""
+
+    lines = content.splitlines()
+    if len(lines) <= 1:
+        return extract_passage_around_query(content, query_terms)
+
+    lowered_terms = [term.lower().strip() for term in query_terms if term and term.strip()]
+    if not lowered_terms:
+        return "\n".join(lines[: min(len(lines), window_lines * 2 + 1)])
+
+    hit_index = -1
+    for index, line in enumerate(lines):
+        lower_line = line.lower()
+        if any(term and term in lower_line for term in lowered_terms):
+            hit_index = index
+            break
+
+    if hit_index == -1:
+        return extract_passage_around_query(content, query_terms)
+
+    start = max(0, hit_index - window_lines)
+    end = min(len(lines), hit_index + window_lines + 1)
+    window = "\n".join(lines[start:end]).strip()
+    return window or extract_passage_around_query(content, query_terms)
+
+
 def _tokenize_search_text(text: str) -> List[str]:
     stopwords = {
         "a", "an", "are", "as", "at", "be", "by", "do", "does", "for", "from",
@@ -322,13 +351,23 @@ def select_best_search_chunk(
         current_kind = chunk.get("kind") or "content"
         best_kind = best_chunk.get("kind") if isinstance(best_chunk, dict) else None
         is_better_score = score > best_score + 1e-9
+        
+        # Prefer metadata matches (exact field matches) over content chunks in ties
+        is_tie_but_prefer_metadata = (
+            abs(score - best_score) <= 1e-9
+            and current_kind == "metadata"
+            and best_kind != "metadata"
+        )
+        
+        # Only prefer content over metadata in ties if current chunk is not metadata
         is_tie_but_prefer_content = (
             abs(score - best_score) <= 1e-9
             and current_kind == "content"
             and best_kind != "content"
+            and best_kind != "metadata"  # Don't override metadata with content ties
         )
 
-        if is_better_score or is_tie_but_prefer_content:
+        if is_better_score or is_tie_but_prefer_metadata or is_tie_but_prefer_content:
             best_score = score
             best_chunk = chunk
             best_method = method
@@ -340,16 +379,37 @@ def select_best_search_chunk(
     if best_chunk.get("kind") == "metadata":
         matched_path = best_chunk.get("source") or "metadata.summary"
 
+    match_reason = describe_match_reason(matched_path, best_method)
+
     return {
         "score": best_score,
         "method": best_method,
         "matched_path": matched_path,
         "matched_text": best_chunk.get("text") or "",
+        "match_reason": match_reason,
         "chunk_index": best_chunk.get("chunk_index"),
         "start_char": best_chunk.get("start_char"),
         "end_char": best_chunk.get("end_char"),
         "chunk": best_chunk,
     }
+
+
+def describe_match_reason(matched_path: str, match_method: str = "") -> str:
+    if not matched_path:
+        return f"{match_method or 'search'} match"
+
+    if matched_path.startswith("metadata."):
+        scope = "Metadata"
+    elif matched_path.startswith("processed_data."):
+        scope = "Content"
+    elif matched_path in {"original_file", "type"}:
+        scope = "Document"
+    else:
+        scope = "Search"
+
+    if match_method and match_method not in {"keyword", "semantic"}:
+        return f"{scope} match in {matched_path} ({match_method})"
+    return f"{scope} match in {matched_path}"
 
 
 def build_document_search_index(
@@ -479,6 +539,7 @@ def format_search_document_result(
         "matched_text": doc.get("matched_text"),
         "matched_path": doc.get("matched_path"),
         "match_method": doc.get("match_method"),
+        "match_reason": doc.get("match_reason"),
         "matched_chunk_index": doc.get("matched_chunk_index"),
         "matched_chunk_start": doc.get("matched_chunk_start"),
         "matched_chunk_end": doc.get("matched_chunk_end"),

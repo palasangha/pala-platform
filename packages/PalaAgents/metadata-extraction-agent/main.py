@@ -224,6 +224,7 @@ class MetadataExtractionAgent:
                     "input_length": len(text),
                 },
                 "confidence_scores": self._extract_confidence_scores(extracted_data),
+                "content": text,  # Preserve raw extracted text for search/preview functionality
             }
 
             # Apply mappers based on output_type

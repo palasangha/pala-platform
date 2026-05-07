@@ -19,6 +19,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from storage_provider import StorageProvider, Document, Extraction
 from metadata_utils import deep_merge_dict
+from search_utils import (
+    _first_non_empty,
+    _find_nested_text,
+    describe_match_reason,
+    extract_line_window_around_query,
+    extract_passage_around_query,
+    select_best_search_chunk,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1060,6 +1068,62 @@ class SQLiteProvider(StorageProvider):
                 text = str(value).strip()
                 if text:
                     fragments.append(text)
+
+        def _stringify_value(value: Any) -> str:
+            if value is None:
+                return ''
+            if isinstance(value, str):
+                return value.strip()
+            if isinstance(value, (int, float, bool)):
+                return str(value)
+            if isinstance(value, dict):
+                for key in ('name', 'title', 'label', 'value', 'text', 'summary'):
+                    nested = value.get(key)
+                    if isinstance(nested, str) and nested.strip():
+                        return nested.strip()
+                pieces = []
+                for nested_value in value.values():
+                    nested_text = _stringify_value(nested_value)
+                    if nested_text:
+                        pieces.append(nested_text)
+                return ' '.join(pieces)
+            if isinstance(value, list):
+                pieces = [_stringify_value(item) for item in value]
+                return ', '.join([piece for piece in pieces if piece])
+            return str(value).strip()
+
+        def _add_candidate(candidates: List[Dict[str, Any]], source: str, kind: str, text: Any) -> None:
+            candidate_text = _stringify_value(text)
+            if candidate_text:
+                candidates.append({
+                    'source': source,
+                    'kind': kind,
+                    'text': candidate_text,
+                })
+
+        def _build_excerpt(matched_path: Optional[str], matched_text: str, source_text: str, query_terms: List[str]) -> str:
+            source_text = source_text or matched_text or ''
+            if not source_text:
+                return matched_text[:300]
+            
+            # For content matches: extract line window from OCR/text
+            if matched_path and matched_path.startswith('processed_data.'):
+                if '\n' in source_text:
+                    excerpt = extract_line_window_around_query(source_text, query_terms, window_lines=3)
+                else:
+                    excerpt = extract_passage_around_query(source_text, query_terms, window_size=180)
+                return excerpt or source_text[:300]
+            
+            # For metadata matches: search for the matched_text within source_text to show context
+            if matched_path and matched_path.startswith('metadata.'):
+                # Try to find context around the metadata match in the full content
+                excerpt = extract_passage_around_query(source_text, query_terms, window_size=200)
+                if excerpt:
+                    return excerpt
+                # Fallback: show the matched text itself
+                return matched_text[:300] if matched_text else source_text[:300]
+            
+            return source_text[:300]
         
         try:
             conn = sqlite3.connect(self.db_path)
@@ -1111,9 +1175,170 @@ class SQLiteProvider(StorageProvider):
                 match_method = "none"
                 matched_path = None
                 matched_text = ""
+                matched_chunk_index = None
+                matched_chunk_start = None
+                matched_chunk_end = None
+                match_reason = None
+                excerpt = ""
+
+                content_text = _first_non_empty(
+                    processed_data.get('content') if isinstance(processed_data.get('content'), str) else '',
+                    processed_data.get('text') if isinstance(processed_data.get('text'), str) else '',
+                    processed_data.get('ocr_text') if isinstance(processed_data.get('ocr_text'), str) else '',
+                    _find_nested_text(processed_data.get('content')),
+                    _find_nested_text(processed_data.get('text')),
+                    _find_nested_text(processed_data.get('ocr_text')),
+                    _find_nested_text(processed_data.get('result')),
+                )
+                
+                # If content_text is still empty, reconstruct from stored search_chunks
+                if not content_text:
+                    stored_chunks = app_data.get('search_chunks', []) if isinstance(app_data, dict) else []
+                    if isinstance(stored_chunks, list) and len(stored_chunks) > 0:
+                        # Find the largest content chunk (usually index 0 if it's from processed_data.content)
+                        content_chunks = [c for c in stored_chunks if isinstance(c, dict) and c.get('kind') == 'content' and c.get('text')]
+                        if content_chunks:
+                            # Use the first content chunk as fallback for excerpts
+                            content_text = content_chunks[0].get('text', '')
+                summary_text = _first_non_empty(
+                    metadata.get('summary') if isinstance(metadata.get('summary'), str) else '',
+                    _find_nested_text(metadata.get('summary')),
+                    _find_nested_text(metadata.get('pala_metadata')),
+                    _find_nested_text(metadata.get('content')),
+                    processed_data.get('summary') if isinstance(processed_data.get('summary'), str) else '',
+                    _find_nested_text(processed_data.get('summary')),
+                )
+
+                search_candidates: List[Dict[str, Any]] = []
+                stored_chunks = app_data.get('search_chunks', []) if isinstance(app_data, dict) else []
+                if isinstance(stored_chunks, list):
+                    for chunk in stored_chunks:
+                        if isinstance(chunk, dict) and chunk.get('text'):
+                            search_candidates.append(chunk)
+
+                _add_candidate(search_candidates, 'processed_data.content', 'content', content_text)
+                _add_candidate(search_candidates, 'metadata.summary', 'metadata', summary_text)
+                
+                # Extract array fields - handle both flat lists and nested structures
+                # Check pala_metadata for structured data
+                pala_meta = metadata.get('pala_metadata', {}) if isinstance(metadata.get('pala_metadata'), dict) else {}
+                parties = pala_meta.get('parties', {}) if isinstance(pala_meta.get('parties'), dict) else {}
+                places_obj = pala_meta.get('places', {}) if isinstance(pala_meta.get('places'), dict) else {}
+                
+                # Extract people - prioritize pala_metadata structure, fallback to flat metadata
+                people_candidates = []
+                # Primary: check pala_metadata.parties.people (objects with 'name' field)
+                if parties.get('people') and isinstance(parties.get('people'), list):
+                    for person in parties.get('people', []):
+                        person_text = person.get('name') if isinstance(person, dict) else person
+                        if person_text:
+                            people_candidates.append(person_text)
+                # Fallback: check metadata.people
+                if not people_candidates and metadata.get('people') and isinstance(metadata.get('people'), list):
+                    for person in metadata.get('people', []):
+                        person_text = person.get('name') if isinstance(person, dict) else person
+                        if person_text:
+                            people_candidates.append(person_text)
+                
+                for person_text in people_candidates:
+                    _add_candidate(search_candidates, 'metadata.people', 'metadata', person_text)
+                
+                # Extract places - prioritize pala_metadata structure, fallback to flat metadata
+                places_candidates = []
+                # Primary: check pala_metadata.places.locations (objects with 'name' field)
+                if places_obj.get('locations') and isinstance(places_obj.get('locations'), list):
+                    for location in places_obj.get('locations', []):
+                        place_text = location.get('name') if isinstance(location, dict) else location
+                        if place_text:
+                            places_candidates.append(place_text)
+                # Fallback: check metadata.places
+                if not places_candidates and metadata.get('places') and isinstance(metadata.get('places'), list):
+                    for place in metadata.get('places', []):
+                        place_text = place.get('name') if isinstance(place, dict) else place
+                        if place_text:
+                            places_candidates.append(place_text)
+                
+                for place_text in places_candidates:
+                    _add_candidate(search_candidates, 'metadata.places', 'metadata', place_text)
+                
+                # Extract topics - handle both flat strings and objects
+                topics_candidates = []
+                topics_list = metadata.get('topics', [])
+                if isinstance(topics_list, list):
+                    for topic in topics_list:
+                        topic_text = topic.get('value') if isinstance(topic, dict) else topic
+                        if topic_text:
+                            topics_candidates.append(topic_text)
+                
+                for topic_text in topics_candidates:
+                    _add_candidate(search_candidates, 'metadata.topics', 'metadata', topic_text)
+                
+                # Extract organizations - prioritize pala_metadata structure, fallback to flat metadata
+                orgs_candidates = []
+                # Primary: check pala_metadata.parties.organizations
+                if parties.get('organizations') and isinstance(parties.get('organizations'), list):
+                    for org in parties.get('organizations', []):
+                        org_text = org.get('name') if isinstance(org, dict) else org
+                        if org_text:
+                            orgs_candidates.append(org_text)
+                # Fallback: check metadata.organizations
+                if not orgs_candidates and metadata.get('organizations') and isinstance(metadata.get('organizations'), list):
+                    for org in metadata.get('organizations', []):
+                        org_text = org.get('name') if isinstance(org, dict) else org
+                        if org_text:
+                            orgs_candidates.append(org_text)
+                
+                for org_text in orgs_candidates:
+                    _add_candidate(search_candidates, 'metadata.organizations', 'metadata', org_text)
+                
+                _add_candidate(search_candidates, 'original_file', 'metadata', original_file)
+                _add_candidate(search_candidates, 'type', 'metadata', doc_type)
+
+                best_chunk = select_best_search_chunk(
+                    search_candidates,
+                    query=query,
+                    query_terms=query_terms,
+                    query_embedding=query_embedding,
+                    cosine_similarity_fn=self._cosine_similarity,
+                )
+                if best_chunk:
+                    relevance_score = float(best_chunk.get('score', 0.0) or 0.0)
+                    match_method = f"{best_chunk.get('method')}_chunk"
+                    matched_path = best_chunk.get('matched_path')
+                    matched_text = best_chunk.get('matched_text') or ''
+                    matched_chunk_index = best_chunk.get('chunk_index')
+                    matched_chunk_start = best_chunk.get('start_char')
+                    matched_chunk_end = best_chunk.get('end_char')
+                    match_reason = best_chunk.get('match_reason') or describe_match_reason(matched_path or '', match_method)
+                    
+                    # For content matches, use content_text as source; for metadata matches, still search content for context
+                    if matched_path and matched_path.startswith('processed_data.') and content_text:
+                        source_text = content_text
+                    elif matched_path and matched_path.startswith('metadata.') and content_text:
+                        # For metadata matches (e.g., person/place), show where it appears in content
+                        source_text = content_text
+                    else:
+                        source_text = summary_text or matched_text
+                    
+                    excerpt = _build_excerpt(matched_path, matched_text, source_text, query_terms)
+                    if matched_path and matched_path.startswith('processed_data.') and content_text:
+                        matched_text = excerpt
+                    elif matched_path and matched_path.startswith('metadata.') and source_text:
+                        # For metadata matches, show the context from content
+                        matched_text = excerpt
+                    elif not matched_text:
+                        matched_text = excerpt
+                    logger.info(
+                        "[SEARCH-DOCUMENTS] Candidate match: file=%s path=%s method=%s score=%.3f reason=%s",
+                        original_file,
+                        matched_path,
+                        match_method,
+                        relevance_score,
+                        match_reason,
+                    )
                 
                 # Method 1: Semantic search using embeddings
-                if query_embedding:
+                if relevance_score < min_confidence and query_embedding:
                     try:
                         # Get document embedding from app_data
                         doc_embedding = app_data.get('embedding_vector', None)
@@ -1136,16 +1361,19 @@ class SQLiteProvider(StorageProvider):
                             if similarity >= min_confidence:
                                 relevance_score = similarity
                                 match_method = "semantic"
-                                # Prefer a short excerpt from metadata or processed_data for semantic matches
-                                if metadata.get('summary'):
-                                    matched_text = metadata.get('summary', '')[:300]
-                                    matched_path = 'metadata.summary'
-                                elif isinstance(processed_data, dict) and processed_data.get('content'):
-                                    matched_text = processed_data.get('content', '')[:300]
-                                    matched_path = 'processed_data.content'
-                                else:
-                                    matched_text = ''
-                                    matched_path = 'semantic_embedding'
+                                if matched_path is None:
+                                    if summary_text:
+                                        matched_text = summary_text[:300]
+                                        matched_path = 'metadata.summary'
+                                    elif content_text:
+                                        matched_text = _build_excerpt('processed_data.content', content_text, content_text, query_terms)
+                                        matched_path = 'processed_data.content'
+                                    else:
+                                        matched_text = ''
+                                        matched_path = 'semantic_embedding'
+                                match_reason = describe_match_reason(matched_path, match_method)
+                                if not excerpt:
+                                    excerpt = matched_text[:300]
                                 logger.info(f"[SEARCH-DOCUMENTS] ✅ MATCH: {original_file} (score={similarity:.3f})")
                             else:
                                 logger.debug(f"[SEARCH-DOCUMENTS] Below threshold: {similarity:.4f} < {min_confidence}")
@@ -1244,6 +1472,10 @@ class SQLiteProvider(StorageProvider):
                     if keyword_score >= min_confidence:
                         relevance_score = keyword_score
                         match_method = "keyword"
+                        if not match_reason:
+                            match_reason = describe_match_reason(matched_path or '', match_method)
+                        if not excerpt:
+                            excerpt = _build_excerpt(matched_path, matched_text, content_text or summary_text, query_terms)
                         logger.info(f"[SEARCH-DOCUMENTS] Keyword match: {original_file} (score={keyword_score:.3f})")
                         match_method = "keyword"
                         logger.info(f"[SEARCH-DOCUMENTS] Keyword match: {original_file} (score={keyword_score:.3f})")
@@ -1260,14 +1492,12 @@ class SQLiteProvider(StorageProvider):
                 # Add to results if scored above threshold
                 logger.debug(f"[SEARCH-DOCUMENTS] Gating check: relevance_score={relevance_score:.4f} >= min_confidence={min_confidence}? {relevance_score >= min_confidence}")
                 if relevance_score >= min_confidence:
-                    # Extract excerpt from metadata or processed data
-                    excerpt = ""
-                    if metadata.get('summary'):
-                        excerpt = metadata.get('summary', '')[:300]
-                    elif isinstance(processed_data, dict) and processed_data.get('content'):
-                        content = processed_data.get('content', '')
-                        if isinstance(content, str):
-                            excerpt = content[:300]
+                    if not match_reason:
+                        match_reason = describe_match_reason(matched_path or '', match_method)
+                    if not excerpt:
+                        excerpt = _build_excerpt(matched_path, matched_text, content_text or summary_text, query_terms)
+                    if matched_path and matched_path.startswith('processed_data.') and not matched_text:
+                        matched_text = excerpt
                     
                     result = {
                         'document_id': doc_id,
@@ -1277,13 +1507,17 @@ class SQLiteProvider(StorageProvider):
                         'relevance_score': round(relevance_score, 3),
                         'match_method': match_method,
                         'matched_path': matched_path,
-                        'matched_text': (matched_text or '')[:400],
+                        'match_reason': match_reason,
+                        'matched_text': (matched_text or excerpt or '')[:400],
                         'created_at': created_at,
                         'created_by': created_by,
                         'summary': metadata.get('summary', '') if isinstance(metadata, dict) else '',
                         'topics': metadata.get('topics', []) if isinstance(metadata, dict) else [],
                         'places': metadata.get('places', []) if isinstance(metadata, dict) else [],
                         'excerpt': excerpt,
+                        'matched_chunk_index': matched_chunk_index,
+                        'matched_chunk_start': matched_chunk_start,
+                        'matched_chunk_end': matched_chunk_end,
                     }
                     
                     if include_original_content:

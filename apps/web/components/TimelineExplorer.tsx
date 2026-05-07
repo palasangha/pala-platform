@@ -30,6 +30,7 @@ type TimelineDocument = {
   excerpt?: string;
   matched_text?: string;
   matched_path?: string;
+  match_reason?: string;
   relevance_score?: number;
 };
 
@@ -49,6 +50,7 @@ type TimelineItem = {
   source: TimelineDocument;
   passage: string;
   matchedPath: string;
+  matchReason?: string;
   relevanceScore: number;
 };
 
@@ -552,6 +554,7 @@ export function TimelineExplorer() {
             matched_text: matchedText,
             excerpt: excerptText,
             matched_path: toText(doc.matched_path || doc.match_method),
+            match_reason: toText(doc.match_reason || doc.matchReason),
             relevance_score: typeof doc.relevance_score === 'number' ? doc.relevance_score : Number(doc.relevance_score || 0),
           });
 
@@ -704,6 +707,7 @@ export function TimelineExplorer() {
           source: normalized,
           passage,
           matchedPath: toText(doc.matched_path || doc.match_method),
+          matchReason: toText(doc.match_reason || doc.matchReason),
           relevanceScore: Number(doc.relevance_score || 0),
         };
       })
@@ -921,7 +925,7 @@ export function TimelineExplorer() {
 
                           {item.matchedPath && (
                             <p className="mt-2 text-[11px] uppercase tracking-wide text-slate-500">
-                              Hit: {item.matchedPath}
+                              Why: {item.matchReason || item.matchedPath}
                             </p>
                           )}
 

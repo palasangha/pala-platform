@@ -38,6 +38,7 @@ from providers.s3_provider_real import S3ProviderReal
 
 from provider_factory import ProviderFactory, get_provider
 from metadata_utils import deep_merge_dict, extract_metadata_health
+from search_utils import _find_nested_text, build_document_search_index
 from storage_provider import StorageProvider
 
 
@@ -228,6 +229,10 @@ def combine_searchable_text(metadata: Dict[str, Any], processed_data: Dict[str, 
     searchable_text = "\n".join(parts)
     logger.debug(f"[EMBEDDING] Combined searchable text length: {len(searchable_text)} chars")
     return searchable_text
+
+
+def _first_text_from_nested(value: Any) -> str:
+    return _find_nested_text(value)
 
 
 def build_compact_document_index(doc) -> Dict[str, Any]:
@@ -522,37 +527,49 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
         }
         
         # ====================================================================
-        # Step: Generate embeddings for semantic search
+        # Step: Generate and persist the search index for semantic search
         # ====================================================================
-        embedding_vector = None
-        searchable_text = None
+        logger.info("[EMBEDDING-STORE] Building searchable index payload...")
         try:
-            logger.info("[EMBEDDING-STORE] Generating embeddings for document...")
-            searchable_text = combine_searchable_text(metadata, processed_data, original_file)
-            logger.debug(f"[EMBEDDING-STORE] Searchable text created: {len(searchable_text)} chars")
-            
-            if embedding_model:
-                embedding_vector = generate_embedding(searchable_text, embedding_model)
-                if embedding_vector:
-                    logger.info(f"[EMBEDDING-STORE] ✅ Embedding generated successfully (dimension: {len(embedding_vector)})")
-                else:
-                    logger.warning("[EMBEDDING-STORE] ⚠️  Embedding generation returned None, will continue without embeddings")
-            else:
-                logger.warning("[EMBEDDING-STORE] ⚠️  Embedding model not available, will continue without embeddings")
+            search_index = build_document_search_index(
+                metadata=metadata,
+                processed_data=processed_data,
+                original_file=original_file,
+                generate_embedding_fn=(lambda text: generate_embedding(text, embedding_model)) if embedding_model else None,
+            )
+            logger.info(
+                "[EMBEDDING-STORE] Search index built: content_len=%d chunks=%d embedding=%s",
+                search_index.get('search_content_length', 0),
+                search_index.get('search_chunk_count', 0),
+                bool(search_index.get('embedding_generated')),
+            )
         except Exception as e:
-            logger.error(f"[EMBEDDING-STORE] ❌ Failed to generate embeddings: {e}")
-            logger.warning("[EMBEDDING-STORE] Continuing without embeddings for this document")
-            embedding_vector = None
-        
-        # Add embedding info to app_data for storage
-        if embedding_vector:
-            app_data['embedding_generated'] = True
-            app_data['embedding_model'] = 'all-MiniLM-L6-v2'
-            app_data['embedding_timestamp'] = datetime.now(timezone.utc).isoformat()
-            app_data['embedding_vector'] = embedding_vector  # Store embedding vector
-            app_data['searchable_text'] = searchable_text  # Store searchable text for search
-        else:
-            app_data['embedding_generated'] = False
+            logger.error(f"[EMBEDDING-STORE] ❌ Failed to build search index: {e}", exc_info=True)
+            search_index = {
+                'search_index_version': 1,
+                'searchable_text': combine_searchable_text(metadata, processed_data, original_file),
+                'search_chunks': [],
+                'search_chunk_count': 0,
+                'search_content_length': len(_first_text_from_nested(processed_data.get('content') or processed_data.get('text') or processed_data.get('ocr_text') or processed_data)),
+                'embedding_generated': False,
+                'embedding_model': None,
+                'embedding_timestamp': None,
+                'embedding_vector': None,
+            }
+
+        app_data = dict(app_data or {})
+        app_data.update(search_index)
+        app_data['searchable_text'] = search_index.get('searchable_text', '')
+        app_data['embedding_generated'] = bool(search_index.get('embedding_generated'))
+        app_data['embedding_model'] = search_index.get('embedding_model')
+        app_data['embedding_timestamp'] = search_index.get('embedding_timestamp')
+        app_data['embedding_vector'] = search_index.get('embedding_vector')
+        logger.debug(
+            "[EMBEDDING-STORE] Persisting app_data search payload: searchable_len=%d chunks=%s vector=%s",
+            len(app_data.get('searchable_text', '') or ''),
+            app_data.get('search_chunk_count'),
+            'present' if app_data.get('embedding_vector') else 'absent',
+        )
         
         doc, duplicate = await provider.store_document(
             type=doc_type,
@@ -1236,6 +1253,13 @@ async def tool_semantic_search_documents(params: Dict[str, Any]) -> Dict[str, An
                     'topics': doc.get('topics'),
                     'places': doc.get('places'),
                     'excerpt': doc.get('excerpt'),
+                    'matched_text': doc.get('matched_text'),
+                    'matched_path': doc.get('matched_path'),
+                    'match_method': doc.get('match_method'),
+                    'match_reason': doc.get('match_reason'),
+                    'matched_chunk_index': doc.get('matched_chunk_index'),
+                    'matched_chunk_start': doc.get('matched_chunk_start'),
+                    'matched_chunk_end': doc.get('matched_chunk_end'),
                     'original_file_data': doc.get('original_file_data') if include_original else None
                 })
             

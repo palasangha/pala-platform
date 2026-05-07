@@ -12,6 +12,7 @@ type SearchResult = {
   text: string;
   preview?: string;
   matchedPath?: string;
+  matchReason?: string;
   score?: number;
   tags?: string[];
 };
@@ -192,8 +193,9 @@ export default function AdvancedExplore() {
           docTitle: d.original_file || d.filename || d.title || d.metadata?.title || 'Untitled',
           docDate: d.created_at || d.metadata?.created_at,
           text: d.excerpt || d.matched_text || d.original_file_data || d.summary || d.processed_data || d.text || '',
-          preview: sentenceWindow(d.excerpt || d.matched_text || d.original_file_data || d.summary || d.processed_data || d.text || '', q),
+          preview: d.excerpt || sentenceWindow(d.matched_text || d.original_file_data || d.summary || d.processed_data || d.text || '', q),
           matchedPath: d.matched_path || d.match_method || d.match_reasons?.join(', '),
+          matchReason: d.match_reason || d.matchReason || (d.matched_path ? `Match in ${d.matched_path}` : ''),
           score: d.relevance_score ?? d.score ?? 0,
           tags: d.topics || d.tags || d.places || d.metadata?.tags || [],
         }));
@@ -411,6 +413,11 @@ export default function AdvancedExplore() {
                         <div className="text-sm leading-relaxed text-slate-300">
                           {r.preview || makePreview(r.text, query)}
                         </div>
+                        {r.matchReason && (
+                          <div className="mt-2 text-xs uppercase tracking-wide text-slate-500">
+                            Why: {r.matchReason}
+                          </div>
+                        )}
                         {r.matchedPath && (
                           <div className="mt-2 text-xs text-slate-500">Hit: {r.matchedPath}</div>
                         )}
@@ -446,10 +453,8 @@ export default function AdvancedExplore() {
                       </>
                     ) : (
                       <>
-                        <div
-                          className="line-clamp-2 text-sm text-slate-300"
-                          dangerouslySetInnerHTML={{ __html: highlight(r.preview || r.text, query) }}
-                        />
+                        <div className="whitespace-pre-wrap text-sm text-slate-300" dangerouslySetInnerHTML={{ __html: highlight(r.preview || r.text, query) }} />
+                        {r.matchReason && <div className="mt-2 text-xs uppercase tracking-wide text-slate-500">Why: {r.matchReason}</div>}
                         {r.matchedPath && <div className="mt-2 text-xs text-slate-500">Hit: {r.matchedPath}</div>}
                         {r.tags && r.tags.length > 0 && (
                           <div className="mt-2 flex flex-wrap gap-1">
@@ -510,6 +515,9 @@ export default function AdvancedExplore() {
                   className="mb-4 max-h-48 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950 p-4 text-sm leading-relaxed text-slate-300"
                     dangerouslySetInnerHTML={{ __html: highlight(selectedResult.preview || selectedResult.text, query) }}
                 />
+                  {selectedResult.matchReason && (
+                    <div className="mb-2 text-xs uppercase tracking-wide text-slate-500">Why: {selectedResult.matchReason}</div>
+                  )}
                   {selectedResult.matchedPath && (
                     <div className="mb-4 text-xs text-slate-500">Hit path: {selectedResult.matchedPath}</div>
                   )}

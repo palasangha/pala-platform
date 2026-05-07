@@ -7,6 +7,7 @@ from main import _first_text_from_nested
 from search_utils import (
     build_document_search_index,
     extract_passage_around_query,
+    extract_line_window_around_query,
     format_search_document_result,
     split_text_into_chunks,
 )
@@ -52,6 +53,16 @@ def test_extract_passage_around_query_prefers_hit_window():
 
     assert "Paris Peace Talks" in passage
     assert "Intro text" in passage or "The Paris" in passage
+
+
+def test_extract_line_window_around_query_includes_surrounding_lines():
+    content = "Line 1\nLine 2\nThe mother appeared here\nLine 4\nLine 5\nLine 6"
+
+    window = extract_line_window_around_query(content, ["mother"], window_lines=3)
+
+    assert "Line 1" in window
+    assert "The mother appeared here" in window
+    assert "Line 6" in window
 
 
 def test_build_document_search_index_adds_chunks_and_embeddings():
@@ -105,6 +116,7 @@ def test_format_search_document_result_includes_passage_fields():
             "matched_text": "Real passage text",
             "matched_path": "processed_data.content",
             "match_method": "semantic_chunk",
+            "match_reason": "Content match in processed_data.content",
             "matched_chunk_index": 3,
             "matched_chunk_start": 90,
             "matched_chunk_end": 210,
@@ -116,6 +128,7 @@ def test_format_search_document_result_includes_passage_fields():
 
     assert formatted["matched_text"] == "Real passage text"
     assert formatted["matched_path"] == "processed_data.content"
+    assert formatted["match_reason"] == "Content match in processed_data.content"
     assert formatted["matched_chunk_index"] == 3
     assert formatted["original_file_data"] == "abc"
 
@@ -176,6 +189,7 @@ def test_sqlite_search_returns_chunk_passage(tmp_path):
         assert "Paris Peace Talks" in top["matched_text"]
         assert top["matched_path"] == "processed_data.content"
         assert top["match_method"] in {"semantic_chunk", "keyword_chunk"}
+        assert top["match_reason"] == "Content match in processed_data.content"
         assert top["matched_chunk_index"] == 0
         assert "Paris Peace Talks" in top["excerpt"]
 
