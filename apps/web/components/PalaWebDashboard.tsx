@@ -4,12 +4,13 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { ContentBrowser } from './ContentBrowser';
+import Browse from './Browse';
 
-type Tab = 'explore' | 'storage' | 'developer';
+type Tab = 'explore' | 'browse' | 'storage' | 'developer';
 
 export function PalaWebDashboard() {
   const [activeTab, setActiveTab] = useState<Tab>('explore');
-  const { connected } = useWebSocket();
+  const { connected, send } = useWebSocket();
 
   return (
     <div className="min-h-screen bg-slate-900">
@@ -59,6 +60,16 @@ export function PalaWebDashboard() {
               Developer
             </button>
             <button
+              onClick={() => setActiveTab('browse')}
+              className={`px-4 py-2 border-b-2 font-medium text-sm transition-colors ${
+                activeTab === 'browse'
+                  ? 'border-blue-500 text-blue-400'
+                  : 'border-transparent text-slate-400 hover:text-slate-300'
+              }`}
+            >
+              Browse
+            </button>
+            <button
               onClick={() => setActiveTab('storage')}
               className={`px-4 py-2 border-b-2 font-medium text-sm transition-colors ${
                 activeTab === 'storage'
@@ -76,6 +87,11 @@ export function PalaWebDashboard() {
       <main className="max-w-7xl mx-auto px-4 py-8">
         {activeTab === 'explore' && (
           <iframe src="/explore" className="w-full min-h-[60vh] border-none" title="Explore" />
+        )}
+        {activeTab === 'browse' && (
+          <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+            <Browse send={send} className="min-h-[60vh]" />
+          </div>
         )}
         {activeTab === 'developer' && <DeveloperPanel />}
         {activeTab === 'storage' && <StorageExplorer />}

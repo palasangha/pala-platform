@@ -1703,6 +1703,476 @@ class SQLiteProvider(StorageProvider):
         logger.info(f"Deleted all documents (count: {deleted_count})")
         return deleted_count
 
+    async def browse_by_date(self, year: Optional[int] = None, month: Optional[int] = None) -> Dict[str, Any]:
+        """Browse documents organized by date hierarchy (years -> months -> documents)"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        logger.debug(f"[BROWSE-DATE] Querying documents by date. year={year}, month={month}")
+        
+        try:
+            if year is not None and month is not None:
+                # Return documents for a specific year-month
+                cursor.execute('''
+                    SELECT id, original_file, metadata, created_at
+                    FROM documents
+                    WHERE deleted_at IS NULL
+                    AND strftime('%Y', created_at) = ?
+                    AND strftime('%m', created_at) = ?
+                    ORDER BY created_at DESC
+                ''', (str(year).zfill(4), str(month).zfill(2)))
+                
+                documents = []
+                for row in cursor.fetchall():
+                    doc_id, original_file, metadata_json, created_at = row
+                    documents.append({
+                        'id': doc_id,
+                        'title': original_file,
+                        'created_at': created_at,
+                        'metadata': json.loads(metadata_json) if metadata_json else {}
+                    })
+                
+                result = {
+                    'type': 'documents',
+                    'year': year,
+                    'month': month,
+                    'count': len(documents),
+                    'documents': documents
+                }
+                logger.debug(f"[BROWSE-DATE] Found {len(documents)} documents for {year}-{month}")
+                return result
+            
+            elif year is not None:
+                # Return months for a specific year
+                cursor.execute('''
+                    SELECT DISTINCT strftime('%m', created_at) as month, COUNT(id) as count
+                    FROM documents
+                    WHERE deleted_at IS NULL
+                    AND strftime('%Y', created_at) = ?
+                    GROUP BY month
+                    ORDER BY month DESC
+                ''', (str(year).zfill(4),))
+                
+                months = []
+                for row in cursor.fetchall():
+                    month_str, count = row
+                    months.append({
+                        'month': int(month_str),
+                        'count': count
+                    })
+                
+                result = {
+                    'type': 'months',
+                    'year': year,
+                    'count': len(months),
+                    'months': months
+                }
+                logger.debug(f"[BROWSE-DATE] Found {len(months)} months in year {year}")
+                return result
+            
+            else:
+                # Return years
+                cursor.execute('''
+                    SELECT DISTINCT strftime('%Y', created_at) as year, COUNT(id) as count
+                    FROM documents
+                    WHERE deleted_at IS NULL
+                    GROUP BY year
+                    ORDER BY year DESC
+                ''')
+                
+                years = []
+                for row in cursor.fetchall():
+                    year_str, count = row
+                    years.append({
+                        'year': int(year_str),
+                        'count': count
+                    })
+                
+                result = {
+                    'type': 'years',
+                    'count': len(years),
+                    'years': years
+                }
+                logger.debug(f"[BROWSE-DATE] Found {len(years)} years with documents")
+                return result
+        
+        finally:
+            conn.close()
+
+    async def browse_by_tags(self) -> Dict[str, Any]:
+        """Browse documents organized by tags hierarchy"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        def extract_tags_from_payload(metadata: Dict[str, Any], processed_data: Dict[str, Any]) -> set[str]:
+            tags: set[str] = set()
+
+            def add_values(value: Any) -> None:
+                if isinstance(value, list):
+                    for item in value:
+                        text = str(item).strip()
+                        if text:
+                            tags.add(text)
+                elif isinstance(value, dict):
+                    for key in value.keys():
+                        text = str(key).strip()
+                        if text:
+                            tags.add(text)
+
+            for key in ('tags', 'topics', 'categories'):
+                add_values(metadata.get(key))
+
+            processed_result = processed_data.get('result') if isinstance(processed_data, dict) else {}
+            if isinstance(processed_result, dict):
+                extracted_fields = processed_result.get('extracted_fields')
+                if isinstance(extracted_fields, dict):
+                    add_values(extracted_fields.get('topics'))
+                    add_values(extracted_fields.get('tags'))
+
+                pala_metadata = processed_result.get('pala_metadata')
+                if isinstance(pala_metadata, dict):
+                    content = pala_metadata.get('content')
+                    if isinstance(content, dict):
+                        add_values(content.get('topics'))
+
+            return tags
+        
+        logger.debug(f"[BROWSE-TAGS] Querying tag hierarchy")
+        
+        try:
+            # Get all tags with document counts from the tags table first
+            cursor.execute('''
+                SELECT t.id, t.name, COUNT(dt.document_id) as count
+                FROM tags t
+                LEFT JOIN document_tags dt ON t.id = dt.tag_id
+                GROUP BY t.id, t.name
+                ORDER BY t.name ASC
+            ''')
+            
+            tags = []
+            for row in cursor.fetchall():
+                tag_id, tag_name, count = row
+                tags.append({
+                    'id': tag_id,
+                    'name': tag_name,
+                    'count': count or 0
+                })
+
+            if not tags:
+                logger.debug("[BROWSE-TAGS] No rows in tags table; falling back to metadata tags")
+                cursor.execute('''
+                    SELECT id, metadata, processed_data
+                    FROM documents
+                    WHERE deleted_at IS NULL
+                ''')
+
+                tag_map: Dict[str, set] = {}
+                for doc_id, metadata_json, processed_data_json in cursor.fetchall():
+                    metadata = json.loads(metadata_json) if metadata_json else {}
+                    processed_data = json.loads(processed_data_json) if processed_data_json else {}
+                    for tag_name in extract_tags_from_payload(metadata, processed_data):
+                        tag_map.setdefault(tag_name, set()).add(doc_id)
+
+                tags = [
+                    {'id': tag_name, 'name': tag_name, 'count': len(doc_ids)}
+                    for tag_name, doc_ids in sorted(tag_map.items(), key=lambda item: item[0].lower())
+                ]
+            
+            result = {
+                'type': 'tags',
+                'count': len(tags),
+                'tags': tags
+            }
+            logger.debug(f"[BROWSE-TAGS] Found {len(tags)} tags")
+            return result
+        
+        finally:
+            conn.close()
+
+    async def browse_by_tag_documents(self, tag_id: str) -> Dict[str, Any]:
+        """Get documents for a specific tag"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        def extract_tags_from_payload(metadata: Dict[str, Any], processed_data: Dict[str, Any]) -> set[str]:
+            tags: set[str] = set()
+
+            def add_values(value: Any) -> None:
+                if isinstance(value, list):
+                    for item in value:
+                        text = str(item).strip()
+                        if text:
+                            tags.add(text)
+                elif isinstance(value, dict):
+                    for key, nested in value.items():
+                        if isinstance(nested, dict):
+                            text = str(nested.get('name') or nested.get('title') or nested.get('value') or key).strip()
+                        else:
+                            text = str(key).strip()
+                        if text:
+                            tags.add(text)
+
+            for key in ('tags', 'topics', 'categories'):
+                add_values(metadata.get(key))
+
+            processed_result = processed_data.get('result') if isinstance(processed_data, dict) else {}
+            if isinstance(processed_result, dict):
+                extracted_fields = processed_result.get('extracted_fields')
+                if isinstance(extracted_fields, dict):
+                    add_values(extracted_fields.get('topics'))
+                    add_values(extracted_fields.get('tags'))
+
+                pala_metadata = processed_result.get('pala_metadata')
+                if isinstance(pala_metadata, dict):
+                    content = pala_metadata.get('content')
+                    if isinstance(content, dict):
+                        add_values(content.get('topics'))
+
+                archipelago_metadata = processed_result.get('archipelago_metadata')
+                if isinstance(archipelago_metadata, dict):
+                    add_values(archipelago_metadata.get('subject'))
+
+            return tags
+
+        logger.debug(f"[BROWSE-TAG-DOCS] Querying documents for tag {tag_id}")
+
+        try:
+            cursor.execute('SELECT name FROM tags WHERE id = ?', (tag_id,))
+            tag_row = cursor.fetchone()
+            tag_name = tag_row[0] if tag_row else tag_id
+
+            documents = []
+
+            if tag_row:
+                cursor.execute('''
+                    SELECT d.id, d.original_file, d.metadata, d.created_at
+                    FROM documents d
+                    JOIN document_tags dt ON d.id = dt.document_id
+                    WHERE dt.tag_id = ? AND d.deleted_at IS NULL
+                    ORDER BY d.created_at DESC
+                ''', (tag_id,))
+
+                for row in cursor.fetchall():
+                    doc_id, original_file, metadata_json, created_at = row
+                    documents.append({
+                        'id': doc_id,
+                        'title': original_file,
+                        'created_at': created_at,
+                        'metadata': json.loads(metadata_json) if metadata_json else {}
+                    })
+            else:
+                logger.warning(f"[BROWSE-TAG-DOCS] Tag not found in tags table; falling back to metadata tag search: {tag_id}")
+                cursor.execute('''
+                    SELECT id, original_file, metadata, processed_data, created_at
+                    FROM documents
+                    WHERE deleted_at IS NULL
+                    ORDER BY created_at DESC
+                ''')
+
+                for row in cursor.fetchall():
+                    doc_id, original_file, metadata_json, processed_data_json, created_at = row
+                    metadata = json.loads(metadata_json) if metadata_json else {}
+                    processed_data = json.loads(processed_data_json) if processed_data_json else {}
+                    tag_matches = extract_tags_from_payload(metadata, processed_data)
+
+                    if tag_id not in tag_matches and tag_name not in tag_matches:
+                        continue
+
+                    documents.append({
+                        'id': doc_id,
+                        'title': original_file,
+                        'created_at': created_at,
+                        'metadata': metadata,
+                    })
+
+            result = {
+                'type': 'documents',
+                'tag_id': tag_id,
+                'tag_name': tag_name,
+                'count': len(documents),
+                'documents': documents,
+            }
+            logger.debug(f"[BROWSE-TAG-DOCS] Found {len(documents)} documents for tag {tag_name}")
+            return result
+
+        finally:
+            conn.close()
+
+    async def browse_by_entities(self) -> Dict[str, Any]:
+        """Browse documents organized by entities (extracted from metadata)"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        def extract_entities_from_payload(metadata: Dict[str, Any], processed_data: Dict[str, Any]) -> set[str]:
+            entities: set[str] = set()
+
+            def add_values(value: Any) -> None:
+                if isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, dict):
+                            text = str(item.get('name') or item.get('title') or item.get('value') or '').strip()
+                            if text:
+                                entities.add(text)
+                        else:
+                            text = str(item).strip()
+                            if text:
+                                entities.add(text)
+                elif isinstance(value, dict):
+                    for key, nested in value.items():
+                        if isinstance(nested, dict):
+                            text = str(nested.get('name') or nested.get('title') or nested.get('value') or key).strip()
+                        else:
+                            text = str(key).strip()
+                        if text:
+                            entities.add(text)
+
+            for key in ['entities', 'people', 'places', 'organizations', 'persons', 'locations']:
+                add_values(metadata.get(key))
+
+            processed_result = processed_data.get('result') if isinstance(processed_data, dict) else {}
+            if isinstance(processed_result, dict):
+                extracted_fields = processed_result.get('extracted_fields')
+                if isinstance(extracted_fields, dict):
+                    for key in ['people', 'locations', 'organizations', 'entities']:
+                        add_values(extracted_fields.get(key))
+
+                pala_metadata = processed_result.get('pala_metadata')
+                if isinstance(pala_metadata, dict):
+                    parties = pala_metadata.get('parties')
+                    if isinstance(parties, dict):
+                        add_values(parties.get('people'))
+                        add_values(parties.get('organizations'))
+                    places = pala_metadata.get('places')
+                    if isinstance(places, dict):
+                        add_values(places.get('locations'))
+
+            return entities
+
+        logger.debug("[BROWSE-ENTITIES] Querying entity hierarchy from metadata")
+
+        try:
+            cursor.execute('''
+                SELECT id, metadata, processed_data
+                FROM documents
+                WHERE deleted_at IS NULL
+            ''')
+
+            entity_map: Dict[str, set] = {}
+
+            for doc_id, metadata_json, processed_data_json in cursor.fetchall():
+                metadata = json.loads(metadata_json) if metadata_json else {}
+                processed_data = json.loads(processed_data_json) if processed_data_json else {}
+                entities = extract_entities_from_payload(metadata, processed_data)
+
+                for entity in entities:
+                    entity_str = str(entity).strip()
+                    if entity_str:
+                        entity_map.setdefault(entity_str, set()).add(doc_id)
+
+            entities_list = sorted(
+                [{'name': entity, 'count': len(doc_ids)} for entity, doc_ids in entity_map.items()],
+                key=lambda x: x['count'],
+                reverse=True,
+            )
+
+            result = {
+                'type': 'entities',
+                'count': len(entities_list),
+                'entities': entities_list,
+            }
+            logger.debug(f"[BROWSE-ENTITIES] Found {len(entities_list)} entities")
+            return result
+
+        finally:
+            conn.close()
+
+    async def browse_by_entity_documents(self, entity_name: str) -> Dict[str, Any]:
+        """Get documents for a specific entity"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        def extract_entities_from_payload(metadata: Dict[str, Any], processed_data: Dict[str, Any]) -> set[str]:
+            entities: set[str] = set()
+
+            def add_values(value: Any) -> None:
+                if isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, dict):
+                            text = str(item.get('name') or item.get('title') or item.get('value') or '').strip()
+                            if text:
+                                entities.add(text)
+                        else:
+                            text = str(item).strip()
+                            if text:
+                                entities.add(text)
+                elif isinstance(value, dict):
+                    for key, nested in value.items():
+                        if isinstance(nested, dict):
+                            text = str(nested.get('name') or nested.get('title') or nested.get('value') or key).strip()
+                        else:
+                            text = str(key).strip()
+                        if text:
+                            entities.add(text)
+
+            for key in ['entities', 'people', 'places', 'organizations', 'persons', 'locations', 'recognized_entities']:
+                add_values(metadata.get(key))
+
+            processed_result = processed_data.get('result') if isinstance(processed_data, dict) else {}
+            if isinstance(processed_result, dict):
+                extracted_fields = processed_result.get('extracted_fields')
+                if isinstance(extracted_fields, dict):
+                    for key in ['people', 'locations', 'organizations', 'entities']:
+                        add_values(extracted_fields.get(key))
+
+                pala_metadata = processed_result.get('pala_metadata')
+                if isinstance(pala_metadata, dict):
+                    parties = pala_metadata.get('parties')
+                    if isinstance(parties, dict):
+                        add_values(parties.get('people'))
+                        add_values(parties.get('organizations'))
+                    places = pala_metadata.get('places')
+                    if isinstance(places, dict):
+                        add_values(places.get('locations'))
+
+            return entities
+
+        logger.debug(f"[BROWSE-ENTITY-DOCS] Querying documents for entity {entity_name}")
+
+        try:
+            cursor.execute('''
+                SELECT id, original_file, metadata, processed_data, created_at
+                FROM documents
+                WHERE deleted_at IS NULL
+                ORDER BY created_at DESC
+            ''')
+
+            documents = []
+            for doc_id, original_file, metadata_json, processed_data_json, created_at in cursor.fetchall():
+                metadata = json.loads(metadata_json) if metadata_json else {}
+                processed_data = json.loads(processed_data_json) if processed_data_json else {}
+
+                found = entity_name in extract_entities_from_payload(metadata, processed_data)
+
+                if found:
+                    documents.append({
+                        'id': doc_id,
+                        'title': original_file,
+                        'created_at': created_at,
+                        'metadata': metadata,
+                    })
+
+            result = {
+                'type': 'documents',
+                'entity_name': entity_name,
+                'count': len(documents),
+                'documents': sorted(documents, key=lambda x: x['created_at'], reverse=True),
+            }
+            logger.debug(f"[BROWSE-ENTITY-DOCS] Found {len(documents)} documents for entity {entity_name}")
+            return result
+
+        finally:
+            conn.close()
+
     async def find_by_hash(self, file_hash: str) -> Optional[Document]:
         """Find document by file hash (for deduplication)"""
         conn = sqlite3.connect(self.db_path)

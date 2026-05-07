@@ -1364,6 +1364,87 @@ async def tool_semantic_search_documents(params: Dict[str, Any]) -> Dict[str, An
         }
 
 
+# ============================================================================
+# Browse Tools - Hierarchical document browsing
+# ============================================================================
+async def tool_browse_by_date(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Browse documents organized by date hierarchy"""
+    year = params.get('year')
+    month = params.get('month')
+    
+    logger.info(f"[BROWSE-DATE-TOOL] Starting: year={year}, month={month}")
+    
+    try:
+        result = await provider.browse_by_date(year=year, month=month)
+        logger.info(f"[BROWSE-DATE-TOOL] Success: returned {result.get('count', 0)} items")
+        return result
+    except Exception as e:
+        logger.error(f"[BROWSE-DATE-TOOL] Failed: {e}", exc_info=True)
+        raise
+
+
+async def tool_browse_by_tags(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Browse documents organized by tags"""
+    logger.info(f"[BROWSE-TAGS-TOOL] Starting")
+    
+    try:
+        result = await provider.browse_by_tags()
+        logger.info(f"[BROWSE-TAGS-TOOL] Success: returned {result.get('count', 0)} tags")
+        return result
+    except Exception as e:
+        logger.error(f"[BROWSE-TAGS-TOOL] Failed: {e}", exc_info=True)
+        raise
+
+
+async def tool_browse_by_tag_documents(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Get documents for a specific tag"""
+    tag_id = params.get('tag_id')
+    
+    if not tag_id:
+        raise ValueError("tag_id is required")
+    
+    logger.info(f"[BROWSE-TAG-DOCS-TOOL] Starting: tag_id={tag_id}")
+    
+    try:
+        result = await provider.browse_by_tag_documents(tag_id=tag_id)
+        logger.info(f"[BROWSE-TAG-DOCS-TOOL] Success: returned {result.get('count', 0)} documents")
+        return result
+    except Exception as e:
+        logger.error(f"[BROWSE-TAG-DOCS-TOOL] Failed: {e}", exc_info=True)
+        raise
+
+
+async def tool_browse_by_entities(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Browse documents organized by entities"""
+    logger.info(f"[BROWSE-ENTITIES-TOOL] Starting")
+    
+    try:
+        result = await provider.browse_by_entities()
+        logger.info(f"[BROWSE-ENTITIES-TOOL] Success: returned {result.get('count', 0)} entities")
+        return result
+    except Exception as e:
+        logger.error(f"[BROWSE-ENTITIES-TOOL] Failed: {e}", exc_info=True)
+        raise
+
+
+async def tool_browse_by_entity_documents(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Get documents for a specific entity"""
+    entity_name = params.get('entity_name')
+    
+    if not entity_name:
+        raise ValueError("entity_name is required")
+    
+    logger.info(f"[BROWSE-ENTITY-DOCS-TOOL] Starting: entity_name={entity_name}")
+    
+    try:
+        result = await provider.browse_by_entity_documents(entity_name=entity_name)
+        logger.info(f"[BROWSE-ENTITY-DOCS-TOOL] Success: returned {result.get('count', 0)} documents")
+        return result
+    except Exception as e:
+        logger.error(f"[BROWSE-ENTITY-DOCS-TOOL] Failed: {e}", exc_info=True)
+        raise
+
+
 # Tool registry
 TOOLS: Dict[str, Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]] = {
     "store_document": tool_store_document,
@@ -1371,6 +1452,11 @@ TOOLS: Dict[str, Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]] = {
     "list_documents": tool_list_documents,
     "update_document_metadata": tool_update_document_metadata,
     "semantic_search_documents": tool_semantic_search_documents,
+    "browse_by_date": tool_browse_by_date,
+    "browse_by_tags": tool_browse_by_tags,
+    "browse_by_tag_documents": tool_browse_by_tag_documents,
+    "browse_by_entities": tool_browse_by_entities,
+    "browse_by_entity_documents": tool_browse_by_entity_documents,
     "store_extraction": tool_store_extraction,
     "retrieve_extraction": tool_retrieve_extraction,
     "list_extractions": tool_list_extractions,
@@ -1557,6 +1643,58 @@ async def register_tools(ws: websockets.WebSocketClientProtocol, agent_id: str) 
                     "include_original_content": {"type": "boolean", "description": "Include original file data", "default": False}
                 },
                 "required": ["query"]
+            }
+        },
+        {
+            "name": "browse_by_date",
+            "description": "Browse documents organized by date hierarchy (year -> month -> documents)",
+            "agentId": agent_id,
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "year": {"type": "number", "description": "Filter by year (optional)"},
+                    "month": {"type": "number", "description": "Filter by month 1-12 (requires year, optional)"}
+                }
+            }
+        },
+        {
+            "name": "browse_by_tags",
+            "description": "Browse all tags with document counts",
+            "agentId": agent_id,
+            "inputSchema": {
+                "type": "object"
+            }
+        },
+        {
+            "name": "browse_by_tag_documents",
+            "description": "Get documents for a specific tag",
+            "agentId": agent_id,
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "tag_id": {"type": "string", "description": "Tag ID"}
+                },
+                "required": ["tag_id"]
+            }
+        },
+        {
+            "name": "browse_by_entities",
+            "description": "Browse all entities extracted from document metadata",
+            "agentId": agent_id,
+            "inputSchema": {
+                "type": "object"
+            }
+        },
+        {
+            "name": "browse_by_entity_documents",
+            "description": "Get documents for a specific entity",
+            "agentId": agent_id,
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "entity_name": {"type": "string", "description": "Entity name"}
+                },
+                "required": ["entity_name"]
             }
         }
     ]

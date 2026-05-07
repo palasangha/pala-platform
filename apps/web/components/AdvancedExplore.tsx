@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { Browse } from './Browse';
 
 type Doc = any;
 type SearchResult = {
@@ -100,7 +101,7 @@ export default function AdvancedExplore() {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
-  const [activeTab, setActiveTab] = useState<'passages' | 'documents' | 'timeline'>('passages');
+  const [activeTab, setActiveTab] = useState<'passages' | 'documents' | 'timeline' | 'browse'>('passages');
   const [page, setPage] = useState(0);
   const [fullDocOpen, setFullDocOpen] = useState(false);
   const [fullDoc, setFullDoc] = useState<Doc | null>(null);
@@ -345,10 +346,10 @@ export default function AdvancedExplore() {
           <div className="rounded-xl border border-slate-800 bg-slate-900/95 p-6 shadow-2xl shadow-black/20">
             <div className="mb-6">
               <div className="mb-3 text-sm font-semibold text-slate-300">
-                {loading ? 'Searching…' : `${results.length} ${activeTab === 'timeline' ? 'timeline items' : activeTab === 'documents' ? 'documents' : 'passages'}`}
+                {loading ? 'Searching…' : `${results.length} ${activeTab === 'timeline' ? 'timeline items' : activeTab === 'documents' ? 'documents' : activeTab === 'browse' ? 'browse results' : 'passages'}`}
               </div>
               <div className="flex gap-1 border-b border-slate-800">
-                {['passages', 'documents', 'timeline'].map((tab) => (
+                {['passages', 'documents', 'timeline', 'browse'].map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setActiveTab(tab as any)}
@@ -364,6 +365,9 @@ export default function AdvancedExplore() {
               </div>
             </div>
 
+            {activeTab === 'browse' ? (
+              <Browse className="w-full h-[32rem]" send={send} />
+            ) : (
             <div className="max-h-[32rem] space-y-3 overflow-y-auto pr-2">
               {loading ? (
                 <div className="py-8 text-center text-sm text-slate-400">Loading results…</div>
@@ -451,7 +455,9 @@ export default function AdvancedExplore() {
                 ))
               )}
             </div>
+            )}
 
+            {activeTab !== 'browse' && (
             <div className="mt-4 flex items-center justify-between gap-2 border-t border-slate-800 pt-4">
               <button
                 onClick={() => {
@@ -474,6 +480,7 @@ export default function AdvancedExplore() {
                 Next →
               </button>
             </div>
+            )}
           </div>
         </section>
 
