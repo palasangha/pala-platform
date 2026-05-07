@@ -143,11 +143,20 @@ def extract_passage_around_query(content: str, query_terms: List[str], window_si
     content_lower = content.lower()
     best_pos = -1
     best_term = ""
+    # Prefer whole-word matches to avoid accidental substring matches (e.g. "sai" matching "said").
     for term in query_terms:
         term_lower = term.lower().strip()
         if not term_lower:
             continue
-        pos = content_lower.find(term_lower)
+        try:
+            # Use word-boundary regex to find whole-word occurrences
+            m = re.search(r"\b" + re.escape(term_lower) + r"\b", content_lower)
+        except re.error:
+            m = None
+        pos = m.start() if m else -1
+        # Fallback: if no whole-word match, fall back to substring search
+        if pos == -1:
+            pos = content_lower.find(term_lower)
         if pos >= 0 and (best_pos == -1 or pos < best_pos):
             best_pos = pos
             best_term = term_lower
@@ -180,7 +189,20 @@ def extract_line_window_around_query(content: str, query_terms: List[str], windo
     hit_index = -1
     for index, line in enumerate(lines):
         lower_line = line.lower()
-        if any(term and term in lower_line for term in lowered_terms):
+        matched = False
+        for term in lowered_terms:
+            if not term:
+                continue
+            try:
+                if re.search(r"\b" + re.escape(term) + r"\b", lower_line):
+                    matched = True
+                    break
+            except re.error:
+                # If regex fails for some term, fallback to substring check
+                if term in lower_line:
+                    matched = True
+                    break
+        if matched:
             hit_index = index
             break
 

@@ -26,6 +26,8 @@ from search_utils import (
     extract_line_window_around_query,
     extract_passage_around_query,
     select_best_search_chunk,
+    _token_overlap_score,
+    _tokenize_search_text,
 )
 
 logger = logging.getLogger(__name__)
@@ -1309,7 +1311,32 @@ class SQLiteProvider(StorageProvider):
                     matched_chunk_index = best_chunk.get('chunk_index')
                     matched_chunk_start = best_chunk.get('start_char')
                     matched_chunk_end = best_chunk.get('end_char')
+                    # Determine if both metadata and content have signals so we can report both.
+                    try:
+                        content_hit = any(
+                            (chunk.get('kind') == 'content' and _token_overlap_score(chunk.get('text', ''), query_terms or _tokenize_search_text(query)) > 0.0)
+                            for chunk in search_candidates if isinstance(chunk, dict)
+                        )
+                    except Exception:
+                        content_hit = False
+                    try:
+                        metadata_hit = any(
+                            (chunk.get('kind') == 'metadata' and _token_overlap_score(chunk.get('text', ''), query_terms or _tokenize_search_text(query)) > 0.0)
+                            for chunk in search_candidates if isinstance(chunk, dict)
+                        )
+                    except Exception:
+                        metadata_hit = False
+
+                    # Base reason from the best chunk
                     match_reason = best_chunk.get('match_reason') or describe_match_reason(matched_path or '', match_method)
+
+                    # If both metadata and content show overlap signals, make that explicit
+                    if metadata_hit and content_hit:
+                        # Prefer to reference both metadata.summary and processed_data.content when available
+                        if matched_path and matched_path.startswith('metadata.'):
+                            match_reason = f"Metadata and Content match ({matched_path} + processed_data.content)"
+                        else:
+                            match_reason = "Metadata and Content match"
                     
                     # For content matches, use content_text as source; for metadata matches, still search content for context
                     if matched_path and matched_path.startswith('processed_data.') and content_text:
