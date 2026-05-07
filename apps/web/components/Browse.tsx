@@ -15,6 +15,18 @@ interface Document {
   metadata?: Record<string, any>;
 }
 
+interface BrowseDocumentDetails {
+  document_id?: string;
+  original_file?: string;
+  file_format?: string;
+  original_file_mime?: string;
+  original_file_data?: string;
+  processed_data?: any;
+  metadata?: any;
+  created_by?: string;
+  created_at?: string;
+}
+
 interface BrowseNode {
   name?: string;
   count?: number;
@@ -29,18 +41,19 @@ type BrowseMode = 'explore' | 'date' | 'tags' | 'entities';
 const annotateMonthNodes = (year: number, months: BrowseNode[]) =>
   months.map(month => ({ ...month, year }));
 
-export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
+export function Browse({ className = '', send }: BrowseProps) {
   const [browseMode, setBrowseMode] = useState<BrowseMode>('explore');
   const [hierarchy, setHierarchy] = useState<BrowseNode[]>([]);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [selectedPath, setSelectedPath] = useState<BrowseNode[]>([]);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [selectedDoc, setSelectedDoc] = useState<Document | null>(null);
+  const [selectedDetails, setSelectedDetails] = useState<BrowseDocumentDetails | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [expandedPreviewOpen, setExpandedPreviewOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchFilter, setSearchFilter] = useState('');
-  const [exploreInput, setExploreInput] = useState('');
-  const [exploreSrc, setExploreSrc] = useState('/explore');
 
   const unwrapToolResult = (payload: any) => {
     let current = payload;
@@ -63,7 +76,93 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
     setSelectedPath([]);
     setDocuments([]);
     setSelectedDoc(null);
+    setSelectedDetails(null);
+    setExpandedPreviewOpen(false);
   }, [browseMode, send]);
+
+  const loadDocumentDetails = async (documentId: string) => {
+    if (!documentId || !send) return;
+    setDetailsLoading(true);
+    try {
+      const response: any = await send('tools/invoke', {
+        agentId: 'storage-agent',
+        name: 'retrieve_document',
+        arguments: {
+          document_id: documentId,
+          include_original_file: true,
+        },
+      });
+      const payload = unwrapToolResult(response);
+      const data = payload?.document_id ? payload : payload?.result || payload || null;
+      setSelectedDetails(data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load file preview';
+      setError(message);
+      setSelectedDetails(null);
+    } finally {
+      setDetailsLoading(false);
+    }
+  };
+
+  const getPreviewMimeType = (doc: BrowseDocumentDetails) => {
+    if (!doc) return '';
+    if (doc.original_file_mime) return doc.original_file_mime;
+    if (doc.file_format === 'pdf') return 'application/pdf';
+    if (doc.file_format === 'json') return 'application/json';
+    if (doc.file_format === 'md') return 'text/markdown';
+    if (doc.file_format === 'txt') return 'text/plain';
+    return '';
+  };
+
+  const decodeBase64 = (base64Value: string) => {
+    try {
+      return atob(base64Value);
+    } catch {
+      return '';
+    }
+  };
+
+  const renderInlinePreview = (doc: BrowseDocumentDetails, expanded: boolean = false) => {
+    const mimeType = getPreviewMimeType(doc);
+    const base64Value = doc.original_file_data;
+    const summary =
+      String(doc.metadata?.content?.summary || doc.processed_data?.summary || doc.processed_data?.text || doc.processed_data?.content || '');
+
+    if (base64Value && mimeType === 'application/pdf') {
+      return (
+        <iframe
+          title={`Preview ${doc.original_file || doc.document_id || 'document'}`}
+          src={`data:application/pdf;base64,${base64Value}`}
+          className={`w-full rounded border border-slate-700 bg-slate-950 ${expanded ? 'h-[78vh]' : 'h-[28rem]'}`}
+        />
+      );
+    }
+
+    if (base64Value && (mimeType.startsWith('text/') || mimeType === 'application/json' || doc.file_format === 'json')) {
+      const textContent = decodeBase64(base64Value);
+      return (
+        <pre className={`whitespace-pre-wrap break-words bg-slate-950 border border-slate-700 rounded p-4 text-sm text-slate-200 overflow-auto ${expanded ? 'max-h-[78vh]' : 'max-h-[28rem]'}`}>
+          {textContent || summary || 'No text preview available.'}
+        </pre>
+      );
+    }
+
+    if (base64Value && (mimeType.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes((doc.file_format || '').toLowerCase()))) {
+      return (
+        <img
+          src={`data:${mimeType || 'image/*'};base64,${base64Value}`}
+          alt={doc.original_file || doc.document_id || 'document preview'}
+          className={`max-w-full rounded border border-slate-700 bg-slate-950 object-contain ${expanded ? 'max-h-[78vh]' : 'max-h-[28rem]'}`}
+        />
+      );
+    }
+
+    return (
+      <div className="rounded border border-slate-700 bg-slate-950 p-4 text-sm text-slate-300">
+        {summary ? <p className="whitespace-pre-wrap">{summary}</p> : <p>No inline preview available for this file type.</p>}
+      </div>
+    );
+  };
 
   const invokeBrowseTool = async (name: string, arguments_: Record<string, any> = {}) => {
     if (!send) {
@@ -172,6 +271,7 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
         const result: any = unwrapToolResult(await invokeBrowseTool('browse_by_tag_documents', { tag_id: node.id }));
         setDocuments(result.documents || []);
         setSelectedDoc(null);
+        setSelectedDetails(null);
         setSearchFilter('');
         setSelectedPath([node]);
         console.debug(`[BROWSE] Loaded ${result.documents?.length || 0} documents for tag`);
@@ -180,6 +280,7 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
         const result: any = unwrapToolResult(await invokeBrowseTool('browse_by_entity_documents', { entity_name: node.name }));
         setDocuments(result.documents || []);
         setSelectedDoc(null);
+        setSelectedDetails(null);
         setSearchFilter('');
         setSelectedPath([node]);
         console.debug(`[BROWSE] Loaded ${result.documents?.length || 0} documents for entity`);
@@ -202,6 +303,7 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
       const result: any = unwrapToolResult(await invokeBrowseTool('browse_by_date', { year, month }));
       setDocuments(result.documents || []);
       setSelectedDoc(null);
+      setSelectedDetails(null);
       setSearchFilter('');
       setSelectedPath([{ year, name: year.toString() }, { year, month, name: `Month ${month}` }]);
       console.debug(`[BROWSE] Loaded ${result.documents?.length || 0} documents for ${year}-${month}`);
@@ -326,36 +428,8 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
         </div>
 
         {browseMode === 'explore' ? (
-          <div className="h-[calc(100vh-14rem)] min-h-[60vh] rounded-lg overflow-hidden">
-            <div className="flex h-full">
-              <div className="w-80 border-r border-slate-800 bg-slate-900 p-4">
-                <div className="mb-3">
-                  <label className="text-xs text-slate-400 mb-2 block">Explore</label>
-                  <input
-                    type="text"
-                    placeholder="Search / Explore..."
-                    value={exploreInput}
-                    onChange={(e) => setExploreInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') setExploreSrc(`/explore?q=${encodeURIComponent(exploreInput)}`); }}
-                    className="w-full px-3 py-2 rounded bg-slate-800 text-slate-100 placeholder:text-slate-400"
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setExploreSrc(`/explore?q=${encodeURIComponent(exploreInput)}`)}
-                    className="px-3 py-2 bg-blue-600 text-white rounded text-sm"
-                  >Search</button>
-                  <button
-                    onClick={() => { setExploreInput(''); setExploreSrc('/explore'); }}
-                    className="px-3 py-2 bg-slate-700 text-slate-200 rounded text-sm"
-                  >Reset</button>
-                </div>
-                <p className="text-xs text-slate-400 mt-3">Use the left panel to search; results appear on the right.</p>
-              </div>
-              <div className="flex-1 bg-slate-950">
-                <iframe src={exploreSrc} className="h-full w-full border-none" title="Explore" />
-              </div>
-            </div>
+          <div className="h-[calc(100vh-14rem)] min-h-[60vh] rounded-lg border border-slate-800 bg-slate-950 overflow-hidden">
+            <iframe src="/explore" className="h-full w-full border-none" title="Explore" />
           </div>
         ) : ( 
           <>
@@ -428,11 +502,8 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
                       <button
                         key={doc.id}
                         onClick={() => {
-                          if (onOpenDocument) {
-                            onOpenDocument(doc.id);
-                          } else {
-                            setSelectedDoc(doc);
-                          }
+                          setSelectedDoc(doc);
+                          void loadDocumentDetails(doc.id);
                         }}
                         className={`w-full text-left p-3 rounded-lg border-2 transition ${
                           selectedDoc?.id === doc.id
@@ -474,42 +545,59 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
           {selectedDoc && (
             <div className="flex-1 border-l border-slate-800 flex flex-col overflow-auto bg-slate-950/60">
               <div className="p-4 border-b border-slate-800 flex items-center justify-between sticky top-0 bg-slate-950/95 backdrop-blur">
-                <h3 className="font-semibold text-slate-100">Document Preview</h3>
-                <button
-                  onClick={() => setSelectedDoc(null)}
-                  className="p-1 rounded text-slate-400 hover:text-slate-100 hover:bg-slate-800"
-                >
-                  ✕
-                </button>
+                <h3 className="font-semibold text-slate-100">Open File</h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setExpandedPreviewOpen(true)}
+                    disabled={!selectedDetails || detailsLoading}
+                    className="px-2 py-1 rounded text-xs bg-slate-800 text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+                  >
+                    Expand
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSelectedDoc(null);
+                      setSelectedDetails(null);
+                      setExpandedPreviewOpen(false);
+                    }}
+                    className="p-1 rounded text-slate-400 hover:text-slate-100 hover:bg-slate-800"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
 
               <div className="flex-1 overflow-auto p-4 space-y-4">
-                <div>
-                  <h4 className="text-sm font-semibold text-slate-300 mb-2">Title</h4>
-                  <p className="text-sm text-slate-100 bg-slate-900 p-3 rounded border border-slate-700">
-                    {selectedDoc.title}
-                  </p>
-                </div>
-
-                <div>
-                  <h4 className="text-sm font-semibold text-slate-300 mb-2">Created</h4>
-                  <p className="text-sm text-slate-100 bg-slate-900 p-3 rounded border border-slate-700">
-                    {new Date(selectedDoc.created_at).toLocaleString()}
-                  </p>
-                </div>
-
-                {selectedDoc.metadata && Object.keys(selectedDoc.metadata).length > 0 && (
-                  <div>
-                    <h4 className="text-sm font-semibold text-slate-300 mb-2">Metadata</h4>
-                    <pre className="text-xs bg-slate-900 p-3 rounded border border-slate-700 overflow-auto max-h-96 text-slate-300">
-                      {JSON.stringify(selectedDoc.metadata, null, 2)}
-                    </pre>
-                  </div>
+                {detailsLoading ? (
+                  <div className="rounded border border-slate-700 bg-slate-900 p-4 text-sm text-slate-300">Loading original file…</div>
+                ) : selectedDetails ? (
+                  renderInlinePreview(selectedDetails)
+                ) : (
+                  <div className="rounded border border-slate-700 bg-slate-900 p-4 text-sm text-slate-300">No preview loaded.</div>
                 )}
               </div>
             </div>
           )}
         </>
+      )}
+
+      {expandedPreviewOpen && selectedDetails && (
+        <div className="fixed inset-0 z-50 bg-black/90 p-6">
+          <div className="h-full w-full rounded-lg border border-slate-700 bg-slate-950 flex flex-col">
+            <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+              <h4 className="text-sm font-semibold text-slate-100">{selectedDetails.original_file || selectedDetails.document_id || 'File Preview'}</h4>
+              <button
+                onClick={() => setExpandedPreviewOpen(false)}
+                className="px-2 py-1 rounded text-xs bg-slate-800 text-slate-200 hover:bg-slate-700"
+              >
+                Close
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              {renderInlinePreview(selectedDetails, true)}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -5,14 +5,12 @@ import Link from 'next/link';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { ContentBrowser } from './ContentBrowser';
 import Browse from './Browse';
-import DocumentBrowser from './DocumentBrowser';
 
 type Tab = 'browse' | 'storage' | 'developer';
 
 export function PalaWebDashboard() {
   const [activeTab, setActiveTab] = useState<Tab>('browse');
   const { connected, send } = useWebSocket();
-  const [openDocId, setOpenDocId] = useState<string | null>(null);
 
   return (
     <div className="min-h-screen bg-slate-900">
@@ -77,26 +75,9 @@ export function PalaWebDashboard() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 py-8">
-        {openDocId ? (
+        {activeTab === 'browse' && (
           <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-slate-100">Viewing document: {openDocId}</h2>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setOpenDocId(null)}
-                  className="px-3 py-1 rounded bg-slate-800 text-slate-200 hover:bg-slate-700"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-            <DocumentBrowser connected={connected} send={send} initialDocumentId={openDocId} initialIncludeOriginal={true} />
-          </div>
-        ) : null}
-
-        {activeTab === 'browse' && !openDocId && (
-          <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-            <Browse send={send} className="min-h-[60vh]" onOpenDocument={(id) => setOpenDocId(id)} />
+            <Browse send={send} className="min-h-[60vh]" />
           </div>
         )}
         {activeTab === 'developer' && <DeveloperPanel />}

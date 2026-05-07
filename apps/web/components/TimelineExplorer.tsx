@@ -1,7 +1,7 @@
 'use client';
 
-import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useWebSocket } from '@/hooks/useWebSocket';
 
 type TimelineFilter = 'all' | 'dated' | 'people' | 'places' | 'topics';
@@ -384,6 +384,8 @@ function buildExpandedTimelineQuery(query: string, filter: TimelineFilter, year:
 }
 
 export function TimelineExplorer() {
+  const searchParams = useSearchParams();
+  const lastAutoOpenedIdRef = useRef<string | null>(null);
   const { connected, send } = useWebSocket();
   const [documents, setDocuments] = useState<TimelineDocument[]>([]);
   const [queryResults, setQueryResults] = useState<TimelineDocument[]>([]);
@@ -781,12 +783,15 @@ export function TimelineExplorer() {
     }
   }, [loadDocumentDetails, selectedDetails, selectedTimelineItem]);
 
-  const openFileInNewWindow = useCallback(
+  const openDocumentInViewer = useCallback(
     (documentId: string) => {
       if (!documentId) return;
       const item = filteredItems.find((i) => i.documentId === documentId);
-      if (!item) return;
-      setSelectedDocument({ document_id: documentId, ...item.source });
+      if (item) {
+        setSelectedDocument({ document_id: documentId, ...item.source });
+      } else {
+        setSelectedDocument({ document_id: documentId });
+      }
       setSelectedDetails(null);
       setShowRawJson(false);
       setShowFullFile(true);
@@ -794,6 +799,21 @@ export function TimelineExplorer() {
     },
     [filteredItems, loadDocumentDetails]
   );
+
+  const openFileInNewWindow = useCallback(
+    (documentId: string) => {
+      openDocumentInViewer(documentId);
+    },
+    [openDocumentInViewer]
+  );
+
+  useEffect(() => {
+    const docId = searchParams.get('open');
+    if (!docId) return;
+    if (lastAutoOpenedIdRef.current === docId) return;
+    lastAutoOpenedIdRef.current = docId;
+    openDocumentInViewer(docId);
+  }, [openDocumentInViewer, searchParams]);
 
   useEffect(() => {
     if (filteredItems.length === 0) return;
@@ -811,19 +831,6 @@ export function TimelineExplorer() {
       {/* Header/banner removed as requested */}
 
       <main className="max-w-7xl mx-auto px-4 py-6">
-        <div className="flex items-center justify-between gap-3 mb-6">
-          <Link href="/" className="text-sm text-blue-300 hover:text-blue-200">
-            ← Back to dashboard
-          </Link>
-          <button
-            type="button"
-            onClick={() => void loadDocuments()}
-            className="px-3 py-2 rounded bg-slate-800 border border-slate-700 text-sm text-slate-200 hover:bg-slate-700"
-          >
-            Refresh archive
-          </button>
-        </div>
-
         <div className="space-y-6">
           <div className="rounded-xl border border-slate-800 bg-slate-800 p-4">
             <label className="block text-sm font-medium text-slate-200 mb-2">Search</label>
