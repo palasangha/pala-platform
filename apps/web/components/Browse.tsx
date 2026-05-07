@@ -5,7 +5,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 interface BrowseProps {
   className?: string;
   send?: (method: string, params: any) => Promise<any>;
-  onOpenDocument?: (documentId: string) => void;
+  onOpenDocument?: (documentId: string, openOriginal?: boolean) => void;
 }
 
 interface Document {
@@ -39,6 +39,8 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchFilter, setSearchFilter] = useState('');
+  const [exploreInput, setExploreInput] = useState('');
+  const [exploreSrc, setExploreSrc] = useState('/explore');
 
   const unwrapToolResult = (payload: any) => {
     let current = payload;
@@ -232,11 +234,11 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
         <div key={nodeKey} className="pl-8">
           <button
             onClick={() => node.year && handleYearMonthClick(node.year, node.month!)}
-            className="w-full text-left px-3 py-2 rounded hover:bg-blue-50 flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-blue-700"
+            className="w-full text-left px-3 py-2 rounded hover:bg-slate-800/50 flex items-center gap-2 text-sm font-medium text-slate-100"
           >
-            <span className="text-blue-500">📅</span>
-            <span>Month {node.month}</span>
-            <span className="ml-auto text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
+            <span className="text-slate-400">📅</span>
+            <span className="text-sm text-slate-100">Month {node.month}</span>
+            <span className="ml-auto text-xs text-slate-400 bg-slate-800 px-2 py-1 rounded">
               {node.count || 0}
             </span>
           </button>
@@ -250,7 +252,7 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
           onClick={() => loadChildren(node)}
           disabled={!hasChildren}
           className={`w-full text-left px-3 py-2 rounded flex items-center gap-2 text-sm transition ${
-            !hasChildren ? 'opacity-50 cursor-default' : 'hover:bg-blue-50'
+            !hasChildren ? 'opacity-50 cursor-default text-slate-400' : 'hover:bg-slate-800/40'
           }`}
         >
           {hasChildren ? (
@@ -264,22 +266,22 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
           )}
           
           {browseMode === 'date' && node.year && (
-            <span className="font-medium text-gray-700">{node.year}</span>
+            <span className="font-medium text-slate-200">{node.year}</span>
           )}
           {browseMode === 'tags' && (
-            <span className="text-purple-500">🏷️</span>
+            <span className="text-slate-300">🏷️</span>
           )}
           {browseMode === 'entities' && (
-            <span className="text-green-500">👥</span>
+            <span className="text-slate-300">👥</span>
           )}
           
           {(node.name || node.year) && (
-            <span className={isExpanded ? 'font-semibold text-gray-900' : 'text-gray-700'}>
+            <span className={isExpanded ? 'font-semibold text-slate-100' : 'text-slate-200'}>
               {node.name || node.year}
             </span>
           )}
           
-          <span className="ml-auto text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
+          <span className="ml-auto text-xs text-slate-400 bg-slate-800 px-2 py-1 rounded">
             {node.count || 0}
           </span>
         </button>
@@ -324,10 +326,38 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
         </div>
 
         {browseMode === 'explore' ? (
-          <div className="h-[calc(100vh-14rem)] min-h-[60vh] rounded-lg border border-slate-800 bg-slate-950 overflow-hidden">
-            <iframe src="/explore" className="h-full w-full border-none" title="Explore" />
+          <div className="h-[calc(100vh-14rem)] min-h-[60vh] rounded-lg overflow-hidden">
+            <div className="flex h-full">
+              <div className="w-80 border-r border-slate-800 bg-slate-900 p-4">
+                <div className="mb-3">
+                  <label className="text-xs text-slate-400 mb-2 block">Explore</label>
+                  <input
+                    type="text"
+                    placeholder="Search / Explore..."
+                    value={exploreInput}
+                    onChange={(e) => setExploreInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') setExploreSrc(`/explore?q=${encodeURIComponent(exploreInput)}`); }}
+                    className="w-full px-3 py-2 rounded bg-slate-800 text-slate-100 placeholder:text-slate-400"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setExploreSrc(`/explore?q=${encodeURIComponent(exploreInput)}`)}
+                    className="px-3 py-2 bg-blue-600 text-white rounded text-sm"
+                  >Search</button>
+                  <button
+                    onClick={() => { setExploreInput(''); setExploreSrc('/explore'); }}
+                    className="px-3 py-2 bg-slate-700 text-slate-200 rounded text-sm"
+                  >Reset</button>
+                </div>
+                <p className="text-xs text-slate-400 mt-3">Use the left panel to search; results appear on the right.</p>
+              </div>
+              <div className="flex-1 bg-slate-950">
+                <iframe src={exploreSrc} className="h-full w-full border-none" title="Explore" />
+              </div>
+            </div>
           </div>
-        ) : (
+        ) : ( 
           <>
             {error && (
               <div className="p-4 bg-red-950/50 border border-red-800 text-red-200 rounded-lg m-4">

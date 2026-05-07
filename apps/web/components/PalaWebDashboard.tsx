@@ -90,7 +90,7 @@ export function PalaWebDashboard() {
                 </button>
               </div>
             </div>
-            <DocumentBrowser connected={connected} send={send} initialDocumentId={openDocId} />
+            <DocumentBrowser connected={connected} send={send} initialDocumentId={openDocId} initialIncludeOriginal={true} />
           </div>
         ) : null}
 

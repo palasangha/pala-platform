@@ -80,6 +80,7 @@ interface DocumentBrowserProps {
   connected: boolean;
   send: (method: string, params: any) => Promise<any>;
   initialDocumentId?: string | null;
+  initialIncludeOriginal?: boolean;
 }
 
 export default function DocumentBrowser({ connected, send, initialDocumentId }: DocumentBrowserProps) {
@@ -214,34 +215,54 @@ export default function DocumentBrowser({ connected, send, initialDocumentId }: 
   };
 
   // View document - retrieve full details from agent
-  const viewDocument = (contentId: string) => {
+  const viewDocument = (contentId: string, includeOriginalFile: boolean = false) => {
     setLoadingDetails(true);
-    console.log(`[DocumentBrowser] Retrieving details for document: ${contentId}`);
-    
+    console.log(`[DocumentBrowser] Retrieving details for document: ${contentId} (include original: ${includeOriginalFile})`);
+
     send('tools/invoke', {
       name: 'retrieve_document',
       agentId: 'storage-agent',
       arguments: {
         document_id: contentId,
-        include_original_file: false  // Don't download file yet, just metadata
+        include_original_file: includeOriginalFile
       }
     })
     .then((response: any) => {
       console.log(`[DocumentBrowser] Retrieved document details:`, response);
-      if (response?.result) {
-        setDocumentDetails(response.result);
+      const payload = response?.result || response;
+      if (payload) {
+        setDocumentDetails(payload);
         setSelectedDocument({
           storage_metadata: {
-            content_id: response.result.document_id,
-            backend: response.result.provider_id || 'unknown',
-            size: 0,
-            hash: response.result.file_hash || '',
-            version: response.result.version || 1,
-            created_at: response.result.created_at || new Date().toISOString()
+            content_id: payload.document_id || contentId,
+            backend: payload.provider_id || 'unknown',
+            size: Number(payload.original_file_size || 0),
+            hash: payload.file_hash || '',
+            version: payload.version || 1,
+            created_at: payload.created_at || new Date().toISOString()
           },
-          ocr_text: response.result.processed_data?.text || '',
-          enriched_metadata: response.result.metadata || {}
+          ocr_text: payload.processed_data?.text || '',
+          enriched_metadata: payload.metadata || {}
         });
+
+        // If original file data was returned, prepare a blob URL
+        if (payload.original_file_data) {
+          try {
+            const b64 = payload.original_file_data as string;
+            const mime = payload.original_file_mime || 'application/octet-stream';
+            const binary = atob(b64);
+            const len = binary.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+              bytes[i] = binary.charCodeAt(i);
+            }
+            const blob = new Blob([bytes], { type: mime });
+            const url = window.URL.createObjectURL(blob);
+            setDocumentDetails(prev => ({ ...(prev || {}), _originalBlobUrl: url, _originalMime: mime, _originalFilename: payload.original_file || payload.original_filename || payload.original_file_name }));
+          } catch (e) {
+            console.warn('[DocumentBrowser] Failed to create blob URL for original file', e);
+          }
+        }
       } else {
         console.error('[DocumentBrowser] No result in response', response);
       }
@@ -259,7 +280,7 @@ export default function DocumentBrowser({ connected, send, initialDocumentId }: 
   useEffect(() => {
     if (initialDocumentId && connected) {
       try {
-        viewDocument(initialDocumentId);
+        viewDocument(initialDocumentId, Boolean(initialIncludeOriginal));
       } catch (err) {
         console.error('[DocumentBrowser] Failed to auto-load initial document', err);
       }
@@ -320,6 +341,16 @@ export default function DocumentBrowser({ connected, send, initialDocumentId }: 
     } finally {
       setLoadingDetails(false);
     }
+  };
+
+  // Open original (if blob url prepared)
+  const openOriginalInNewTab = () => {
+    const url = (documentDetails as any)?._originalBlobUrl as string | undefined;
+    if (!url) {
+      alert('Original file not available');
+      return;
+    }
+    window.open(url, '_blank');
   };
 
   // Format file size
