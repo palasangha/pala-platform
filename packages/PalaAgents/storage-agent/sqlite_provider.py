@@ -1296,10 +1296,24 @@ class SQLiteProvider(StorageProvider):
                 _add_candidate(search_candidates, 'original_file', 'metadata', original_file)
                 _add_candidate(search_candidates, 'type', 'metadata', doc_type)
 
+                query_terms_for_overlap = query_terms or _tokenize_search_text(query)
+                lexical_signal_score = 0.0
+                for candidate in search_candidates:
+                    candidate_text = candidate.get('text', '') if isinstance(candidate, dict) else ''
+                    if candidate_text:
+                        lexical_signal_score = max(
+                            lexical_signal_score,
+                            _token_overlap_score(candidate_text, query_terms_for_overlap),
+                        )
+
+                # If the query has lexical terms but none of the document's searchable text matches,
+                # do not allow semantic similarity alone to surface the document as a hit.
+                has_lexical_signal = lexical_signal_score > 0.0
+
                 best_chunk = select_best_search_chunk(
                     search_candidates,
                     query=query,
-                    query_terms=query_terms,
+                    query_terms=query_terms_for_overlap,
                     query_embedding=query_embedding,
                     cosine_similarity_fn=self._cosine_similarity,
                 )
@@ -1355,6 +1369,17 @@ class SQLiteProvider(StorageProvider):
                         matched_text = excerpt
                     elif not matched_text:
                         matched_text = excerpt
+                    if query_terms_for_overlap and not has_lexical_signal:
+                        logger.info(
+                            "[SEARCH-DOCUMENTS] Skipping backend hit for file=%s because the document has no lexical signal for query_terms=%s",
+                            original_file,
+                            query_terms_for_overlap,
+                        )
+                        relevance_score = 0.0
+                        match_reason = None
+                        matched_path = None
+                        matched_text = ""
+                        excerpt = ""
                     logger.info(
                         "[SEARCH-DOCUMENTS] Candidate match: file=%s path=%s method=%s score=%.3f reason=%s",
                         original_file,
@@ -1365,7 +1390,7 @@ class SQLiteProvider(StorageProvider):
                     )
                 
                 # Method 1: Semantic search using embeddings
-                if relevance_score < min_confidence and query_embedding:
+                if relevance_score < min_confidence and query_embedding and has_lexical_signal:
                     try:
                         # Get document embedding from app_data
                         doc_embedding = app_data.get('embedding_vector', None)
@@ -1474,7 +1499,7 @@ class SQLiteProvider(StorageProvider):
                         best_field = ""
                         best_field_full = ""
                         for field_text in searchable_fields:
-                            field_score = _token_overlap_score(field_text, query_terms)
+                            field_score = _token_overlap_score(field_text, query_terms_for_overlap)
                             if field_score > overlap_score:
                                 overlap_score = field_score
                                 best_field_full = field_text

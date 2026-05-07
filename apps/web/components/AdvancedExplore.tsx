@@ -166,26 +166,6 @@ export default function AdvancedExplore() {
         res = null;
       }
 
-      // Fallback: use list_documents and filter client-side
-      if (!res?.documents || res.documents.length === 0) {
-        console.log('Falling back to list_documents...');
-        res = await send('tools/invoke', { 
-          name: 'list_documents', 
-          arguments: { limit: 100, offset: 0 } 
-        });
-        
-        // Client-side filtering if query is provided
-        let docs = res?.documents || [];
-        if (q && q.trim()) {
-          const queryTerms = extractSearchTerms(q, Array.from(activeLocations), Array.from(activeTopics), Array.from(activePeople));
-          docs = docs.filter((d: any) => {
-            const searchText = `${d.title || ''} ${d.summary || ''} ${d.metadata?.summary || ''} ${d.text || ''}`.toLowerCase();
-            return queryTerms.length === 0 || queryTerms.some((term) => searchText.includes(term));
-          });
-        }
-        res = { documents: docs };
-      }
-
       if (res?.documents && res.documents.length > 0) {
         const mapped = res.documents.map((d: any, idx: number) => ({
           id: `${d.document_id || d.id || d._id || d.original_file || Math.random()}-${idx}`,
@@ -388,7 +368,7 @@ export default function AdvancedExplore() {
               {loading ? (
                 <div className="py-8 text-center text-sm text-slate-400">Loading results…</div>
               ) : results.length === 0 ? (
-                <div className="py-8 text-center text-sm text-slate-400">No results. Try a different search.</div>
+                <div className="py-8 text-center text-sm text-slate-400">No results found.</div>
               ) : (
                 results.map((r) => (
                   <div

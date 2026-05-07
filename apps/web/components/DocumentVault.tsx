@@ -496,7 +496,7 @@ export function Explore() {
                 <div className="text-center py-16 text-slate-400">Loading documents...</div>
               ) : filteredDocs.length === 0 ? (
                 <div className="text-center py-16">
-                  <p className="text-slate-400">No documents found. Try a different search.</p>
+                  <p className="text-slate-400">No results found.</p>
                 </div>
               ) : (
                 <>
