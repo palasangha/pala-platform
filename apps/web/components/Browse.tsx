@@ -38,6 +38,8 @@ interface BrowseNode {
 
 type BrowseMode = 'explore' | 'date' | 'tags' | 'entities';
 
+const DEFAULT_TAG_ENTITY_LIMIT = 20;
+
 const annotateMonthNodes = (year: number, months: BrowseNode[]) =>
   months.map(month => ({ ...month, year }));
 
@@ -54,6 +56,8 @@ export function Browse({ className = '', send }: BrowseProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchFilter, setSearchFilter] = useState('');
+  const [tagEntitySearch, setTagEntitySearch] = useState('');
+  const [showAllTagsEntities, setShowAllTagsEntities] = useState(false);
 
   const unwrapToolResult = (payload: any) => {
     let current = payload;
@@ -325,6 +329,19 @@ export function Browse({ className = '', send }: BrowseProps) {
     );
   }, [documents, searchFilter]);
 
+  const filteredTagEntityNodes = useMemo(() => {
+    if (browseMode !== 'tags' && browseMode !== 'entities') return hierarchy;
+    let nodes = hierarchy;
+    if (tagEntitySearch) {
+      const lower = tagEntitySearch.toLowerCase();
+      nodes = nodes.filter(n => (n.name || '').toLowerCase().includes(lower));
+    }
+    if (!showAllTagsEntities && nodes.length > DEFAULT_TAG_ENTITY_LIMIT) {
+      return nodes.slice(0, DEFAULT_TAG_ENTITY_LIMIT);
+    }
+    return nodes;
+  }, [hierarchy, browseMode, tagEntitySearch, showAllTagsEntities]);
+
   const renderNode = (node: BrowseNode, depth: number = 0) => {
     const nodeKey = `${browseMode}-${node.year || node.month || node.id || node.name}`;
     const isExpanded = expandedNodes.has(nodeKey);
@@ -413,7 +430,11 @@ export function Browse({ className = '', send }: BrowseProps) {
             {(['explore', 'date', 'tags', 'entities'] as const).map(mode => (
               <button
                 key={mode}
-                onClick={() => setBrowseMode(mode)}
+                onClick={() => {
+                  setBrowseMode(mode);
+                  setTagEntitySearch('');
+                  setShowAllTagsEntities(false);
+                }}
                 className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${
                   browseMode === mode
                     ? 'bg-blue-500/20 text-blue-300 font-medium ring-1 ring-blue-500/40'
@@ -425,6 +446,27 @@ export function Browse({ className = '', send }: BrowseProps) {
               </button>
             ))}
           </div>
+
+          {/* Tag/entity search and expand controls */}
+          {(browseMode === 'tags' || browseMode === 'entities') && (
+            <div className="mb-2 flex flex-col gap-2">
+              <input
+                type="text"
+                value={tagEntitySearch}
+                onChange={e => setTagEntitySearch(e.target.value)}
+                placeholder={`Search ${browseMode}...`}
+                className="w-full px-3 py-2 rounded bg-slate-800 text-slate-100 border border-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              />
+              {hierarchy.length > DEFAULT_TAG_ENTITY_LIMIT && !tagEntitySearch && (
+                <button
+                  className="self-start px-2 py-1 rounded text-xs bg-slate-800 text-slate-200 hover:bg-slate-700"
+                  onClick={() => setShowAllTagsEntities(v => !v)}
+                >
+                  {showAllTagsEntities ? `Show less` : `Show all (${hierarchy.length})`}
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {browseMode === 'explore' ? (
@@ -453,7 +495,9 @@ export function Browse({ className = '', send }: BrowseProps) {
             )}
 
             <div className="p-4 space-y-1">
-              {hierarchy.map((node) => renderNode(node))}
+              {(browseMode === 'tags' || browseMode === 'entities')
+                ? filteredTagEntityNodes.map((node) => renderNode(node))
+                : hierarchy.map((node) => renderNode(node))}
             </div>
           </>
         )}
@@ -518,7 +562,9 @@ export function Browse({ className = '', send }: BrowseProps) {
                               {doc.title}
                             </p>
                             <p className="text-xs text-slate-400 mt-1">
-                              {new Date(doc.created_at).toLocaleDateString()}
+                              {doc.metadata?.date
+                                ? new Date(doc.metadata.date).toLocaleDateString()
+                                : new Date(doc.created_at).toLocaleDateString()}
                             </p>
                           </div>
                         </div>
