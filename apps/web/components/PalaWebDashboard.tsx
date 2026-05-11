@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { ContentBrowser } from './ContentBrowser';
 import Browse from './Browse';
@@ -97,94 +96,75 @@ export function PalaWebDashboard() {
 // Developer Panel - Interactive tool testing with code examples
 function DeveloperPanel() {
   const [expandedGuide, setExpandedGuide] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [fileBase64, setFileBase64] = useState<string>('');
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [uploadProgress, setUploadProgress] = useState<string>('');
 
-  // Handle file selection, convert to base64, and auto-populate JSON input
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0] || null;
-        setSelectedFile(file);
-        setFileBase64('');
-        if (file && (
-          currentTool?.name === 'store_document' ||
-          currentTool?.name === 'process_and_store_document' ||
-          currentTool?.name === 'extract_metadata'
-        )) {
-          const reader = new FileReader();
-          reader.onload = () => {
-            const arrayBuffer = reader.result as ArrayBuffer;
-            const bytes = new Uint8Array(arrayBuffer);
-            let binary = '';
-            for (let i = 0; i < bytes.byteLength; i++) {
-              binary += String.fromCharCode(bytes[i]);
-            }
-            const base64Data = btoa(binary);
-            setFileBase64(base64Data);
-            
-            // Auto-populate fields based on selected tool
-            let json: any = {};
-            
-            if (currentTool?.name === 'store_document') {
-              // Auto-populate all required fields for store_document
-              const toolDef = AGENTS.find(a => a.id === 'storage-agent')?.tools.find(t => t.name === 'store_document');
-              if (toolDef) {
-                toolDef.schemaFields.forEach(field => {
-                  if (field.name === 'original_file_data') {
-                    json.original_file_data = base64Data;
-                  } else if (field.name === 'original_file') {
-                    json.original_file = file.name;
-                  } else if (field.name === 'file_format') {
-                    // Try to infer from file extension
-                    const ext = file.name.split('.').pop()?.toLowerCase() || '';
-                    json.file_format = ['pdf','txt','json','md','jpg','png'].includes(ext) ? ext : 'bin';
-                  } else if (field.name === 'type') {
-                    json.type = field.possibleValues?.[0] || 'ocr';
-                  } else if (field.name === 'created_by') {
-                    json.created_by = field.defaultValue || 'web-dashboard';
-                  } else if (field.name === 'processed_data') {
-                    json.processed_data = 'uploaded via dashboard';
-                  } else if (field.name === 'metadata') {
-                    json.metadata = {};
-                  } else if (field.name === 'app_data') {
-                    json.app_data = {};
-                  }
-                });
-              }
-              // Always include file MIME type for reference
-              json.original_file_mime = file.type || '';
-            } else if (currentTool?.name === 'process_and_store_document') {
-              // Auto-populate for orchestration tool
-              const ext = file.name.split('.').pop()?.toLowerCase() || '';
-              json = {
-                original_file: base64Data,
-                original_file_name: file.name,
-                file_format: ['pdf','txt','json','md','jpg','png'].includes(ext) ? ext : 'bin',
-                document_type: 'ocr',
-                created_by: 'web-dashboard',
-              };
-            } else if (currentTool?.name === 'extract_metadata') {
-              // Auto-populate for extract_metadata by sending full file payload
-              const ext = file.name.split('.').pop()?.toLowerCase() || '';
-              json = {
-                file_data: base64Data,
-                filename: file.name,
-                file_format: ext || 'bin',
-                model: 'ollama',
-                output_type: 'pala',
-                document_context: 'uploaded_file',
-              };
-            }
-            
-            setInput(JSON.stringify(json, null, 2));
-            console.log(`[PalaWebDashboard] File loaded and JSON auto-populated for ${currentTool?.name}`);
-          };
-          reader.onerror = (e) => {
-            console.error('[PalaWebDashboard] FileReader error:', e);
-          };
-          reader.readAsArrayBuffer(file);
+  const fileToBase64 = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const arrayBuffer = reader.result as ArrayBuffer;
+          const bytes = new Uint8Array(arrayBuffer);
+          let binary = '';
+          for (let i = 0; i < bytes.byteLength; i++) {
+            binary += String.fromCharCode(bytes[i]);
+          }
+          resolve(btoa(binary));
+        } catch (error) {
+          reject(error);
         }
       };
-    // File picker state and handler are correct above. No unreachable return statements remain in helpers.
+      reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
+      reader.readAsArrayBuffer(file);
+    });
+
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    setSelectedFiles(files);
+    setUploadProgress('');
+
+    if (files.length === 0) {
+      setInput('');
+      setResult(null);
+      setUploadProgress('');
+      return;
+    }
+
+    if (files.length === 1) {
+      const file = files[0];
+      const ext = file.name.split('.').pop()?.toLowerCase() || '';
+      setInput(
+        JSON.stringify(
+          {
+            original_file_name: file.name,
+            file_format: ['pdf', 'txt', 'json', 'md', 'jpg', 'png'].includes(ext) ? ext : 'bin',
+            document_type: 'ocr',
+            created_by: 'web-dashboard',
+          },
+          null,
+          2,
+        ),
+      );
+      setUploadProgress('1/1 selected');
+      return;
+    }
+
+    setInput(
+      JSON.stringify(
+        {
+          documents: files.map((file) => ({
+            original_file_name: file.name,
+            file_size: file.size,
+            file_type: file.type,
+          })),
+        },
+        null,
+        2,
+      ),
+    );
+      setUploadProgress(`${files.length}/${files.length} selected`);
+  };
   const [selectedAgent, setSelectedAgent] = useState<string>('sample-agent');
   const [selectedTool, setSelectedTool] = useState<string>('echo');
   const [selectedExampleIndex, setSelectedExampleIndex] = useState<number>(0);
@@ -591,51 +571,102 @@ function DeveloperPanel() {
       setLoading(true);
       setResult(null);
 
+      const invokeJsonRpc = (toolName: string, args: Record<string, any>) =>
+        new Promise<any>((resolve, reject) => {
+          const requestId = `invoke-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+          const request = {
+            jsonrpc: '2.0',
+            method: 'tools/invoke',
+            params: {
+              agentId: selectedAgent,
+              toolName,
+              arguments: args,
+            },
+            id: requestId,
+          };
+
+          const handleMessage = (event: MessageEvent) => {
+            try {
+              const response = JSON.parse(event.data);
+              if (response.id !== requestId) {
+                return;
+              }
+
+              client.removeEventListener('message', handleMessage);
+
+              if (response.error) {
+                reject(new Error(response.error.message || 'Failed to invoke tool'));
+                return;
+              }
+
+              resolve(response.result || {});
+            } catch (error) {
+              client.removeEventListener('message', handleMessage);
+              reject(error);
+            }
+          };
+
+          client.addEventListener('message', handleMessage);
+          client.send(JSON.stringify(request));
+        });
+
+      if (selectedTool === 'process_and_store_document' && selectedFiles.length > 0) {
+        setUploadProgress(`0/${selectedFiles.length} invoked`);
+        let baseParams: Record<string, any> = {};
+        if (input.trim()) {
+          try {
+            baseParams = JSON.parse(input);
+          } catch (e) {
+            setUploadProgress('');
+            setResult(`Error: Invalid JSON input - ${e}`);
+            setLoading(false);
+            return;
+          }
+        }
+
+        const results: Array<{ file: string; result: any }> = [];
+        for (let index = 0; index < selectedFiles.length; index++) {
+          const file = selectedFiles[index];
+          const fileBase64 = await fileToBase64(file);
+          const ext = file.name.split('.').pop()?.toLowerCase() || '';
+          const params = {
+            ...baseParams,
+            original_file: fileBase64,
+            original_file_name: file.name,
+            file_format: ['pdf', 'txt', 'json', 'md', 'jpg', 'png'].includes(ext) ? ext : 'bin',
+            document_type: 'ocr',
+            created_by: 'web-dashboard',
+          };
+
+          setUploadProgress(`${index + 1}/${selectedFiles.length} invoked`);
+          const response = await invokeJsonRpc('process_and_store_document', params);
+          results.push({ file: file.name, result: response });
+          setUploadProgress(`${index + 1}/${selectedFiles.length} completed`);
+        }
+
+        setUploadProgress(`${selectedFiles.length}/${selectedFiles.length} completed`);
+        setResult(results);
+        setLoading(false);
+        return;
+      }
+
       // Parse JSON input
       let params: any = {};
       try {
         params = JSON.parse(input);
       } catch (e) {
+        setUploadProgress('');
         setResult(`Error: Invalid JSON input - ${e}`);
         setLoading(false);
         return;
       }
 
-      // If store_document and file selected, always inject file data
-      if (selectedTool === 'store_document' && selectedFile && fileBase64) {
-        params.original_file_data = fileBase64;
-        params.original_file = selectedFile.name;
-        params.original_file_mime = selectedFile.type || '';
-      }
-
-      const request = {
-        jsonrpc: '2.0',
-        method: 'tools/invoke',
-        params: {
-          agentId: selectedAgent,
-          toolName: selectedTool,
-          arguments: params,
-        },
-        id: `invoke-${Date.now()}`,
-      };
-
-      client.send(JSON.stringify(request));
-
-      const handleMessage = (event: MessageEvent) => {
-        try {
-          const response = JSON.parse(event.data);
-          if (response.id === request.id) {
-            setResult(response.result || response.error);
-            client.removeEventListener('message', handleMessage);
-            setLoading(false);
-          }
-        } catch (e) {
-          console.error('Failed to parse response:', e);
-        }
-      };
-
-      client.addEventListener('message', handleMessage);
+      const response = await invokeJsonRpc(selectedTool, params);
+      setUploadProgress('');
+      setResult(response);
+      setLoading(false);
     } catch (err) {
+      setUploadProgress('');
       setResult({ error: err instanceof Error ? err.message : 'Failed to invoke tool' });
       setLoading(false);
     }
@@ -744,13 +775,20 @@ function DeveloperPanel() {
                 <div className="mb-2 flex flex-col gap-2">
                   <input
                     type="file"
-                    accept="*"
-                    onChange={handleFileChange}
+                    multiple
+                    onChange={handleFileInputChange}
                     className="px-2 py-1 text-xs bg-slate-700 text-slate-200 rounded border border-slate-600"
                   />
-                  {selectedFile && (
-                    <div className="text-xs text-slate-400">
-                      Selected: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(1)} KB)
+                  {selectedFiles.length > 0 && (
+                    <div className="text-xs text-slate-400 space-y-1">
+                      {selectedFiles.map((file) => (
+                        <div key={`${file.name}-${file.size}`}>Selected: {file.name} ({(file.size / 1024).toFixed(1)} KB)</div>
+                      ))}
+                    </div>
+                  )}
+                  {uploadProgress && (
+                    <div className="text-xs font-medium text-blue-300 bg-slate-900/60 border border-slate-600 rounded px-3 py-2">
+                      {uploadProgress}
                     </div>
                   )}
                 </div>
@@ -767,7 +805,11 @@ function DeveloperPanel() {
 
             <button
               onClick={invokeTool}
-              disabled={loading || (!input && selectedTool !== 'tool_list_content')}
+              disabled={
+                loading ||
+                ((!input && selectedTool !== 'tool_list_content') &&
+                  !(selectedTool === 'process_and_store_document' && selectedFiles.length > 0))
+              }
               className="w-full px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? 'Invoking...' : 'Invoke Tool'}
@@ -800,10 +842,8 @@ function DeveloperPanel() {
                       a.download = doc.original_file;
                       document.body.appendChild(a);
                       a.click();
-                      setTimeout(() => {
-                        document.body.removeChild(a);
-                        URL.revokeObjectURL(url);
-                      }, 100);
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
                     };
                     return (
                       <button
