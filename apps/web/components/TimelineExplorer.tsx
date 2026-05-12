@@ -401,6 +401,7 @@ export function TimelineExplorer() {
   const [suggestedQuestions, setSuggestedQuestions] = useState<any[]>([]);
   const [showQuestionDropdown, setShowQuestionDropdown] = useState(false);
   const [loadingQuestions, setLoadingQuestions] = useState(false);
+  const [pinnedQuestionSourceDocumentId, setPinnedQuestionSourceDocumentId] = useState<string | null>(null);
   const [showFullFile, setShowFullFile] = useState(false);
   const [openingDocumentId, setOpeningDocumentId] = useState<string | null>(null);
 
@@ -485,7 +486,13 @@ export function TimelineExplorer() {
 
     try {
       const expandedQuery = buildExpandedTimelineQuery(trimmed, selectedFilter, selectedYear);
-      console.log('[TimelineExplorer] searchDocuments start', { trimmed, expandedQuery, selectedFilter, selectedYear });
+      console.log('[TimelineExplorer] searchDocuments start', { 
+        trimmed, 
+        expandedQuery, 
+        selectedFilter, 
+        selectedYear,
+        pinnedDocId: pinnedQuestionSourceDocumentId,
+      });
 
       const response: any = await send('tools/invoke', {
         agentId: 'storage-agent',
@@ -500,9 +507,20 @@ export function TimelineExplorer() {
 
       const data = unwrapToolResult(response);
       const docs = Array.isArray(data.documents) ? data.documents : [];
-      console.log('[TimelineExplorer] semantic_search_documents returned', { documentCount: docs.length, searchMethod: data.search_method });
+      console.log('[TimelineExplorer] semantic_search_documents returned', { 
+        documentCount: docs.length, 
+        searchMethod: data.search_method,
+        hasPinned: !!pinnedQuestionSourceDocumentId,
+      });
 
       if (docs.length === 0) {
+        // When a question is pinned, skip keyword fallback - only use semantic results
+        if (pinnedQuestionSourceDocumentId) {
+          console.log('[TimelineExplorer] semantic search returned no documents and pinned doc is set; skipping keyword fallback for stricter matching');
+          setQueryResults([]);
+          return;
+        }
+
         console.log('[TimelineExplorer] semantic search returned no documents; using local keyword fallback');
         const queryTerms = extractMeaningfulTerms(trimmed);
         const fallback = documents.filter((doc) => {
@@ -731,12 +749,17 @@ export function TimelineExplorer() {
         return true;
       })
       .sort((a, b) => {
+        if (pinnedQuestionSourceDocumentId) {
+          if (a.documentId === pinnedQuestionSourceDocumentId && b.documentId !== pinnedQuestionSourceDocumentId) return -1;
+          if (b.documentId === pinnedQuestionSourceDocumentId && a.documentId !== pinnedQuestionSourceDocumentId) return 1;
+        }
+
         if (query.trim()) {
           return (b.relevanceScore - a.relevanceScore) || a.sortDate.localeCompare(b.sortDate);
         }
         return a.sortDate.localeCompare(b.sortDate);
       });
-  }, [query, selectedFilter, selectedYear, timelineItems]);
+  }, [pinnedQuestionSourceDocumentId, query, selectedFilter, selectedYear, timelineItems]);
 
   useEffect(() => {
     log('search/filter changed', { query, selectedYear, selectedFilter });
@@ -748,8 +771,12 @@ export function TimelineExplorer() {
 
   const selectedTimelineItem = useMemo(() => {
     if (!selectedDocument && filteredItems.length > 0) return filteredItems[0];
-    return filteredItems.find((item) => item.documentId === selectedDocument?.document_id) || null;
-  }, [filteredItems, selectedDocument]);
+    return (
+      filteredItems.find((item) => item.documentId === selectedDocument?.document_id) ||
+      documents.find((item) => item.document_id === selectedDocument?.document_id) ||
+      null
+    );
+  }, [documents, filteredItems, selectedDocument]);
 
   const relatedDocuments = useMemo(() => {
     if (!selectedTimelineItem) return [];
@@ -842,6 +869,7 @@ export function TimelineExplorer() {
                 value={query}
                 onChange={(e) => {
                   const newQuery = e.target.value;
+                  setPinnedQuestionSourceDocumentId(null);
                   setQuery(newQuery);
                   
                   // Auto-load question suggestions when user types
@@ -888,10 +916,21 @@ export function TimelineExplorer() {
                       <button
                         key={idx}
                         onClick={() => {
-                          // Use the question text as a new search query
-                          setQuery(q.text);
+                          // Keep the selected question as the search input and pin its source document first.
+                          const sourceDocumentId = q.document_id || q.provenance || q.source_document_id;
+                          if (sourceDocumentId) {
+                            console.log('[TimelineExplorer] Pinning provenance document for selected question:', {
+                              question: q.text,
+                              sourceDocumentId,
+                              similarity: q.similarity,
+                            });
+                            setPinnedQuestionSourceDocumentId(sourceDocumentId);
+                          } else {
+                            console.log('[TimelineExplorer] No source document id on selected question; leaving current view unchanged', q);
+                            setPinnedQuestionSourceDocumentId(null);
+                          }
                           setShowQuestionDropdown(false);
-                          console.log('[TimelineExplorer] Using question as search filter:', q.text);
+                          setQuery(q.text);
                         }}
                         className="w-full text-left px-2 py-2 hover:bg-slate-800 rounded text-sm text-slate-200 transition"
                       >

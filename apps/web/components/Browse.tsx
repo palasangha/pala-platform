@@ -524,25 +524,9 @@ export function Browse({ className = '', send }: BrowseProps) {
 
             {documents.length > 0 && (
               <>
-                <div className="p-4 border-b border-gray-200">
-                  <div className="relative">
-                    <span className="absolute left-3 top-3 text-slate-400">🔍</span>
-                    <input
-                      type="text"
-                      placeholder="Search documents..."
-                      value={searchFilter}
-                      onChange={(e) => setSearchFilter(e.target.value)}
-                      className="w-full pl-10 pr-3 py-2 rounded-lg border border-slate-700 bg-slate-950 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                  <p className="text-xs text-slate-400 mt-2">
-                    {filteredDocuments.length} of {documents.length} documents
-                  </p>
-                </div>
-
                 <div className="flex-1 overflow-auto">
                   <div className="space-y-2 p-4">
-                    {filteredDocuments.map((doc) => (
+                    {documents.map((doc) => (
                       <button
                         key={doc.id}
                         onClick={() => {
