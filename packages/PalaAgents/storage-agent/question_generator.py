@@ -13,12 +13,14 @@ FEATURES:
 - Regenerate questions when metadata/tags change significantly
 """
 
+import asyncio
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional, Tuple
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,9 @@ class GeneratedQuestion:
     filters: Dict[str, Any]  # derived from document: tags, type, language, location, etc.
     suggestion_type: str  # 'question' | 'topic' | 'filter' | 'expand' | 'action'
     embedding: Optional[List[float]] = None  # vector embedding
+    evidence: List[Dict[str, Any]] = field(default_factory=list)
+    answer_preview: str = ""
+    answer_span: Optional[Dict[str, Any]] = None
     created_at: str = ""
     updated_at: str = ""
     model: str = "ollama"  # which model generated this
@@ -193,6 +198,137 @@ REQUIREMENTS:
 Generate the questions now:"""
         
         return prompt
+
+    def _extract_evidence_for_question(
+        self,
+        question_text: str,
+        processed_data: Dict[str, Any],
+    ) -> Tuple[List[Dict[str, Any]], str]:
+        """
+        Extract verbatim evidence snippets from document text for a question.
+        
+        Algorithm:
+        1. Extract keywords from question (excluding stop words)
+        2. Score each line by keyword match count
+        3. Penalize very short lines (likely filler/metadata)
+        4. Return single best match only (not top 2) to avoid irrelevant results
+        5. Calculate confidence as keyword_match_ratio, with minimum of 0.5 for any match
+        
+        Returns:
+            (evidence_list, answer_preview) where evidence_list contains one dict with:
+            - source_path: where content came from
+            - line_start/line_end: line numbers (1-indexed)
+            - snippet: excerpt (max 300 chars)
+            - confidence: 0.0-1.0 score
+        """
+        if not isinstance(processed_data, dict):
+            return [], ""
+
+        content_text = ""
+        source_path = "processed_data.content"
+
+        result_payload = processed_data.get("result") if isinstance(processed_data.get("result"), dict) else {}
+
+        for key, path in (
+            ("content", "processed_data.content"),
+            ("text", "processed_data.text"),
+            ("ocr_text", "processed_data.ocr_text"),
+        ):
+            value = processed_data.get(key)
+            if isinstance(value, str) and value.strip():
+                content_text = value
+                source_path = path
+                break
+
+        if not content_text:
+            for key, path in (
+                ("content", "processed_data.result.content"),
+                ("text", "processed_data.result.text"),
+                ("ocr_text", "processed_data.result.ocr_text"),
+            ):
+                value = result_payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    content_text = value
+                    source_path = path
+                    break
+
+        if not content_text:
+            return [], ""
+
+        lines = [line.strip() for line in content_text.splitlines() if line.strip()]
+        if not lines:
+            lines = [content_text.strip()]
+
+        question_terms = [
+            token
+            for token in re.findall(r"[A-Za-z0-9]+", question_text.lower())
+            if len(token) > 3 and token not in {"what", "when", "where", "which", "about", "their", "there", "these", "those", "would", "could", "should", "document", "context", "from"}
+        ]
+
+        if not question_terms:
+            snippet = lines[0][:300]
+            return [
+                {
+                    "source_path": source_path,
+                    "line_start": 1,
+                    "line_end": 1,
+                    "span": {"line_start": 1, "line_end": 1},
+                    "snippet": snippet,
+                    "confidence": 0.3,
+                }
+            ], snippet
+
+        scored_lines: List[Tuple[int, int, str]] = []
+        for idx, line in enumerate(lines):
+            lower = line.lower()
+            # Count matching keywords
+            score = sum(1 for term in question_terms if term in lower)
+            # Penalize very short lines (likely filler)
+            line_length_penalty = 0 if len(line) >= 50 else -0.5
+            adjusted_score = score + line_length_penalty
+            
+            if score > 0:
+                scored_lines.append((adjusted_score, score, idx, line))
+
+        if not scored_lines:
+            snippet = lines[0][:300]
+            return [
+                {
+                    "source_path": source_path,
+                    "line_start": 1,
+                    "line_end": 1,
+                    "span": {"line_start": 1, "line_end": 1},
+                    "snippet": snippet,
+                    "confidence": 0.25,
+                }
+            ], snippet
+
+        # Sort by adjusted score (descending), then raw score (descending), then position (ascending)
+        scored_lines.sort(key=lambda item: (-item[0], -item[1], item[2]))
+        
+        # Only take the top match (single best evidence)
+        best_match = scored_lines[0]
+        adjusted_score, raw_score, idx, line = best_match
+        
+        # Calculate confidence: raw_score / max_possible_terms
+        max_terms = len(question_terms)
+        confidence = round(min(raw_score / max(max_terms, 1), 1.0), 3)
+        
+        # Ensure minimum confidence even for partial matches
+        confidence = max(confidence, 0.5) if raw_score > 0 else 0.3
+
+        evidence = [
+            {
+                "source_path": source_path,
+                "line_start": idx + 1,
+                "line_end": idx + 1,
+                "span": {"line_start": idx + 1, "line_end": idx + 1},
+                "snippet": line[:300],
+                "confidence": confidence,
+            }
+        ]
+
+        return evidence, evidence[0]["snippet"] if evidence else ""
     
     async def generate_questions_for_document(
         self,
@@ -275,6 +411,12 @@ Generate the questions now:"""
                         embedding = embedding_model.encode(question_text).tolist()
                     except Exception as e:
                         logger.warning(f"[QUESTION-GEN] Failed to embed question: {e}")
+
+                evidence, answer_preview = self._extract_evidence_for_question(
+                    question_text=question_text,
+                    processed_data=processed_data,
+                )
+                answer_span = evidence[0].get("span") if evidence else None
                 
                 q = GeneratedQuestion(
                     question_id=q_id,
@@ -283,6 +425,9 @@ Generate the questions now:"""
                     filters=filters,
                     suggestion_type="question",
                     embedding=embedding,
+                    evidence=evidence,
+                    answer_preview=answer_preview,
+                    answer_span=answer_span,
                     created_at=now,
                     updated_at=now,
                     model="ollama",
@@ -307,31 +452,47 @@ Generate the questions now:"""
             Generated text or None
         """
         try:
-            import aiohttp
+            import json as json_module
+            from urllib import request as urllib_request
+            from urllib.error import URLError, HTTPError
             
             base_url = self.ollama_provider.base_url
             model = self.ollama_provider.model
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{base_url}/api/generate",
-                    json={
-                        "model": model,
-                        "prompt": prompt,
-                        "stream": False,
-                        "options": {
-                            "temperature": 0.3,
-                            "top_p": 0.9,
-                        },
+
+            def _post_ollama() -> Optional[str]:
+                payload = json_module.dumps({
+                    "model": model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.3,
+                        "top_p": 0.9,
                     },
-                    timeout=aiohttp.ClientTimeout(total=120),
-                ) as response:
-                    if response.status != 200:
-                        logger.error(f"[QUESTION-GEN] Ollama API returned status {response.status}")
-                        return None
-                    
-                    result = await response.json()
-                    return result.get("response", "").strip()
+                }).encode("utf-8")
+
+                req = urllib_request.Request(
+                    f"{base_url}/api/generate",
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+
+                try:
+                    with urllib_request.urlopen(req, timeout=120) as response:
+                        if getattr(response, "status", 200) != 200:
+                            logger.error(f"[QUESTION-GEN] Ollama API returned status {getattr(response, 'status', 'unknown')}")
+                            return None
+                        body = response.read().decode("utf-8")
+                        result = json_module.loads(body)
+                        return str(result.get("response", "")).strip()
+                except HTTPError as error:
+                    logger.error(f"[QUESTION-GEN] Ollama HTTP error: {error}")
+                    return None
+                except URLError as error:
+                    logger.error(f"[QUESTION-GEN] Ollama URL error: {error}")
+                    return None
+
+            return await asyncio.to_thread(_post_ollama)
         except Exception as e:
             logger.error(f"[QUESTION-GEN] Failed to call Ollama: {e}", exc_info=True)
             return None

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+print("[MARKER-START] Storage agent main.py loaded at startup - CODE VERSION CHECK")
+
 import asyncio
 import json
 import logging
@@ -31,7 +33,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import websockets
 from providers.s3_provider_real import S3ProviderReal
@@ -139,28 +141,62 @@ except Exception as e:
 # ============================================================================
 # Ollama Provider Initialization for Question Generation
 # ============================================================================
+
+# Simple Ollama availability check without external dependencies
+class SimpleOllamaProvider:
+    """Minimal Ollama provider for question generation - no external deps"""
+    def __init__(self, base_url: str = None, model: str = None):
+        self.base_url = base_url or os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
+        self.model = model or os.getenv('OLLAMA_MODEL', 'mistral')
+        self._available = self._check_availability()
+        if self._available:
+            logger.info(f"[OLLAMA] ✅ Provider ready (model={self.model}, url={self.base_url})")
+        else:
+            logger.warning(f"[OLLAMA] ⚠️  Provider not available at {self.base_url}")
+    
+    def is_available(self) -> bool:
+        return self._available
+    
+    def _check_availability(self) -> bool:
+        """Check if Ollama service is running"""
+        try:
+            import requests
+            response = requests.get(f"{self.base_url}/api/tags", timeout=5)
+            if response.status_code != 200:
+                return False
+            tags_data = response.json()
+            models = tags_data.get("models", [])
+            model_names = [m.get("name", "") for m in models]
+            available = any(self.model in name for name in model_names)
+            if not available:
+                logger.warning(f"[OLLAMA] Model '{self.model}' not found. Available: {model_names}")
+            return available
+        except Exception as e:
+            logger.debug(f"[OLLAMA] Availability check failed: {e}")
+            return False
+
+root_logger.info("[OLLAMA-INIT-ROOT] Starting Ollama provider initialization...")
 ollama_provider = None
 try:
-    # Try to import from metadata-extraction-agent if available
-    import sys
-    sys.path.insert(0, os.path.join(agent_dir, '../metadata-extraction-agent'))
-    from providers.ollama_provider import OllamaMetadataProvider
-    
+    root_logger.info("[OLLAMA-INIT-ROOT] Creating SimpleOllamaProvider instance...")
     base_url = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
     model = os.getenv('OLLAMA_MODEL', 'mistral')
+    root_logger.info(f"[OLLAMA-INIT-ROOT] Config: base_url={base_url}, model={model}")
     
-    logger.info(f"[OLLAMA-INIT] Initializing Ollama provider (url={base_url}, model={model})")
-    ollama_provider = OllamaMetadataProvider(base_url=base_url, model=model)
+    ollama_provider = SimpleOllamaProvider(base_url=base_url, model=model)
+    root_logger.info(f"[OLLAMA-INIT-ROOT] ✅ Instance created: {ollama_provider}")
     
     if ollama_provider.is_available():
-        logger.info("[OLLAMA-INIT] ✅ Ollama provider initialized successfully")
+        logger.info("[OLLAMA-INIT] ✅ Ollama provider initialized and available")
+        root_logger.info("[OLLAMA-INIT-ROOT] ✅ Provider is available")
     else:
-        logger.warning("[OLLAMA-INIT] Ollama provider unavailable - question generation will be skipped")
-        ollama_provider = None
+        logger.warning("[OLLAMA-INIT] ⚠️  Ollama provider initialized but currently unavailable")
+        root_logger.info("[OLLAMA-INIT-ROOT] ⚠️  Provider not available now, will retry at question time")
 except Exception as e:
-    logger.error(f"[OLLAMA-INIT] ❌ Failed to initialize Ollama provider: {e}")
-    logger.warning("[OLLAMA-INIT] Question generation will be disabled")
+    root_logger.error(f"[OLLAMA-INIT-ROOT] ❌ Exception during initialization: {type(e).__name__}: {e}", exc_info=True)
+    logger.error(f"[OLLAMA-INIT] ❌ Exception during Ollama provider initialization: {e}", exc_info=True)
     ollama_provider = None
+    root_logger.error("[OLLAMA-INIT-ROOT] Set ollama_provider to None after exception")
 
 
 # ============================================================================
@@ -455,6 +491,208 @@ def generate_embedding(text: str, embedding_model_instance=None) -> Optional[lis
         return None
 
 
+QUESTION_PAYLOAD_SCHEMA_VERSION = 1
+
+
+def _normalize_question_evidence(value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    normalized: List[Dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        snippet = str(item.get('snippet', '')).strip()
+        if not snippet:
+            continue
+        line_start = int(item.get('line_start', 1) or 1)
+        line_end = int(item.get('line_end', item.get('line_start', 1)) or 1)
+        span_value = item.get('span') if isinstance(item.get('span'), dict) else {}
+        normalized.append({
+            'source_path': str(item.get('source_path', 'processed_data.content')),
+            'line_start': line_start,
+            'line_end': line_end,
+            'span': {
+                'line_start': int(span_value.get('line_start', line_start) or line_start),
+                'line_end': int(span_value.get('line_end', line_end) or line_end),
+            },
+            'snippet': snippet,
+            'confidence': float(item.get('confidence', 0.0) or 0.0),
+        })
+    return normalized
+
+
+def _serialize_generated_question(question: Any, document_id: str) -> Dict[str, Any]:
+    question_dict = vars(question) if hasattr(question, '__dict__') else dict(question or {})
+    evidence = _normalize_question_evidence(question_dict.get('evidence'))
+    answer_preview = str(question_dict.get('answer_preview', '')).strip()
+    if not answer_preview and evidence:
+        answer_preview = evidence[0].get('snippet', '')
+    answer_span = question_dict.get('answer_span') if isinstance(question_dict.get('answer_span'), dict) else None
+    if not answer_span and evidence:
+        answer_span = evidence[0].get('span')
+
+    return {
+        'question_id': str(question_dict.get('question_id') or f"q-{uuid.uuid4()}"),
+        'text': str(question_dict.get('text') or '').strip(),
+        'suggestion_type': str(question_dict.get('suggestion_type') or 'question'),
+        'provenance': str(question_dict.get('provenance') or document_id),
+        'filters': question_dict.get('filters') or {},
+        'evidence': evidence,
+        'answer_preview': answer_preview,
+        'answer_span': answer_span,
+        'created_at': str(question_dict.get('created_at') or datetime.now(timezone.utc).isoformat()),
+        'updated_at': str(question_dict.get('updated_at') or datetime.now(timezone.utc).isoformat()),
+        'model': str(question_dict.get('model') or 'ollama'),
+        'embedding': question_dict.get('embedding'),
+    }
+
+
+def _build_questions_payload(
+    document_id: str,
+    questions: List[Dict[str, Any]],
+    generation_status: str,
+    error_message: Optional[str] = None,
+    failure_stage: Optional[str] = None,
+    provider_available: Optional[bool] = None,
+    embedding_model_available: Optional[bool] = None,
+    debug_details: Optional[Dict[str, Any]] = None,
+    generation_started_at: Optional[str] = None,
+) -> Dict[str, Any]:
+    now = datetime.now(timezone.utc).isoformat()
+    return {
+        'questions_schema_version': QUESTION_PAYLOAD_SCHEMA_VERSION,
+        'document_id': document_id,
+        'generation_status': generation_status,
+        'generated_at': now if generation_status == 'generated' else None,
+        'updated_at': now,
+        'question_count': len(questions),
+        'error_message': error_message,
+        'failure_stage': failure_stage,
+        'provider_available': provider_available,
+        'embedding_model_available': embedding_model_available,
+        'generation_started_at': generation_started_at,
+        'generation_completed_at': now,
+        'debug_details': debug_details or {},
+        'questions': questions,
+    }
+
+
+def _extract_questions_payload_from_doc(doc: Any) -> Dict[str, Any]:
+    app_data = getattr(doc, 'app_data', {}) or {}
+    if not isinstance(app_data, dict):
+        return _build_questions_payload(getattr(doc, 'id', ''), [], 'unknown')
+
+    payload = app_data.get('questions_payload')
+    if isinstance(payload, dict):
+        base_questions = payload.get('questions') if isinstance(payload.get('questions'), list) else []
+        return {
+            'questions_schema_version': payload.get('questions_schema_version', QUESTION_PAYLOAD_SCHEMA_VERSION),
+            'document_id': payload.get('document_id') or getattr(doc, 'id', ''),
+            'generation_status': payload.get('generation_status', app_data.get('questions_generation_status', 'unknown')),
+            'generated_at': payload.get('generated_at'),
+            'updated_at': payload.get('updated_at'),
+            'question_count': payload.get('question_count', len(base_questions)),
+            'error_message': payload.get('error_message'),
+            'failure_stage': payload.get('failure_stage'),
+            'provider_available': payload.get('provider_available'),
+            'embedding_model_available': payload.get('embedding_model_available'),
+            'generation_started_at': payload.get('generation_started_at'),
+            'generation_completed_at': payload.get('generation_completed_at'),
+            'debug_details': payload.get('debug_details', {}),
+            'questions': base_questions,
+        }
+
+    legacy_questions = app_data.get('questions') if isinstance(app_data.get('questions'), list) else []
+    return _build_questions_payload(
+        document_id=getattr(doc, 'id', ''),
+        questions=legacy_questions,
+        generation_status=app_data.get('questions_generation_status', 'unknown'),
+        error_message=app_data.get('questions_error_message'),
+    )
+
+
+async def _persist_questions_payload(document_id: str, payload: Dict[str, Any]) -> None:
+    app_patch = {
+        'questions_payload': payload,
+        'questions': payload.get('questions', []),
+        'questions_generation_status': payload.get('generation_status', 'unknown'),
+        'questions_error_message': payload.get('error_message'),
+    }
+    await provider.update_document_metadata(
+        document_id=document_id,
+        metadata={},
+        app_data=app_patch,
+        updated_by='question-generator',
+        replace=False,
+    )
+
+
+def _sync_questions_index(document_id: str, questions: List[Dict[str, Any]], status: str, error_message: Optional[str] = None) -> None:
+    if not questions_db:
+        return
+
+    try:
+        questions_db.delete_questions_for_document(document_id)
+
+        rows = []
+        for q in questions:
+            text = str(q.get('text') or '').strip()
+            if not text:
+                continue
+            embedding = q.get('embedding')
+            if embedding is None and embedding_model:
+                embedding = generate_embedding(text, embedding_model)
+            rows.append({
+                'question_id': q.get('question_id') or f"q-{uuid.uuid4()}",
+                'text': text,
+                'provenance': q.get('provenance') or document_id,
+                'filters': q.get('filters') or {'document_id': document_id},
+                'suggestion_type': q.get('suggestion_type') or 'question',
+                'embedding': embedding,
+                'created_at': q.get('created_at') or datetime.now(timezone.utc).isoformat(),
+                'updated_at': q.get('updated_at') or datetime.now(timezone.utc).isoformat(),
+                'model': q.get('model') or 'ollama',
+            })
+
+        if rows:
+            questions_db.store_questions_batch(rows)
+
+        if status == 'failed':
+            questions_db.mark_generation_status(document_id, 'failed', error_message=error_message)
+        elif status == 'generating':
+            questions_db.mark_generation_status(document_id, 'generating', question_count=0)
+        else:
+            questions_db.mark_generation_status(document_id, 'generated', question_count=len(rows))
+    except Exception as e:
+        logger.error(f"[QUESTIONS-INDEX] Failed to sync index for {document_id}: {e}", exc_info=True)
+
+
+def _log_question_generation_summary(
+    *,
+    document_id: str,
+    origin: str,
+    status: str,
+    question_count: int,
+    provider_available: bool,
+    embedding_model_available: bool,
+    failure_stage: Optional[str] = None,
+    error_message: Optional[str] = None,
+    generated_at: Optional[str] = None,
+) -> None:
+    logger.info(
+        "[QUESTION-GEN-SUMMARY] doc_id=%s origin=%s status=%s questions=%s provider=%s embedding=%s failure_stage=%s generated_at=%s error=%s",
+        document_id,
+        origin,
+        status,
+        question_count,
+        provider_available,
+        embedding_model_available,
+        failure_stage,
+        generated_at,
+        error_message,
+    )
+
+
 # Tool implementations
 async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
     logger.info(f"[TOOL-INVOKE] store_document called with params: {json.dumps(params)[:500]}")
@@ -635,14 +873,27 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
         # Step: Generate questions for the document (async, in background)
         # ====================================================================
         questions_generated = False
-        if ollama_provider and questions_db and embedding_model:
+        generated_question_count = 0
+        question_generation_status = 'failed'
+        question_generation_error: Optional[str] = None
+        question_generation_failure_stage: Optional[str] = None
+        question_generation_started_at = datetime.now(timezone.utc).isoformat()
+        question_generation_completed_at: Optional[str] = None
+        
+        logger.debug(f"[QUESTION-GEN-GATE] Checking preconditions: ollama_provider={ollama_provider} (type={type(ollama_provider).__name__}), ollama_bool={bool(ollama_provider)}")
+        
+        if ollama_provider:
             try:
                 from question_generator import QuestionGenerator
                 
                 logger.info(f"[QUESTION-GEN] Starting question generation for document {doc.id}")
-                
-                # Mark as generating
-                questions_db.mark_generation_status(doc.id, 'generating')
+                generating_payload = _build_questions_payload(
+                    document_id=doc.id,
+                    questions=[],
+                    generation_status='generating',
+                )
+                await _persist_questions_payload(doc.id, generating_payload)
+                _sync_questions_index(doc.id, [], status='generating')
                 
                 # Generate questions
                 gen = QuestionGenerator(ollama_provider)
@@ -654,33 +905,96 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
                     original_file=original_file,
                     embedding_model=embedding_model
                 )
-                
-                # Store questions
-                if questions:
-                    questions_db.store_questions_batch(questions)
-                    questions_db.mark_generation_status(
-                        doc.id, 'generated', 
-                        question_count=len(questions)
-                    )
-                    logger.info(f"[QUESTION-GEN] ✅ Generated and stored {len(questions)} questions for {doc.id}")
-                    questions_generated = True
-                else:
-                    logger.warning(f"[QUESTION-GEN] No questions generated for {doc.id}")
-                    questions_db.mark_generation_status(
-                        doc.id, 'generated', 
-                        question_count=0
-                    )
+
+                canonical_questions = [
+                    _serialize_generated_question(question=q, document_id=doc.id)
+                    for q in questions
+                    if str(getattr(q, 'text', '') or '').strip()
+                ]
+                generated_question_count = len(canonical_questions)
+
+                payload = _build_questions_payload(
+                    document_id=doc.id,
+                    questions=canonical_questions,
+                    generation_status='generated',
+                    provider_available=True,
+                    embedding_model_available=bool(embedding_model),
+                    generation_started_at=question_generation_started_at,
+                    debug_details={
+                        'doc_type': doc.type,
+                        'original_file': original_file,
+                    },
+                )
+                await _persist_questions_payload(doc.id, payload)
+                _sync_questions_index(doc.id, canonical_questions, status='generated')
+
+                logger.info(
+                    f"[QUESTION-GEN] ✅ Generated and persisted {generated_question_count} canonical questions for {doc.id}"
+                )
+                questions_generated = generated_question_count > 0
+                question_generation_status = 'generated'
+                question_generation_completed_at = payload.get('generation_completed_at')
             except Exception as e:
                 logger.error(f"[QUESTION-GEN] ❌ Failed to generate questions: {e}", exc_info=True)
+                question_generation_status = 'failed'
+                question_generation_error = str(e)
+                question_generation_failure_stage = 'generate_questions'
+                failed_payload = _build_questions_payload(
+                    document_id=doc.id,
+                    questions=[],
+                    generation_status='failed',
+                    error_message=str(e),
+                    failure_stage=question_generation_failure_stage,
+                    provider_available=True,
+                    embedding_model_available=bool(embedding_model),
+                    generation_started_at=question_generation_started_at,
+                    debug_details={
+                        'doc_type': doc.type,
+                        'original_file': original_file,
+                    },
+                )
                 try:
-                    questions_db.mark_generation_status(
-                        doc.id, 'failed',
-                        error_message=str(e)
-                    )
-                except:
-                    pass
+                    await _persist_questions_payload(doc.id, failed_payload)
+                except Exception:
+                    logger.warning(f"[QUESTION-GEN] Could not persist failed status for {doc.id}", exc_info=True)
+                _sync_questions_index(doc.id, [], status='failed', error_message=str(e))
         else:
-            logger.debug(f"[QUESTION-GEN] Skipped: ollama_provider={bool(ollama_provider)}, questions_db={bool(questions_db)}, embedding_model={bool(embedding_model)}")
+            logger.debug(f"[QUESTION-GEN] Skipped: ollama_provider={bool(ollama_provider)}, embedding_model={bool(embedding_model)}")
+            question_generation_status = 'failed'
+            question_generation_error = 'Question generation skipped because Ollama provider is unavailable'
+            question_generation_failure_stage = 'ollama_unavailable'
+            skipped_payload = _build_questions_payload(
+                document_id=doc.id,
+                questions=[],
+                generation_status='failed',
+                error_message=question_generation_error,
+                failure_stage=question_generation_failure_stage,
+                provider_available=False,
+                embedding_model_available=bool(embedding_model),
+                generation_started_at=question_generation_started_at,
+                debug_details={
+                    'doc_type': doc.type,
+                    'original_file': original_file,
+                },
+            )
+            try:
+                await _persist_questions_payload(doc.id, skipped_payload)
+            except Exception:
+                logger.warning(f"[QUESTION-GEN] Could not persist skipped status for {doc.id}", exc_info=True)
+            _sync_questions_index(doc.id, [], status='failed', error_message=question_generation_error)
+
+        question_generation_completed_at = question_generation_completed_at or datetime.now(timezone.utc).isoformat()
+        _log_question_generation_summary(
+            document_id=doc.id,
+            origin='store_document',
+            status=question_generation_status,
+            question_count=generated_question_count,
+            provider_available=bool(ollama_provider),
+            embedding_model_available=bool(embedding_model),
+            failure_stage=question_generation_failure_stage,
+            error_message=question_generation_error,
+            generated_at=question_generation_completed_at,
+        )
         
         result = {
             'document_id': doc.id,
@@ -696,6 +1010,10 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
             's3_result': s3_result,  # Keep for backward compatibility
             'duplicate': duplicate,
             'questions_generated': questions_generated,
+            'question_count': generated_question_count,
+            'question_generation_status': question_generation_status,
+            'question_generation_error': question_generation_error,
+            'question_generation_failure_stage': question_generation_failure_stage,
             'message': 'Document updated (duplicate)' if duplicate else 'Document stored successfully'
         }
         logger.info(f"[TOOL-RETURN] store_document returned: {json.dumps(result)[:500]}")
@@ -1553,31 +1871,32 @@ async def tool_get_document_questions(params: Dict[str, Any]) -> Dict[str, Any]:
         logger.error("[QUESTIONS] ❌ No document_id provided")
         raise ValueError("document_id is required")
     
-    if not questions_db:
-        logger.error("[QUESTIONS] ❌ questions_db is None")
-        raise ValueError("Questions database not available")
-    
     try:
-        logger.info(f"[QUESTIONS] Querying database for questions...")
-        questions = questions_db.get_questions_for_document(doc_id)
-        logger.info(f"[QUESTIONS] Retrieved {len(questions) if questions else 0} questions from DB")
-        
-        # Get generation status
-        status = questions_db.get_generation_status(doc_id)
-        logger.info(f"[QUESTIONS] Generation status: {status}")
-        
+        doc = await provider.retrieve_document(doc_id)
+        if not doc:
+            raise ValueError(f"Document not found: {doc_id}")
+
+        payload = _extract_questions_payload_from_doc(doc)
+        questions = payload.get('questions', []) if isinstance(payload.get('questions'), list) else []
+
         result = {
             'document_id': doc_id,
             'questions': [
                 {
-                    'question_id': q['question_id'],
-                    'text': q['text'],
-                    'suggestion_type': q['suggestion_type'],
+                    'question_id': q.get('question_id'),
+                    'text': q.get('text'),
+                    'suggestion_type': q.get('suggestion_type', 'question'),
+                    'evidence': q.get('evidence', []),
+                    'answer_preview': q.get('answer_preview', ''),
+                    'answer_span': q.get('answer_span'),
                 }
                 for q in questions
+                if q.get('text')
             ],
-            'question_count': len(questions),
-            'generation_status': status.get('status') if status else 'unknown',
+            'question_count': payload.get('question_count', len(questions)),
+            'generation_status': payload.get('generation_status', 'unknown'),
+            'generated_at': payload.get('generated_at'),
+            'error_message': payload.get('error_message'),
         }
         logger.info(f"[QUESTIONS] ✅ Returning result with {len(result['questions'])} questions")
         logger.info(f"[QUESTIONS] Result: {result}")
@@ -1621,18 +1940,32 @@ async def tool_search_questions(params: Dict[str, Any]) -> Dict[str, Any]:
         )
         logger.info(f"[SEARCH-Q] Search returned {len(results)} results")
         
+        enriched_questions = []
+        for r in results:
+            item = {
+                'question_id': r['question_id'],
+                'text': r['text'],
+                'document_id': r['provenance'],
+                'similarity': round(r['similarity'], 3),
+            }
+            try:
+                source_doc = await provider.retrieve_document(r['provenance'])
+                if source_doc:
+                    payload = _extract_questions_payload_from_doc(source_doc)
+                    payload_questions = payload.get('questions', []) if isinstance(payload.get('questions'), list) else []
+                    match = next((q for q in payload_questions if q.get('question_id') == r['question_id']), None)
+                    if match:
+                        item['evidence'] = match.get('evidence', [])
+                        item['answer_preview'] = match.get('answer_preview', '')
+                        item['answer_span'] = match.get('answer_span')
+            except Exception:
+                logger.debug(f"[SEARCH-Q] Could not enrich question {r['question_id']} from document payload", exc_info=True)
+            enriched_questions.append(item)
+
         result = {
             'query': query,
-            'questions': [
-                {
-                    'question_id': r['question_id'],
-                    'text': r['text'],
-                    'document_id': r['provenance'],
-                    'similarity': round(r['similarity'], 3),
-                }
-                for r in results
-            ],
-            'result_count': len(results),
+            'questions': enriched_questions,
+            'result_count': len(enriched_questions),
         }
         logger.info(f"[SEARCH-Q] ✅ Returning {len(result['questions'])} questions")
         return result
@@ -1650,8 +1983,39 @@ async def tool_regenerate_document_questions(params: Dict[str, Any]) -> Dict[str
     if not doc_id:
         raise ValueError("document_id is required")
     
-    if not questions_db or not ollama_provider or not embedding_model:
-        raise ValueError("Questions database, Ollama provider, or embedding model not available")
+    if not ollama_provider:
+        failed_payload = _build_questions_payload(
+            document_id=doc_id,
+            questions=[],
+            generation_status='failed',
+            error_message='Ollama provider not available',
+            failure_stage='ollama_unavailable',
+            provider_available=False,
+            embedding_model_available=bool(embedding_model),
+            debug_details={'origin': 'regenerate_document_questions'},
+        )
+        try:
+            await _persist_questions_payload(doc_id, failed_payload)
+        except Exception:
+            logger.warning(f"[QUESTIONS-REGEN-TOOL] Could not persist failed status for {doc_id}", exc_info=True)
+        _sync_questions_index(doc_id, [], status='failed', error_message='Ollama provider not available')
+        _log_question_generation_summary(
+            document_id=doc_id,
+            origin='regenerate_document_questions',
+            status='failed',
+            question_count=0,
+            provider_available=False,
+            embedding_model_available=bool(embedding_model),
+            failure_stage='ollama_unavailable',
+            error_message='Ollama provider not available',
+        )
+        return {
+            'document_id': doc_id,
+            'question_count': 0,
+            'generation_status': 'failed',
+            'error_message': 'Ollama provider not available',
+            'message': 'Question generation failed because Ollama provider is not available',
+        }
     
     try:
         logger.info(f"[QUESTIONS-REGEN-TOOL] Regenerating questions for {doc_id}")
@@ -1661,14 +2025,16 @@ async def tool_regenerate_document_questions(params: Dict[str, Any]) -> Dict[str
         if not doc:
             raise ValueError(f"Document {doc_id} not found")
         
-        # Delete old questions
-        questions_db.delete_questions_for_document(doc_id)
-        logger.info(f"[QUESTIONS-REGEN-TOOL] Deleted old questions for {doc_id}")
-        
         # Generate new questions
         from question_generator import QuestionGenerator
-        
-        questions_db.mark_generation_status(doc_id, 'generating')
+
+        generating_payload = _build_questions_payload(
+            document_id=doc_id,
+            questions=[],
+            generation_status='generating',
+        )
+        await _persist_questions_payload(doc_id, generating_payload)
+        _sync_questions_index(doc_id, [], status='generating')
         
         gen = QuestionGenerator(ollama_provider)
         questions = await gen.generate_questions_for_document(
@@ -1679,36 +2045,67 @@ async def tool_regenerate_document_questions(params: Dict[str, Any]) -> Dict[str
             original_file=doc.original_file,
             embedding_model=embedding_model
         )
-        
-        # Store new questions
-        if questions:
-            questions_db.store_questions_batch(questions)
-            questions_db.mark_generation_status(
-                doc_id, 'generated',
-                question_count=len(questions)
-            )
-            logger.info(f"[QUESTIONS-REGEN-TOOL] ✅ Regenerated {len(questions)} questions for {doc_id}")
-            return {
-                'document_id': doc_id,
-                'question_count': len(questions),
-                'message': f'Successfully regenerated {len(questions)} questions'
-            }
-        else:
-            questions_db.mark_generation_status(doc_id, 'generated', question_count=0)
-            return {
-                'document_id': doc_id,
-                'question_count': 0,
-                'message': 'No questions generated'
-            }
+
+        canonical_questions = [
+            _serialize_generated_question(question=q, document_id=doc_id)
+            for q in questions
+            if str(getattr(q, 'text', '') or '').strip()
+        ]
+
+        generated_payload = _build_questions_payload(
+            document_id=doc_id,
+            questions=canonical_questions,
+            generation_status='generated',
+            provider_available=True,
+            embedding_model_available=bool(embedding_model),
+            debug_details={'origin': 'regenerate_document_questions'},
+        )
+        await _persist_questions_payload(doc_id, generated_payload)
+        _sync_questions_index(doc_id, canonical_questions, status='generated')
+
+        logger.info(f"[QUESTIONS-REGEN-TOOL] ✅ Regenerated {len(canonical_questions)} questions for {doc_id}")
+        _log_question_generation_summary(
+            document_id=doc_id,
+            origin='regenerate_document_questions',
+            status='generated',
+            question_count=len(canonical_questions),
+            provider_available=True,
+            embedding_model_available=bool(embedding_model),
+            generated_at=generated_payload.get('generation_completed_at'),
+        )
+        return {
+            'document_id': doc_id,
+            'question_count': len(canonical_questions),
+            'generation_status': 'generated',
+            'message': f'Successfully regenerated {len(canonical_questions)} questions'
+        }
     except Exception as e:
         logger.error(f"[QUESTIONS-REGEN-TOOL] ❌ Regeneration failed: {e}", exc_info=True)
+        failed_payload = _build_questions_payload(
+            document_id=doc_id,
+            questions=[],
+            generation_status='failed',
+            error_message=str(e),
+            failure_stage='regenerate_questions',
+            provider_available=True,
+            embedding_model_available=bool(embedding_model),
+            debug_details={'origin': 'regenerate_document_questions'},
+        )
         try:
-            questions_db.mark_generation_status(
-                doc_id, 'failed',
-                error_message=str(e)
-            )
-        except:
-            pass
+            await _persist_questions_payload(doc_id, failed_payload)
+        except Exception:
+            logger.warning(f"[QUESTIONS-REGEN-TOOL] Could not persist failed status for {doc_id}", exc_info=True)
+        _sync_questions_index(doc_id, [], status='failed', error_message=str(e))
+        _log_question_generation_summary(
+            document_id=doc_id,
+            origin='regenerate_document_questions',
+            status='failed',
+            question_count=0,
+            provider_available=True,
+            embedding_model_available=bool(embedding_model),
+            failure_stage='regenerate_questions',
+            error_message=str(e),
+        )
         raise
 
 
