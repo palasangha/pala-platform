@@ -398,6 +398,9 @@ export function TimelineExplorer() {
   const [selectedDetails, setSelectedDetails] = useState<TimelineDocument | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [showRawJson, setShowRawJson] = useState(false);
+  const [suggestedQuestions, setSuggestedQuestions] = useState<any[]>([]);
+  const [showQuestionDropdown, setShowQuestionDropdown] = useState(false);
+  const [loadingQuestions, setLoadingQuestions] = useState(false);
   const [showFullFile, setShowFullFile] = useState(false);
   const [openingDocumentId, setOpeningDocumentId] = useState<string | null>(null);
 
@@ -832,14 +835,77 @@ export function TimelineExplorer() {
 
       <main className="max-w-7xl mx-auto px-4 py-6">
         <div className="space-y-6">
-          <div className="rounded-xl border border-slate-800 bg-slate-800 p-4">
+          <div className="rounded-xl border border-slate-800 bg-slate-800 p-4 relative">
             <label className="block text-sm font-medium text-slate-200 mb-2">Search</label>
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search titles, summaries, people, places, and metadata..."
-              className="w-full rounded-lg bg-slate-900 border border-slate-700 px-4 py-3 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            <div className="relative">
+              <input
+                value={query}
+                onChange={(e) => {
+                  const newQuery = e.target.value;
+                  setQuery(newQuery);
+                  
+                  // Auto-load question suggestions when user types
+                  if (newQuery.trim() && connected && !loadingQuestions) {
+                    setLoadingQuestions(true);
+                    send('tools/invoke', {
+                      agentId: 'storage-agent',
+                      name: 'search_questions',
+                      arguments: {
+                        query: newQuery.trim(),
+                        limit: 5,
+                        similarity_threshold: 0.3,
+                      },
+                    }).then((response: any) => {
+                      const data = unwrapToolResult(response);
+                      if (data?.questions) {
+                        setSuggestedQuestions(data.questions || []);
+                        setShowQuestionDropdown(true);
+                        console.log('[TimelineExplorer] Loaded', data.questions.length, 'suggested questions');
+                      } else {
+                        setSuggestedQuestions([]);
+                      }
+                      setLoadingQuestions(false);
+                    }).catch((err: any) => {
+                      console.error('[TimelineExplorer] Error loading questions:', err);
+                      setSuggestedQuestions([]);
+                      setLoadingQuestions(false);
+                    });
+                  } else if (!newQuery.trim()) {
+                    setSuggestedQuestions([]);
+                    setShowQuestionDropdown(false);
+                  }
+                }}
+                placeholder="Search titles, summaries, people, places, and metadata..."
+                className="w-full rounded-lg bg-slate-900 border border-slate-700 px-4 py-3 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              
+              {/* Question suggestions dropdown */}
+              {showQuestionDropdown && suggestedQuestions.length > 0 && (
+                <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-slate-900 border border-slate-700 rounded-lg shadow-lg max-h-64 overflow-y-auto">
+                  <div className="p-2">
+                    <p className="text-xs text-slate-400 px-2 py-1">Similar pre-generated questions:</p>
+                    {suggestedQuestions.map((q: any, idx: number) => (
+                      <button
+                        key={idx}
+                        onClick={() => {
+                          // Use the question text as a new search query
+                          setQuery(q.text);
+                          setShowQuestionDropdown(false);
+                          console.log('[TimelineExplorer] Using question as search filter:', q.text);
+                        }}
+                        className="w-full text-left px-2 py-2 hover:bg-slate-800 rounded text-sm text-slate-200 transition"
+                      >
+                        <div className="font-medium truncate">{q.text}</div>
+                        <div className="text-xs text-slate-400">
+                          Similarity: {(q.similarity * 100).toFixed(0)}%
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            {loadingQuestions && <p className="mt-2 text-xs text-slate-400">Loading question suggestions...</p>}
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_24rem] gap-6 items-start">

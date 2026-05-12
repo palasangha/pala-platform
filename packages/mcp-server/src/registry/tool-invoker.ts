@@ -48,10 +48,13 @@ export class ToolInvoker extends EventEmitter {
     const { toolName, arguments: args, requestId } = request;
     const traceId = ensureTraceId(request.traceId);
 
+    console.log(`[TOOL-INVOKER] Invoking tool: '${toolName}' with args:`, JSON.stringify(args).substring(0, 200));
+
     // Validate tool exists
     const tool = this.registry.getTool(toolName);
     if (!tool) {
       const error = `Tool '${toolName}' not found`;
+      console.error(`[TOOL-INVOKER] ${error}`);
       this.emit('invocation:failed', { ...request, traceId }, new Error(error));
       return {
         success: false,
@@ -61,6 +64,8 @@ export class ToolInvoker extends EventEmitter {
         traceId,
       };
     }
+
+    console.log(`[TOOL-INVOKER] Tool '${toolName}' belongs to agent: '${tool.agentId}'`);
 
     // Validate arguments against schema
     try {
@@ -78,9 +83,11 @@ export class ToolInvoker extends EventEmitter {
     }
 
     // Get agent connection
+    console.log(`[TOOL-INVOKER] Looking up agent connection for agentId: '${tool.agentId}'`);
     const connection = this.getAgentConnection(tool.agentId);
     if (!connection) {
       const error = `Agent '${tool.agentId}' not connected`;
+      console.error(`[TOOL-INVOKER] ${error}`);
       this.emit('invocation:failed', { ...request, traceId }, new Error(error));
       return {
         success: false,
@@ -90,6 +97,7 @@ export class ToolInvoker extends EventEmitter {
         traceId,
       };
     }
+    console.log(`[TOOL-INVOKER] Found agent connection for '${tool.agentId}'`);
 
     // Emit started event
     this.emit('invocation:started', { ...request, traceId });

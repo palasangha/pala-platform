@@ -356,6 +356,13 @@ export function ContentBrowser() {
     null
   );
   const [metadataForm, setMetadataForm] = useState<MetadataFormState>(EMPTY_METADATA_FORM);
+  const [documentQuestions, setDocumentQuestions] = useState<any[]>([]);
+  const [documentQuestionsById, setDocumentQuestionsById] = useState<Record<string, any[]>>({});
+  const [loadingQuestions, setLoadingQuestions] = useState(false);
+  const [loadingQuestionsById, setLoadingQuestionsById] = useState<Record<string, boolean>>({});
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [loadingSearch, setLoadingSearch] = useState(false);
 
   const extractToolResult = (response: any): any => {
     const candidates = [
@@ -377,6 +384,36 @@ export function ContentBrowser() {
     const safeScore = typeof score === 'number' ? score : 0;
     return `${safeScore.toFixed(0)}%`;
   };
+
+  const sendStorageToolInvoke = useCallback(
+    (toolName: string, arguments_: Record<string, any>, requestId: string) => {
+      if (!client || !connected) {
+        console.log('[ContentBrowser] Cannot invoke tool; disconnected or client missing', {
+          toolName,
+          requestId,
+          connected,
+          hasClient: !!client,
+        });
+        return false;
+      }
+
+      const payload = {
+        jsonrpc: '2.0',
+        method: 'tools/invoke',
+        params: {
+          agentId: 'storage-agent',
+          toolName,
+          arguments: arguments_,
+        },
+        id: requestId,
+      };
+
+      console.log('[ContentBrowser] Sending storage tool request:', payload);
+      client.send(JSON.stringify(payload));
+      return true;
+    },
+    [client, connected]
+  );
 
   const fetchContent = useCallback(() => {
     if (!connected || !client) return;
@@ -455,6 +492,10 @@ export function ContentBrowser() {
   useEffect(() => {
     fetchContent();
   }, [fetchContent]);
+
+  useEffect(() => {
+    setDocumentQuestions([]);
+  }, [selectedContent?.document_id]);
 
   const viewDocument = useCallback(
     (documentId: string, includeOriginalFile: boolean = false, editMetadata: boolean = false) => {
@@ -765,6 +806,98 @@ export function ContentBrowser() {
     client.addEventListener('message', handleMessage);
   }, [client, connected, fetchContent, metadataForm, selectedContent]);
 
+  // Handle question tool responses
+  useEffect(() => {
+    if (!client || !connected) return;
+
+    const handleMessage = (event: MessageEvent) => {
+      try {
+        const response = JSON.parse(event.data);
+        const msgId = response?.id;
+        
+        if (msgId?.startsWith('questions-') || msgId?.startsWith('regen-questions-') || msgId?.startsWith('search-questions-') || msgId?.startsWith('doc-questions-')) {
+          console.log('[Q-Handler] Message received:', { msgId, hasResult: !!response?.result, hasError: !!response?.error, hasValue: !!response?.value });
+        }
+
+        // Handle get_document_questions response
+        if (msgId?.startsWith('questions-') || msgId?.startsWith('doc-questions-')) {
+          console.log('[Q-Handler] get_document_questions response');
+          setLoadingQuestions(false);
+          const requestedDocumentId =
+            msgId?.startsWith('doc-questions-')
+              ? msgId.replace(/^doc-questions-/, '').replace(/-\d+$/, '')
+              : selectedContent?.document_id;
+          if (response?.error) {
+            console.error('[Q-Handler] Error:', response.error);
+            if (requestedDocumentId) {
+              setLoadingQuestionsById((current) => ({
+                ...current,
+                [requestedDocumentId]: false,
+              }));
+            }
+          } else if (response?.result) {
+            const result = extractToolResult(response);
+            console.log('[Q-Handler] Extracted:', result);
+            if (result?.questions && Array.isArray(result.questions)) {
+              setDocumentQuestions(result.questions);
+              if (result.document_id) {
+                setDocumentQuestionsById((current) => ({
+                  ...current,
+                  [result.document_id]: result.questions,
+                }));
+                setLoadingQuestionsById((current) => ({
+                  ...current,
+                  [result.document_id]: false,
+                }));
+              } else if (requestedDocumentId) {
+                setLoadingQuestionsById((current) => ({
+                  ...current,
+                  [requestedDocumentId]: false,
+                }));
+              }
+              console.log('[Q-Handler] ✅ Got', result.questions.length, 'questions');
+            }
+          }
+        }
+
+        // Handle regenerate_document_questions response
+        if (msgId?.startsWith('regen-questions-') && response?.result) {
+          const result = extractToolResult(response);
+          console.log('[ContentBrowser] Regenerated questions:', result);
+          // Refresh questions after regeneration
+          setTimeout(() => {
+            if (selectedContent) {
+              sendStorageToolInvoke('get_document_questions', { document_id: selectedContent.document_id }, `questions-${Date.now()}`);
+            }
+          }, 1000);
+        }
+
+        // Handle search_questions response
+        if (msgId?.startsWith('search-questions-')) {
+          console.log('[Q-Handler] search_questions response');
+          setLoadingSearch(false);
+          if (response?.error) {
+            console.error('[Q-Handler] Search error:', response.error);
+          } else if (response?.result) {
+            const result = extractToolResult(response);
+            console.log('[Q-Handler] Search result:', result);
+            if (result?.questions && Array.isArray(result.questions)) {
+              setSearchResults(result.questions);
+              console.log('[Q-Handler] ✅ Got', result.questions.length, 'search results');
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[Q-Handler] Error parsing response:', e);
+      }
+    };
+
+    client.addEventListener('message', handleMessage);
+    return () => {
+      client.removeEventListener('message', handleMessage);
+    };
+  }, [client, connected, selectedContent, sendStorageToolInvoke]);
+
   const totalPages = Math.ceil(pagination.total / pagination.pageSize);
   const visibleContents = contents.filter((content) => {
     const query = filters.search.trim().toLowerCase();
@@ -795,6 +928,83 @@ export function ContentBrowser() {
           <span className="text-sm text-slate-600 block">
             {pagination.total} items
           </span>
+        </div>
+      </div>
+
+      {/* Question Search Section */}
+      <div className="bg-gradient-to-r from-indigo-50 to-blue-50 p-6 rounded-lg border border-indigo-200 space-y-4">
+        <div>
+          <h3 className="text-md font-semibold text-slate-900 mb-2">Explore Questions Across Documents</h3>
+          <p className="text-sm text-slate-600 mb-4">Search for concepts across all document questions. For example, type "mother" to find all relevant questions.</p>
+          
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder="Search for questions... (e.g., 'mother', 'teachings', 'meditation')"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyPress={(e) => {
+                if (e.key === 'Enter' && searchQuery.trim() && connected && client) {
+                  console.log('[UI] Search triggered for:', searchQuery);
+                  setLoadingSearch(true);
+                  setSearchResults([]);
+                  const msgId = `search-questions-${Date.now()}`;
+                  const params = { query: searchQuery.trim(), limit: 10 };
+                  console.log('[UI] Sending search_questions:', { msgId, ...params });
+                  sendStorageToolInvoke('search_questions', params, msgId);
+                }
+              }}
+              className="flex-1 px-4 py-2 border border-indigo-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            <button
+              onClick={() => {
+                if (searchQuery.trim() && connected && client) {
+                  console.log('[UI] Search button clicked for:', searchQuery);
+                  setLoadingSearch(true);
+                  setSearchResults([]);
+                  const msgId = `search-questions-${Date.now()}`;
+                  const params = { query: searchQuery.trim(), limit: 10 };
+                  console.log('[UI] Sending search_questions:', { msgId, ...params });
+                  sendStorageToolInvoke('search_questions', params, msgId);
+                } else {
+                  console.log('[UI] Cannot search: query=', searchQuery, 'connected=', connected, 'client=', !!client);
+                }
+              }}
+              disabled={loadingSearch || !searchQuery.trim()}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loadingSearch ? 'Searching...' : 'Search'}
+            </button>
+          </div>
+
+          {searchResults.length > 0 && (
+            <div className="mt-4 bg-white p-4 rounded-lg border border-indigo-200">
+              <div className="text-sm font-semibold text-slate-900 mb-3">
+                Found {searchResults.length} matching question{searchResults.length !== 1 ? 's' : ''} for "{searchQuery}":
+              </div>
+              <ul className="space-y-3">
+                {searchResults.map((q, idx) => (
+                  <li
+                    key={idx}
+                    className="text-sm border-l-4 border-indigo-300 pl-3 py-2 cursor-pointer hover:bg-indigo-50 rounded"
+                    onClick={() => {
+                      const docId = q.document_id || q.provenance;
+                      console.log('[UI] Generated question selected:', { question: q.text, docId, similarity: q.similarity });
+                      if (docId) {
+                        viewDocument(docId);
+                      }
+                    }}
+                  >
+                    <div className="text-slate-900 font-medium">{q.text}</div>
+                    <div className="flex gap-3 text-xs text-slate-600 mt-1">
+                      <span>📄 Doc: <code className="bg-slate-100 px-1 rounded">{q.document_id?.substring(0, 20)}...</code></span>
+                      {q.similarity && <span>🎯 Match: {(q.similarity * 100).toFixed(0)}%</span>}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1024,6 +1234,122 @@ export function ContentBrowser() {
         </div>
       </div>
 
+      {/* Generated Questions by Document */}
+      <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900">Generated Questions by Document</h3>
+            <p className="text-xs text-slate-600">Load each visible document’s generated questions and jump back to the source doc.</p>
+          </div>
+          <button
+            onClick={() => {
+              if (!connected || !client) {
+                console.log('[UI] Cannot load visible document questions: disconnected');
+                return;
+              }
+
+              console.log('[UI] Loading generated questions for visible docs:', visibleContents.map((doc) => ({
+                document_id: doc.document_id,
+                original_file: doc.original_file,
+              })));
+
+              visibleContents.forEach((doc) => {
+                setLoadingQuestionsById((current) => ({
+                  ...current,
+                  [doc.document_id]: true,
+                }));
+                sendStorageToolInvoke(
+                  'get_document_questions',
+                  { document_id: doc.document_id },
+                  `doc-questions-${doc.document_id}-${Date.now()}`
+                );
+              });
+            }}
+            className="px-3 py-2 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-700"
+          >
+            Load visible document questions
+          </button>
+        </div>
+
+        <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+          {visibleContents.map((doc) => {
+            const questions = documentQuestionsById[doc.document_id] || [];
+            const loadingThisDoc = Boolean(loadingQuestionsById[doc.document_id]);
+
+            return (
+              <div key={doc.document_id} className="bg-white border border-slate-200 rounded-lg p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium text-slate-900">{doc.original_file || 'Untitled document'}</div>
+                    <div className="text-xs font-mono text-slate-500 break-all">{doc.document_id}</div>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <div className="text-xs text-slate-500">
+                      {loadingThisDoc ? 'Loading...' : `${questions.length} questions`}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-3 flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      console.log('[UI] Refresh questions for document:', doc.document_id);
+                      setLoadingQuestionsById((current) => ({
+                        ...current,
+                        [doc.document_id]: true,
+                      }));
+                      sendStorageToolInvoke(
+                        'get_document_questions',
+                        { document_id: doc.document_id },
+                        `doc-questions-${doc.document_id}-${Date.now()}`
+                      );
+                    }}
+                    className="px-3 py-1 rounded text-xs font-medium bg-slate-900 text-white hover:bg-slate-700"
+                  >
+                    Refresh questions
+                  </button>
+                  {questions.length > 0 && (
+                    <button
+                      onClick={() => viewDocument(doc.document_id)}
+                      className="px-3 py-1 rounded text-xs font-medium bg-blue-600 text-white hover:bg-blue-700"
+                    >
+                      Open document
+                    </button>
+                  )}
+                </div>
+
+                <div className="mt-3 space-y-2">
+                  {loadingThisDoc ? (
+                    <div className="text-xs text-slate-500">Loading questions...</div>
+                  ) : questions.length > 0 ? (
+                    questions.map((question, idx) => (
+                      <button
+                        key={question.question_id || `${doc.document_id}-${idx}`}
+                        onClick={() => {
+                          console.log('[UI] Generated question clicked from doc panel:', {
+                            documentId: doc.document_id,
+                            question: question.text,
+                          });
+                          viewDocument(doc.document_id);
+                        }}
+                        className="w-full text-left text-xs text-slate-700 bg-slate-50 hover:bg-indigo-50 border border-slate-200 rounded px-3 py-2"
+                      >
+                        <div className="font-medium text-slate-900">
+                          {idx + 1}. {question.text}
+                        </div>
+                        {question.suggestion_type && <div className="text-[11px] text-slate-500 mt-1">{question.suggestion_type}</div>}
+                      </button>
+                    ))
+                  ) : (
+                    <div className="text-xs text-slate-500">No questions loaded yet.</div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Detail Modal */}
       {selectedContent && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -1215,6 +1541,72 @@ export function ContentBrowser() {
                   </button>
                 </div>
               </div>
+
+              {selectedContent.processed_data !== undefined && selectedContent.processed_data !== null && (
+                <div className="bg-slate-50 p-3 rounded text-sm space-y-2">
+                  <label className="text-xs font-medium text-slate-600">
+                    Pre-Generated Questions
+                  </label>
+                  <div className="text-xs text-slate-600 space-y-2">
+                    <p>Load pre-generated questions for this document or regenerate them after metadata changes.</p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          console.log('[UI] Get Questions clicked, connected:', connected, 'client:', !!client);
+                          if (connected && client) {
+                            setLoadingQuestions(true);
+                            setDocumentQuestions([]);
+                            setLoadingQuestionsById((current) => ({
+                              ...current,
+                              [selectedContent.document_id]: true,
+                            }));
+                            const params = { document_id: selectedContent.document_id };
+                            const msgId = `questions-${Date.now()}`;
+                            console.log('[UI] Sending get_document_questions:', { msgId, ...params });
+                            sendStorageToolInvoke('get_document_questions', params, msgId);
+                          } else {
+                            console.log('[UI] Cannot send: connected=', connected, 'client=', !!client);
+                            setLoadingQuestions(false);
+                          }
+                        }}
+                        disabled={loadingQuestions}
+                        className="px-3 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        {loadingQuestions ? 'Loading...' : 'Get Questions'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (connected && client) {
+                            setLoadingQuestions(true);
+                            const params = { document_id: selectedContent.document_id };
+                            sendStorageToolInvoke('regenerate_document_questions', params, `regen-questions-${Date.now()}`);
+                          }
+                        }}
+                        disabled={loadingQuestions}
+                        className="px-3 py-1 bg-orange-600 text-white rounded text-xs font-medium hover:bg-orange-700 disabled:opacity-50"
+                      >
+                        {loadingQuestions ? 'Regenerating...' : 'Regenerate Questions'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {(documentQuestionsById[selectedContent.document_id] || documentQuestions).length > 0 && (
+                    <div className="bg-white p-2 rounded border border-slate-200 max-h-60 overflow-y-auto">
+                      <div className="text-xs font-medium text-slate-700 mb-2">
+                        {(documentQuestionsById[selectedContent.document_id] || documentQuestions).length} Questions:
+                      </div>
+                      <ul className="space-y-1">
+                        {(documentQuestionsById[selectedContent.document_id] || documentQuestions).map((q, idx) => (
+                          <li key={idx} className="text-xs text-slate-700 pl-2 border-l-2 border-blue-300">
+                            <strong>{idx + 1}.</strong> {q.text}
+                            {q.suggestion_type && <span className="text-slate-500 ml-1">({q.suggestion_type})</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {selectedContent.processed_data !== undefined && selectedContent.processed_data !== null && (
                 <div className="bg-slate-50 p-3 rounded text-sm space-y-2">

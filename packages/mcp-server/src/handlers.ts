@@ -46,7 +46,12 @@ export class ServerHandlers {
       if (connectionId) {
         this.agentConnections.set(firstAgentId, connectionId);
         console.log('[MCP-SERVER] Tracked agent connection:', firstAgentId, '→', connectionId);
+        console.log('[MCP-SERVER] All agent connections:', Array.from(this.agentConnections.entries()));
+      } else {
+        console.warn('[MCP-SERVER] getCurrentConnectionId() returned null - agent connection NOT tracked');
       }
+    } else {
+      console.warn('[MCP-SERVER] firstAgentId or agentConnections not available', { firstAgentId, hasAgentConnections: !!this.agentConnections });
     }
 
     console.log('[MCP-SERVER] Registered', count, 'tools successfully');

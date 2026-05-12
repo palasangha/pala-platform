@@ -136,6 +136,50 @@ except Exception as e:
     embedding_model = None
 
 
+# ============================================================================
+# Ollama Provider Initialization for Question Generation
+# ============================================================================
+ollama_provider = None
+try:
+    # Try to import from metadata-extraction-agent if available
+    import sys
+    sys.path.insert(0, os.path.join(agent_dir, '../metadata-extraction-agent'))
+    from providers.ollama_provider import OllamaMetadataProvider
+    
+    base_url = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
+    model = os.getenv('OLLAMA_MODEL', 'mistral')
+    
+    logger.info(f"[OLLAMA-INIT] Initializing Ollama provider (url={base_url}, model={model})")
+    ollama_provider = OllamaMetadataProvider(base_url=base_url, model=model)
+    
+    if ollama_provider.is_available():
+        logger.info("[OLLAMA-INIT] ✅ Ollama provider initialized successfully")
+    else:
+        logger.warning("[OLLAMA-INIT] Ollama provider unavailable - question generation will be skipped")
+        ollama_provider = None
+except Exception as e:
+    logger.error(f"[OLLAMA-INIT] ❌ Failed to initialize Ollama provider: {e}")
+    logger.warning("[OLLAMA-INIT] Question generation will be disabled")
+    ollama_provider = None
+
+
+# ============================================================================
+# Questions Database Initialization
+# ============================================================================
+questions_db = None
+try:
+    from questions_db import QuestionsDB
+    
+    db_path = os.path.join(agent_dir, 'data', 'questions_metadata.db')
+    logger.info(f"[QUESTIONS-DB-INIT] Initializing questions database: {db_path}")
+    questions_db = QuestionsDB(db_path)
+    logger.info("[QUESTIONS-DB-INIT] ✅ Questions database initialized successfully")
+except Exception as e:
+    logger.error(f"[QUESTIONS-DB-INIT] ❌ Failed to initialize questions database: {e}")
+    logger.warning("[QUESTIONS-DB-INIT] Question storage will be disabled")
+    questions_db = None
+
+
 def combine_searchable_text(metadata: Dict[str, Any], processed_data: Dict[str, Any], original_file: str) -> str:
     """Combine metadata, processed data, and file info into searchable text"""
     parts = []
@@ -587,6 +631,57 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
             message=None  # Will be set after we know if it's a duplicate
         )
         
+        # ====================================================================
+        # Step: Generate questions for the document (async, in background)
+        # ====================================================================
+        questions_generated = False
+        if ollama_provider and questions_db and embedding_model:
+            try:
+                from question_generator import QuestionGenerator
+                
+                logger.info(f"[QUESTION-GEN] Starting question generation for document {doc.id}")
+                
+                # Mark as generating
+                questions_db.mark_generation_status(doc.id, 'generating')
+                
+                # Generate questions
+                gen = QuestionGenerator(ollama_provider)
+                questions = await gen.generate_questions_for_document(
+                    doc_id=doc.id,
+                    doc_type=doc.type,
+                    metadata=metadata,
+                    processed_data=processed_data,
+                    original_file=original_file,
+                    embedding_model=embedding_model
+                )
+                
+                # Store questions
+                if questions:
+                    questions_db.store_questions_batch(questions)
+                    questions_db.mark_generation_status(
+                        doc.id, 'generated', 
+                        question_count=len(questions)
+                    )
+                    logger.info(f"[QUESTION-GEN] ✅ Generated and stored {len(questions)} questions for {doc.id}")
+                    questions_generated = True
+                else:
+                    logger.warning(f"[QUESTION-GEN] No questions generated for {doc.id}")
+                    questions_db.mark_generation_status(
+                        doc.id, 'generated', 
+                        question_count=0
+                    )
+            except Exception as e:
+                logger.error(f"[QUESTION-GEN] ❌ Failed to generate questions: {e}", exc_info=True)
+                try:
+                    questions_db.mark_generation_status(
+                        doc.id, 'failed',
+                        error_message=str(e)
+                    )
+                except:
+                    pass
+        else:
+            logger.debug(f"[QUESTION-GEN] Skipped: ollama_provider={bool(ollama_provider)}, questions_db={bool(questions_db)}, embedding_model={bool(embedding_model)}")
+        
         result = {
             'document_id': doc.id,
             'type': doc.type,
@@ -600,6 +695,7 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
             'replication': replication_status,
             's3_result': s3_result,  # Keep for backward compatibility
             'duplicate': duplicate,
+            'questions_generated': questions_generated,
             'message': 'Document updated (duplicate)' if duplicate else 'Document stored successfully'
         }
         logger.info(f"[TOOL-RETURN] store_document returned: {json.dumps(result)[:500]}")
@@ -1445,6 +1541,177 @@ async def tool_browse_by_entity_documents(params: Dict[str, Any]) -> Dict[str, A
         raise
 
 
+async def tool_get_document_questions(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Retrieve pre-generated questions for a document"""
+    doc_id = params.get('document_id')
+    
+    logger.info(f"[QUESTIONS] ====== TOOL CALLED ======")
+    logger.info(f"[QUESTIONS] tool_get_document_questions invoked with params: {params}")
+    logger.info(f"[QUESTIONS] document_id: {doc_id}")
+    
+    if not doc_id:
+        logger.error("[QUESTIONS] ❌ No document_id provided")
+        raise ValueError("document_id is required")
+    
+    if not questions_db:
+        logger.error("[QUESTIONS] ❌ questions_db is None")
+        raise ValueError("Questions database not available")
+    
+    try:
+        logger.info(f"[QUESTIONS] Querying database for questions...")
+        questions = questions_db.get_questions_for_document(doc_id)
+        logger.info(f"[QUESTIONS] Retrieved {len(questions) if questions else 0} questions from DB")
+        
+        # Get generation status
+        status = questions_db.get_generation_status(doc_id)
+        logger.info(f"[QUESTIONS] Generation status: {status}")
+        
+        result = {
+            'document_id': doc_id,
+            'questions': [
+                {
+                    'question_id': q['question_id'],
+                    'text': q['text'],
+                    'suggestion_type': q['suggestion_type'],
+                }
+                for q in questions
+            ],
+            'question_count': len(questions),
+            'generation_status': status.get('status') if status else 'unknown',
+        }
+        logger.info(f"[QUESTIONS] ✅ Returning result with {len(result['questions'])} questions")
+        logger.info(f"[QUESTIONS] Result: {result}")
+        return result
+    except Exception as e:
+        logger.error(f"[QUESTIONS] ❌ Exception: {e}", exc_info=True)
+        raise
+
+
+async def tool_search_questions(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Search for questions similar to a query"""
+    query = params.get('query')
+    limit = params.get('limit', 5)
+    threshold = params.get('similarity_threshold', 0.5)
+    
+    logger.info(f"[SEARCH-Q] ====== SEARCH TOOL CALLED ======")
+    logger.info(f"[SEARCH-Q] Parameters: query='{query}', limit={limit}, threshold={threshold}")
+    
+    if not query:
+        logger.error("[SEARCH-Q] ❌ No query provided")
+        raise ValueError("query is required")
+    
+    if not questions_db:
+        logger.error("[SEARCH-Q] ❌ questions_db is None")
+        raise ValueError("Questions database not available")
+    
+    if not embedding_model:
+        logger.error("[SEARCH-Q] ❌ embedding_model is None")
+        raise ValueError("Embedding model not available")
+    
+    try:
+        logger.info(f"[SEARCH-Q] Encoding query: '{query}'")
+        query_embedding = embedding_model.encode(query).tolist()
+        logger.info(f"[SEARCH-Q] Query embedding created: {len(query_embedding)} dimensions")
+        
+        logger.info(f"[SEARCH-Q] Searching database...")
+        results = questions_db.search_questions_by_embedding(
+            query_embedding, 
+            top_k=limit, 
+            similarity_threshold=threshold
+        )
+        logger.info(f"[SEARCH-Q] Search returned {len(results)} results")
+        
+        result = {
+            'query': query,
+            'questions': [
+                {
+                    'question_id': r['question_id'],
+                    'text': r['text'],
+                    'document_id': r['provenance'],
+                    'similarity': round(r['similarity'], 3),
+                }
+                for r in results
+            ],
+            'result_count': len(results),
+        }
+        logger.info(f"[SEARCH-Q] ✅ Returning {len(result['questions'])} questions")
+        return result
+    except Exception as e:
+        logger.error(f"[SEARCH-Q] ❌ Exception: {e}", exc_info=True)
+        raise
+        logger.error(f"[QUESTIONS-SEARCH-TOOL] ❌ Search failed: {e}", exc_info=True)
+        raise
+
+
+async def tool_regenerate_document_questions(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Regenerate questions for a document (e.g., after metadata updates)"""
+    doc_id = params.get('document_id')
+    
+    if not doc_id:
+        raise ValueError("document_id is required")
+    
+    if not questions_db or not ollama_provider or not embedding_model:
+        raise ValueError("Questions database, Ollama provider, or embedding model not available")
+    
+    try:
+        logger.info(f"[QUESTIONS-REGEN-TOOL] Regenerating questions for {doc_id}")
+        
+        # Get document to refresh metadata
+        doc = await provider.retrieve_document(doc_id)
+        if not doc:
+            raise ValueError(f"Document {doc_id} not found")
+        
+        # Delete old questions
+        questions_db.delete_questions_for_document(doc_id)
+        logger.info(f"[QUESTIONS-REGEN-TOOL] Deleted old questions for {doc_id}")
+        
+        # Generate new questions
+        from question_generator import QuestionGenerator
+        
+        questions_db.mark_generation_status(doc_id, 'generating')
+        
+        gen = QuestionGenerator(ollama_provider)
+        questions = await gen.generate_questions_for_document(
+            doc_id=doc.id,
+            doc_type=doc.type,
+            metadata=doc.metadata,
+            processed_data=doc.processed_data,
+            original_file=doc.original_file,
+            embedding_model=embedding_model
+        )
+        
+        # Store new questions
+        if questions:
+            questions_db.store_questions_batch(questions)
+            questions_db.mark_generation_status(
+                doc_id, 'generated',
+                question_count=len(questions)
+            )
+            logger.info(f"[QUESTIONS-REGEN-TOOL] ✅ Regenerated {len(questions)} questions for {doc_id}")
+            return {
+                'document_id': doc_id,
+                'question_count': len(questions),
+                'message': f'Successfully regenerated {len(questions)} questions'
+            }
+        else:
+            questions_db.mark_generation_status(doc_id, 'generated', question_count=0)
+            return {
+                'document_id': doc_id,
+                'question_count': 0,
+                'message': 'No questions generated'
+            }
+    except Exception as e:
+        logger.error(f"[QUESTIONS-REGEN-TOOL] ❌ Regeneration failed: {e}", exc_info=True)
+        try:
+            questions_db.mark_generation_status(
+                doc_id, 'failed',
+                error_message=str(e)
+            )
+        except:
+            pass
+        raise
+
+
 # Tool registry
 TOOLS: Dict[str, Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]] = {
     "store_document": tool_store_document,
@@ -1457,6 +1724,9 @@ TOOLS: Dict[str, Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]] = {
     "browse_by_tag_documents": tool_browse_by_tag_documents,
     "browse_by_entities": tool_browse_by_entities,
     "browse_by_entity_documents": tool_browse_by_entity_documents,
+    "get_document_questions": tool_get_document_questions,
+    "search_questions": tool_search_questions,
+    "regenerate_document_questions": tool_regenerate_document_questions,
     "store_extraction": tool_store_extraction,
     "retrieve_extraction": tool_retrieve_extraction,
     "list_extractions": tool_list_extractions,
@@ -1695,6 +1965,44 @@ async def register_tools(ws: websockets.WebSocketClientProtocol, agent_id: str) 
                     "entity_name": {"type": "string", "description": "Entity name"}
                 },
                 "required": ["entity_name"]
+            }
+        },
+        {
+            "name": "get_document_questions",
+            "description": "Get pre-generated questions for a document",
+            "agentId": agent_id,
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "document_id": {"type": "string", "description": "Document ID"}
+                },
+                "required": ["document_id"]
+            }
+        },
+        {
+            "name": "search_questions",
+            "description": "Search for questions similar to a query using vector similarity",
+            "agentId": agent_id,
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "limit": {"type": "number", "description": "Maximum results", "default": 5},
+                    "similarity_threshold": {"type": "number", "description": "Minimum similarity score (0-1)", "default": 0.5}
+                },
+                "required": ["query"]
+            }
+        },
+        {
+            "name": "regenerate_document_questions",
+            "description": "Regenerate questions for a document after metadata updates",
+            "agentId": agent_id,
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "document_id": {"type": "string", "description": "Document ID"}
+                },
+                "required": ["document_id"]
             }
         }
     ]

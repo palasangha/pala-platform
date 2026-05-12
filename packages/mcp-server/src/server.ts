@@ -111,6 +111,8 @@ export class MCPServer {
       const toolName = params.name || params.toolName;
       const args = params.arguments || params.args || {};
       
+      console.log('[MCP-SERVER] tools/invoke handler called for tool:', toolName);
+      
       // Handle storage tools directly
       if (toolName === 'store-content') {
         const result = await this.storageTool!.storeContent(args);
@@ -127,6 +129,7 @@ export class MCPServer {
       }
       
       // Handle other agent tools
+      console.log('[MCP-SERVER] Routing to ToolInvoker for agent tool:', toolName);
       const result = await this.invoker!.invoke({
         toolName,
         arguments: args,

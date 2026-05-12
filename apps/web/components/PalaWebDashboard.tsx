@@ -502,6 +502,42 @@ function DeveloperPanel() {
             { name: 'include_original_content', type: 'boolean', description: 'If true, includes original document content in results.', defaultValue: 'false' },
           ],
         },
+        {
+          name: 'get_document_questions',
+          description: 'Get pre-generated questions for a document',
+          placeholder: 'Enter JSON: {"document_id": "..."}',
+          examples: [
+            { label: 'Get questions for document', input: '{"document_id": "doc-12345678"}' },
+          ],
+          schemaFields: [
+            { name: 'document_id', type: 'string', required: true, description: 'Document identifier to get questions for.' },
+          ],
+        },
+        {
+          name: 'search_questions',
+          description: 'Search for similar pre-generated questions using vector similarity',
+          placeholder: 'Enter JSON: {"query": "..."}',
+          examples: [
+            { label: 'Find related questions', input: '{"query": "Buddhist meditation practices", "limit": 5, "similarity_threshold": 0.5}' },
+            { label: 'Broader search', input: '{"query": "what is Buddhism", "limit": 10, "similarity_threshold": 0.3}' },
+          ],
+          schemaFields: [
+            { name: 'query', type: 'string', required: true, description: 'Search query to find similar questions.' },
+            { name: 'limit', type: 'number', description: 'Maximum number of questions to return.', defaultValue: '5' },
+            { name: 'similarity_threshold', type: 'number', description: 'Minimum similarity score (0-1).', defaultValue: '0.5' },
+          ],
+        },
+        {
+          name: 'regenerate_document_questions',
+          description: 'Regenerate questions for a document (after metadata updates)',
+          placeholder: 'Enter JSON: {"document_id": "..."}',
+          examples: [
+            { label: 'Regenerate questions', input: '{"document_id": "doc-12345678"}' },
+          ],
+          schemaFields: [
+            { name: 'document_id', type: 'string', required: true, description: 'Document identifier to regenerate questions for.' },
+          ],
+        },
       ],
     },
   ];
