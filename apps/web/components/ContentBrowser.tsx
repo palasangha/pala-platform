@@ -360,9 +360,6 @@ export function ContentBrowser() {
   const [documentQuestionsById, setDocumentQuestionsById] = useState<Record<string, any[]>>({});
   const [loadingQuestions, setLoadingQuestions] = useState(false);
   const [loadingQuestionsById, setLoadingQuestionsById] = useState<Record<string, boolean>>({});
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [loadingSearch, setLoadingSearch] = useState(false);
 
   const extractToolResult = (response: any): any => {
     const candidates = [
@@ -815,7 +812,7 @@ export function ContentBrowser() {
         const response = JSON.parse(event.data);
         const msgId = response?.id;
         
-        if (msgId?.startsWith('questions-') || msgId?.startsWith('regen-questions-') || msgId?.startsWith('search-questions-') || msgId?.startsWith('doc-questions-')) {
+        if (msgId?.startsWith('questions-') || msgId?.startsWith('regen-questions-') || msgId?.startsWith('doc-questions-')) {
           console.log('[Q-Handler] Message received:', { msgId, hasResult: !!response?.result, hasError: !!response?.error, hasValue: !!response?.value });
         }
 
@@ -872,21 +869,6 @@ export function ContentBrowser() {
           }, 1000);
         }
 
-        // Handle search_questions response
-        if (msgId?.startsWith('search-questions-')) {
-          console.log('[Q-Handler] search_questions response');
-          setLoadingSearch(false);
-          if (response?.error) {
-            console.error('[Q-Handler] Search error:', response.error);
-          } else if (response?.result) {
-            const result = extractToolResult(response);
-            console.log('[Q-Handler] Search result:', result);
-            if (result?.questions && Array.isArray(result.questions)) {
-              setSearchResults(result.questions);
-              console.log('[Q-Handler] ✅ Got', result.questions.length, 'search results');
-            }
-          }
-        }
       } catch (e) {
         console.error('[Q-Handler] Error parsing response:', e);
       }
@@ -928,83 +910,6 @@ export function ContentBrowser() {
           <span className="text-sm text-slate-600 block">
             {pagination.total} items
           </span>
-        </div>
-      </div>
-
-      {/* Question Search Section */}
-      <div className="bg-gradient-to-r from-indigo-50 to-blue-50 p-6 rounded-lg border border-indigo-200 space-y-4">
-        <div>
-          <h3 className="text-md font-semibold text-slate-900 mb-2">Explore Questions Across Documents</h3>
-          <p className="text-sm text-slate-600 mb-4">Search for concepts across all document questions. For example, type "mother" to find all relevant questions.</p>
-          
-          <div className="flex gap-2">
-            <input
-              type="text"
-              placeholder="Search for questions... (e.g., 'mother', 'teachings', 'meditation')"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyPress={(e) => {
-                if (e.key === 'Enter' && searchQuery.trim() && connected && client) {
-                  console.log('[UI] Search triggered for:', searchQuery);
-                  setLoadingSearch(true);
-                  setSearchResults([]);
-                  const msgId = `search-questions-${Date.now()}`;
-                  const params = { query: searchQuery.trim(), limit: 10 };
-                  console.log('[UI] Sending search_questions:', { msgId, ...params });
-                  sendStorageToolInvoke('search_questions', params, msgId);
-                }
-              }}
-              className="flex-1 px-4 py-2 border border-indigo-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
-            <button
-              onClick={() => {
-                if (searchQuery.trim() && connected && client) {
-                  console.log('[UI] Search button clicked for:', searchQuery);
-                  setLoadingSearch(true);
-                  setSearchResults([]);
-                  const msgId = `search-questions-${Date.now()}`;
-                  const params = { query: searchQuery.trim(), limit: 10 };
-                  console.log('[UI] Sending search_questions:', { msgId, ...params });
-                  sendStorageToolInvoke('search_questions', params, msgId);
-                } else {
-                  console.log('[UI] Cannot search: query=', searchQuery, 'connected=', connected, 'client=', !!client);
-                }
-              }}
-              disabled={loadingSearch || !searchQuery.trim()}
-              className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loadingSearch ? 'Searching...' : 'Search'}
-            </button>
-          </div>
-
-          {searchResults.length > 0 && (
-            <div className="mt-4 bg-white p-4 rounded-lg border border-indigo-200">
-              <div className="text-sm font-semibold text-slate-900 mb-3">
-                Found {searchResults.length} matching question{searchResults.length !== 1 ? 's' : ''} for "{searchQuery}":
-              </div>
-              <ul className="space-y-3">
-                {searchResults.map((q, idx) => (
-                  <li
-                    key={idx}
-                    className="text-sm border-l-4 border-indigo-300 pl-3 py-2 cursor-pointer hover:bg-indigo-50 rounded"
-                    onClick={() => {
-                      const docId = q.document_id || q.provenance;
-                      console.log('[UI] Generated question selected:', { question: q.text, docId, similarity: q.similarity });
-                      if (docId) {
-                        viewDocument(docId);
-                      }
-                    }}
-                  >
-                    <div className="text-slate-900 font-medium">{q.text}</div>
-                    <div className="flex gap-3 text-xs text-slate-600 mt-1">
-                      <span>📄 Doc: <code className="bg-slate-100 px-1 rounded">{q.document_id?.substring(0, 20)}...</code></span>
-                      {q.similarity && <span>🎯 Match: {(q.similarity * 100).toFixed(0)}%</span>}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
         </div>
       </div>
 
