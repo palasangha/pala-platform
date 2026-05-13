@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { buildSnippet, extractMeaningfulTerms, normalizeQuestionText } from '@/lib/snippetUtils';
 
 type TimelineFilter = 'all' | 'dated' | 'people' | 'places' | 'topics';
 
@@ -54,44 +55,6 @@ type TimelineItem = {
   relevanceScore: number;
   pinnedSnippet?: boolean;
 };
-
-const SEARCH_STOPWORDS = new Set([
-  'a',
-  'an',
-  'and',
-  'any',
-  'are',
-  'as',
-  'at',
-  'be',
-  'but',
-  'by',
-  'for',
-  'from',
-  'has',
-  'have',
-  'how',
-  'in',
-  'is',
-  'it',
-  'of',
-  'on',
-  'or',
-  'reference',
-  'show',
-  'that',
-  'the',
-  'there',
-  'this',
-  'to',
-  'was',
-  'were',
-  'what',
-  'when',
-  'where',
-  'who',
-  'with',
-]);
 
 function unwrapToolResult(payload: any) {
   let current = payload;
@@ -340,192 +303,6 @@ function highlightText(text: string, query: string) {
   return escapeHtml(text).replace(re, (match) => `<mark class="rounded bg-blue-400/30 text-blue-100 px-1">${match}</mark>`);
 }
 
-function splitContextLines(text: string) {
-  const normalized = toText(text).replace(/\r\n/g, '\n').replace(/\u00a0/g, ' ').trim();
-  if (!normalized) return [] as string[];
-
-  const newlineParts = normalized
-    .split(/\n+/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  const lines: string[] = [];
-  for (const part of newlineParts) {
-    const sentenceParts = part
-      .split(/(?<=[.!?])\s+/)
-      .map((sentence) => sentence.trim())
-      .filter(Boolean);
-
-    const units = sentenceParts.length > 0 ? sentenceParts : [part];
-    for (const unit of units) {
-      if (unit.length <= 160) {
-        lines.push(unit);
-        continue;
-      }
-
-      let start = 0;
-      while (start < unit.length) {
-        const chunk = unit.slice(start, start + 160).trim();
-        if (chunk) lines.push(chunk);
-        start += 160;
-      }
-    }
-  }
-
-  return lines;
-}
-
-function uniqueNonEmptyText(values: string[]) {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const value of values) {
-    const text = toText(value).trim();
-    if (!text) continue;
-    const key = normalizeQuestionText(text);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(text);
-  }
-  return out;
-}
-
-function pickBestLineIndex(lines: string[], terms: string[]) {
-  if (lines.length === 0 || terms.length === 0) return -1;
-
-  let bestIndex = -1;
-  let bestScore = 0;
-  for (let index = 0; index < lines.length; index += 1) {
-    const lower = lines[index].toLowerCase();
-    const score = terms.reduce((total, term) => (lower.includes(term) ? total + 1 : total), 0);
-    if (score > bestScore) {
-      bestScore = score;
-      bestIndex = index;
-    }
-  }
-
-  return bestScore > 0 ? bestIndex : -1;
-}
-
-function lineWindow(text: string, query: string, minimumLines = 6, anchorText = '') {
-  const lines = splitContextLines(text);
-  if (lines.length === 0) return '';
-
-  const normalizedQuery = normalizeQuestionText(query);
-  const normalizedAnchor = normalizeQuestionText(anchorText);
-  const terms = extractMeaningfulTerms(query);
-  const anchorTerms = extractMeaningfulTerms(anchorText);
-
-  let hitIndex = -1;
-  if (normalizedAnchor) {
-    hitIndex = lines.findIndex((line) => normalizeQuestionText(line).includes(normalizedAnchor));
-  }
-
-  if (hitIndex === -1 && anchorTerms.length > 0) {
-    hitIndex = pickBestLineIndex(lines, anchorTerms);
-  }
-
-  if (hitIndex === -1 && terms.length > 0) {
-    hitIndex = pickBestLineIndex(lines, terms);
-  }
-
-  if (hitIndex === -1 && normalizedQuery) {
-    hitIndex = lines.findIndex((line) => normalizeQuestionText(line).includes(normalizedQuery));
-  }
-
-  let start = 0;
-  if (hitIndex !== -1) {
-    start = Math.max(0, hitIndex - 2);
-  }
-
-  let end = Math.min(lines.length, start + minimumLines);
-  if (end - start < minimumLines) {
-    start = Math.max(0, end - minimumLines);
-  }
-
-  return lines.slice(start, end).join('\n');
-}
-
-function countLineMatches(snippet: string, anchorText: string, query: string) {
-  const lines = splitContextLines(snippet);
-  if (lines.length === 0) return 0;
-
-  const anchorTerms = extractMeaningfulTerms(anchorText);
-  const queryTerms = extractMeaningfulTerms(query);
-  const anchorExact = normalizeQuestionText(anchorText);
-  const queryExact = normalizeQuestionText(query);
-
-  let score = 0;
-  for (const line of lines) {
-    const lower = line.toLowerCase();
-    const normalizedLine = normalizeQuestionText(line);
-
-    if (anchorExact && normalizedLine.includes(anchorExact)) score += 8;
-    if (queryExact && normalizedLine.includes(queryExact)) score += 4;
-    score += anchorTerms.reduce((total, term) => (lower.includes(term) ? total + 2 : total), 0);
-    score += queryTerms.reduce((total, term) => (lower.includes(term) ? total + 1 : total), 0);
-  }
-
-  return score;
-}
-
-function buildSnippet(
-  candidates: string[],
-  query: string,
-  anchorText: string,
-  minimumLines = 6,
-) {
-  const uniqueCandidates = uniqueNonEmptyText(candidates);
-  if (uniqueCandidates.length === 0) return '';
-
-  const scored = uniqueCandidates
-    .map((candidate) => {
-      const snippet = lineWindow(candidate, query, minimumLines, anchorText);
-      const lineCount = splitContextLines(snippet).length;
-      const score = countLineMatches(snippet, anchorText, query);
-      return { candidate, snippet, lineCount, score };
-    })
-    .sort((a, b) => (b.score - a.score) || (b.lineCount - a.lineCount) || (b.candidate.length - a.candidate.length));
-
-  const best = scored[0];
-  if (best.lineCount >= minimumLines) {
-    return best.snippet;
-  }
-
-  const combinedLines = splitContextLines(best.snippet);
-  const seen = new Set(combinedLines.map((line) => normalizeQuestionText(line)));
-
-  for (const entry of scored.slice(1)) {
-    const lines = splitContextLines(entry.snippet);
-    for (const line of lines) {
-      const key = normalizeQuestionText(line);
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      combinedLines.push(line);
-      if (combinedLines.length >= minimumLines) {
-        return combinedLines.slice(0, minimumLines).join('\n');
-      }
-    }
-  }
-
-  return combinedLines.slice(0, minimumLines).join('\n');
-}
-
-function extractMeaningfulTerms(text: string) {
-  return Array.from(
-    new Set(
-      text
-        .toLowerCase()
-        .split(/[^a-z0-9]+/)
-        .map((term) => term.trim())
-        .filter((term) => term.length > 2 && !SEARCH_STOPWORDS.has(term))
-    )
-  );
-}
-
-function normalizeQuestionText(text: string) {
-  return text.toLowerCase().replace(/\s+/g, ' ').trim();
-}
-
 function getQuestionSnippet(question: any) {
   const evidence = Array.isArray(question?.evidence) ? question.evidence : [];
   return toText(question?.answer_preview).trim() || toText(evidence[0]?.snippet).trim() || '';
@@ -542,6 +319,67 @@ function dedupeQuestions(questions: any[]) {
     }
   }
   return out;
+}
+
+function getQuestionSourceDocumentId(question: any) {
+  return toText(question?._sourceDocumentId || question?.document_id || question?.provenance || question?.source_document_id);
+}
+
+function getQuestionKey(question: any) {
+  return toText(question?.question_id) || normalizeQuestionText(toText(question?.text || ''));
+}
+
+function buildExploreNextQuestionLists(queryResults: TimelineDocument[], questionByDocumentId: Record<string, any[]>, activeQuery: string) {
+  const grouped = queryResults
+    .filter((doc) => Boolean(doc.document_id))
+    .map((doc) => ({
+      doc,
+      questions: (questionByDocumentId[doc.document_id] || []).filter((question) => {
+        const text = toText(question?.text).trim();
+        if (!text) return false;
+        return normalizeQuestionText(text) !== activeQuery;
+      }),
+    }))
+    .filter((entry) => entry.questions.length > 0);
+
+  const seen = new Set<string>();
+  const initial: any[] = [];
+  const remaining: any[] = [];
+
+  const pushUnique = (target: any[], question: any, doc: TimelineDocument) => {
+    const key = getQuestionKey(question);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    target.push({
+      ...question,
+      _sourceDocumentId: doc.document_id,
+      _sourceTitle: doc.original_file || doc.title || doc.document_id,
+      _sourceRelevance: doc.relevance_score,
+    });
+  };
+
+  const firstDoc = grouped[0];
+  const secondDoc = grouped[1];
+
+  if (firstDoc) {
+    for (const question of firstDoc.questions.slice(0, 3)) {
+      pushUnique(initial, question, firstDoc.doc);
+    }
+  }
+
+  if (secondDoc) {
+    for (const question of secondDoc.questions.slice(0, 2)) {
+      pushUnique(initial, question, secondDoc.doc);
+    }
+  }
+
+  for (const entry of grouped.slice(2)) {
+    for (const question of entry.questions) {
+      pushUnique(remaining, question, entry.doc);
+    }
+  }
+
+  return { initial, remaining };
 }
 
 function buildExpandedTimelineQuery(query: string, filter: TimelineFilter, year: string, item?: TimelineItem | null) {
@@ -589,6 +427,8 @@ export function TimelineExplorer() {
   const [showQuestionDropdown, setShowQuestionDropdown] = useState(false);
   const [loadingQuestions, setLoadingQuestions] = useState(false);
   const [topQuestions, setTopQuestions] = useState<any[]>([]);
+  const [topQuestionsMore, setTopQuestionsMore] = useState<any[]>([]);
+  const [topQuestionsMoreVisibleCount, setTopQuestionsMoreVisibleCount] = useState(0);
   const [topQuestionsLoading, setTopQuestionsLoading] = useState(false);
   const [pinnedQuestionSourceDocumentId, setPinnedQuestionSourceDocumentId] = useState<string | null>(null);
   const [pinnedQuestionContext, setPinnedQuestionContext] = useState<{ text: string; snippet: string } | null>(null);
@@ -855,6 +695,13 @@ export function TimelineExplorer() {
     return documents;
   }, [documents, query, queryResults]);
 
+  const visibleExploreNextQuestions = useMemo(() => {
+    return [
+      ...topQuestions,
+      ...topQuestionsMore.slice(0, topQuestionsMoreVisibleCount),
+    ];
+  }, [topQuestions, topQuestionsMore, topQuestionsMoreVisibleCount]);
+
   useEffect(() => {
     if (connected) {
       void loadDocuments();
@@ -879,16 +726,17 @@ export function TimelineExplorer() {
     const loadTopQuestions = async () => {
       if (!connected || !query.trim() || queryResults.length === 0) {
         setTopQuestions([]);
+        setTopQuestionsMore([]);
+        setTopQuestionsMoreVisibleCount(0);
         return;
       }
 
       setTopQuestionsLoading(true);
       try {
-        const collected: any[] = [];
         const activeQuery = normalizeQuestionText(query);
-        const seenQuestionKeys = new Set<string>();
+        const questionByDocumentId: Record<string, any[]> = {};
 
-        for (const doc of queryResults.slice(0, 5)) {
+        for (const doc of queryResults.slice(0, 10)) {
           if (!doc.document_id) continue;
 
           const response: any = await send('tools/invoke', {
@@ -899,38 +747,22 @@ export function TimelineExplorer() {
 
           const data = unwrapToolResult(response);
           const questions = Array.isArray(data?.questions) ? data.questions : [];
-
-          for (const question of questions) {
-            const questionText = toText(question?.text).trim();
-            if (!questionText) continue;
-
-            const normalizedQuestion = normalizeQuestionText(questionText);
-            if (normalizedQuestion === activeQuery) continue;
-
-            const questionKey = question.question_id || normalizedQuestion;
-            if (seenQuestionKeys.has(questionKey)) continue;
-            seenQuestionKeys.add(questionKey);
-
-            collected.push({
-              ...question,
-              _sourceDocumentId: doc.document_id,
-              _sourceTitle: doc.original_file || doc.title || doc.document_id,
-              _sourceRelevance: doc.relevance_score,
-            });
-
-            if (collected.length >= 5) break;
-          }
-
-          if (collected.length >= 5) break;
+          questionByDocumentId[doc.document_id] = dedupeQuestions(questions);
         }
 
+        const { initial, remaining } = buildExploreNextQuestionLists(queryResults.slice(0, 10), questionByDocumentId, activeQuery);
+
         if (!cancelled) {
-          setTopQuestions(collected.slice(0, 5));
+          setTopQuestions(initial.slice(0, 5));
+          setTopQuestionsMore(remaining);
+          setTopQuestionsMoreVisibleCount(0);
         }
       } catch (err) {
         console.error('[TimelineExplorer] Failed to load top questions:', err);
         if (!cancelled) {
           setTopQuestions([]);
+          setTopQuestionsMore([]);
+          setTopQuestionsMoreVisibleCount(0);
         }
       } finally {
         if (!cancelled) {
@@ -1402,16 +1234,16 @@ export function TimelineExplorer() {
                   <p className="text-xs text-slate-400">Search first to load questions.</p>
                 ) : topQuestionsLoading ? (
                   <p className="text-xs text-slate-400">Loading questions...</p>
-                ) : topQuestions.length === 0 ? (
+                ) : visibleExploreNextQuestions.length === 0 ? (
                   <p className="text-xs text-slate-400">No questions found for the current results.</p>
                 ) : (
                   <div className="space-y-2 max-h-[32rem] overflow-y-auto pr-1">
-                    {topQuestions.map((question: any, index: number) => (
+                    {visibleExploreNextQuestions.map((question: any, index: number) => (
                       <button
                         key={question.question_id || `top-question-${index}`}
                         type="button"
                         onClick={() => {
-                          const sourceDocumentId = question._sourceDocumentId || question.document_id;
+                          const sourceDocumentId = getQuestionSourceDocumentId(question);
                           if (sourceDocumentId) {
                             setPinnedQuestionSourceDocumentId(sourceDocumentId);
                             setPinnedQuestionContext({
@@ -1427,6 +1259,17 @@ export function TimelineExplorer() {
                         <div className="text-sm font-medium text-slate-100">{question.text}</div>
                       </button>
                     ))}
+                    {topQuestionsMoreVisibleCount < topQuestionsMore.length && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTopQuestionsMoreVisibleCount((current) => Math.min(current + 5, topQuestionsMore.length));
+                        }}
+                        className="w-full rounded-lg border border-dashed border-slate-600 bg-slate-900/50 p-3 text-center text-xs font-medium text-slate-300 hover:bg-slate-700 transition"
+                      >
+                        Show more
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
