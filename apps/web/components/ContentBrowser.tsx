@@ -334,6 +334,11 @@ function buildMetadataPatch(form: MetadataFormState): Record<string, any> {
   return patch;
 }
 
+function getQuestionAnswerText(question: any): string {
+  const evidence = Array.isArray(question?.evidence) ? question.evidence : [];
+  return toText(evidence[0]?.snippet).trim() || toText(question?.answer_preview).trim() || '';
+}
+
 export function ContentBrowser() {
   const { client, connected } = useWebSocket();
   const [contents, setContents] = useState<StoredContent[]>([]);
@@ -1146,34 +1151,85 @@ export function ContentBrowser() {
             <h3 className="text-sm font-semibold text-slate-900">Generated Questions by Document</h3>
             <p className="text-xs text-slate-600">Load each visible document’s generated questions and jump back to the source doc.</p>
           </div>
-          <button
-            onClick={() => {
-              if (!connected || !client) {
-                console.log('[UI] Cannot load visible document questions: disconnected');
-                return;
-              }
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                if (!connected || !client) {
+                  console.log('[UI] Cannot load visible document questions: disconnected');
+                  return;
+                }
 
-              console.log('[UI] Loading generated questions for visible docs:', visibleContents.map((doc) => ({
-                document_id: doc.document_id,
-                original_file: doc.original_file,
-              })));
+                console.log('[UI] Loading generated questions for visible docs:', visibleContents.map((doc) => ({
+                  document_id: doc.document_id,
+                  original_file: doc.original_file,
+                })));
 
-              visibleContents.forEach((doc) => {
-                setLoadingQuestionsById((current) => ({
-                  ...current,
-                  [doc.document_id]: true,
-                }));
-                sendStorageToolInvoke(
-                  'get_document_questions',
-                  { document_id: doc.document_id },
-                  `doc-questions-${doc.document_id}-${Date.now()}`
-                );
-              });
-            }}
-            className="px-3 py-2 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-700"
-          >
-            Load visible document questions
-          </button>
+                visibleContents.forEach((doc) => {
+                  setLoadingQuestionsById((current) => ({
+                    ...current,
+                    [doc.document_id]: true,
+                  }));
+                  sendStorageToolInvoke(
+                    'get_document_questions',
+                    { document_id: doc.document_id },
+                    `doc-questions-${doc.document_id}-${Date.now()}`
+                  );
+                });
+              }}
+              className="px-3 py-2 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-700"
+            >
+              Load visible document questions
+            </button>
+            <button
+              onClick={() => {
+                // Build export data from loaded questions for visible documents
+                const rows: any[] = [];
+                visibleContents.forEach((doc) => {
+                  const qs = documentQuestionsById[doc.document_id] || [];
+                  for (const q of qs) {
+                    const evidence = Array.isArray(q?.evidence) ? q.evidence : [];
+                    rows.push({
+                      document_id: doc.document_id,
+                      original_file: doc.original_file,
+                      question_id: q.question_id || null,
+                      question: q.text || '',
+                      span: evidence[0] || null,
+                      answer: getQuestionAnswerText(q),
+                    });
+                  }
+                });
+
+                try {
+                  const payload = JSON.stringify(rows, null, 2);
+                  if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(payload).then(() => {
+                      // Quick user feedback
+                      // eslint-disable-next-line no-alert
+                      alert('Copied ' + rows.length + ' Q&A rows to clipboard');
+                    }).catch((err) => {
+                      console.error('Clipboard write failed', err);
+                      // fallback: open in new tab
+                      const w = window.open();
+                      if (w) {
+                        w.document.write('<pre>' + payload.replace(/</g, '&lt;') + '</pre>');
+                      }
+                    });
+                  } else {
+                    const w = window.open();
+                    if (w) {
+                      w.document.write('<pre>' + payload.replace(/</g, '&lt;') + '</pre>');
+                    }
+                  }
+                } catch (e) {
+                  console.error('Export failed', e);
+                  alert('Export failed - see console');
+                }
+              }}
+              className="px-3 py-2 bg-slate-900 text-white rounded-lg text-xs font-medium hover:bg-slate-800"
+            >
+              Export visible Q&A
+            </button>
+          </div>
         </div>
 
         <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
@@ -1227,24 +1283,60 @@ export function ContentBrowser() {
                   {loadingThisDoc ? (
                     <div className="text-xs text-slate-500">Loading questions...</div>
                   ) : questions.length > 0 ? (
-                    questions.map((question, idx) => (
-                      <button
-                        key={question.question_id || `${doc.document_id}-${idx}`}
-                        onClick={() => {
-                          console.log('[UI] Generated question clicked from doc panel:', {
-                            documentId: doc.document_id,
-                            question: question.text,
-                          });
-                          viewDocument(doc.document_id);
-                        }}
-                        className="w-full text-left text-xs text-slate-700 bg-slate-50 hover:bg-indigo-50 border border-slate-200 rounded px-3 py-2"
-                      >
-                        <div className="font-medium text-slate-900">
-                          {idx + 1}. {question.text}
+                    questions.map((question, idx) => {
+                      const evidence = Array.isArray(question?.evidence) ? question.evidence : [];
+                      const firstEvidence = evidence[0] || null;
+                      const answer = getQuestionAnswerText(question);
+                      return (
+                        <div key={question.question_id || `${doc.document_id}-${idx}`} className="w-full text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded px-3 py-2">
+                          <div className="grid grid-cols-12 gap-2 items-start">
+                            <div className="col-span-1 font-medium text-slate-500 text-center">
+                              <div className="text-[10px] uppercase tracking-wide">No.</div>
+                              <div className="text-sm font-semibold text-slate-900">{idx + 1}</div>
+                            </div>
+                            <div className="col-span-2 font-mono text-xs text-slate-500 break-all">{doc.document_id.substring(0,12)}...</div>
+                            <div className="col-span-4 font-medium text-slate-900">{question.text}</div>
+                            <div className="col-span-3 text-xs text-slate-600 break-words">
+                              <pre className="whitespace-pre-wrap max-h-20 overflow-auto text-[11px] bg-white p-1 rounded border">{JSON.stringify(firstEvidence, null, 2)}</pre>
+                            </div>
+                            <div className="col-span-2 text-xs text-slate-700">
+                              <div className="font-semibold text-slate-900">Answer</div>
+                              <div className="text-[13px] text-slate-800 whitespace-pre-wrap">{answer}</div>
+                            </div>
+                          </div>
+                          <div className="mt-2 flex gap-2">
+                            <button
+                              onClick={() => viewDocument(doc.document_id)}
+                              className="px-2 py-1 rounded text-xs font-medium bg-blue-600 text-white hover:bg-blue-700"
+                            >
+                              Open document
+                            </button>
+                            <button
+                              onClick={() => {
+                                // copy single Q&A row to clipboard
+                                const row = {
+                                  document_id: doc.document_id,
+                                  original_file: doc.original_file,
+                                  question_id: question.question_id || null,
+                                  question: question.text || '',
+                                  span: firstEvidence,
+                                  answer: answer,
+                                };
+                                const payload = JSON.stringify(row, null, 2);
+                                if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+                                  navigator.clipboard.writeText(payload).then(() => alert('Copied question+answer'));
+                                } else {
+                                  const w = window.open(); if (w) w.document.write('<pre>' + payload.replace(/</g, '&lt;') + '</pre>');
+                                }
+                              }}
+                              className="px-2 py-1 rounded text-xs font-medium bg-slate-900 text-white hover:bg-slate-800"
+                            >
+                              Copy row
+                            </button>
+                          </div>
                         </div>
-                        {question.suggestion_type && <div className="text-[11px] text-slate-500 mt-1">{question.suggestion_type}</div>}
-                      </button>
-                    ))
+                      );
+                    })
                   ) : (
                     <div className="text-xs text-slate-500">No questions loaded yet.</div>
                   )}

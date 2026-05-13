@@ -632,7 +632,19 @@ export function TimelineExplorer() {
               anchor,
               6,
             ) ||
-            toText(anchor || fullContentSource || source.summary).slice(0, 500);
+            // Fallback: if buildSnippet returns empty, still return the anchor with proper cleanup
+            (anchor ? anchor : toText(fullContentSource || source.summary).slice(0, 500));
+          
+          if (typeof window !== 'undefined' && window.__DEBUG_SNIPPET && (!passage || passage.split('\n').length < 4)) {
+            console.log('[TimelineExplorer snippet]', {
+              file: source.original_file,
+              anchor: anchor?.slice(0, 100),
+              fullContentSourceLength: fullContentSource.length,
+              summaryLength: (source.summary || '').length,
+              passageLines: passage.split('\n').length,
+              passage: passage.slice(0, 150),
+            });
+          }
 
           return {
             ...source,
@@ -840,12 +852,7 @@ export function TimelineExplorer() {
         const passageSource = fullContentSource || normalized.summary || normalized.search_text || summary;
 
         const pinnedSnippetContext = isPinnedQuestionMatch
-          ? buildSnippet(
-              [pinnedQuestionContext?.snippet || '', anchor, fullContentSource, normalized.summary, normalized.search_text || ''],
-              query,
-              pinnedQuestionContext?.snippet || anchor,
-              6,
-            )
+          ? pinnedQuestionContext?.snippet || ''
           : '';
         const defaultContext = buildSnippet(
           [anchor, fullContentSource, normalized.summary, normalized.search_text || ''],
@@ -857,7 +864,6 @@ export function TimelineExplorer() {
         const passage =
           pinnedSnippetContext ||
           defaultContext ||
-          (isPinnedQuestionMatch ? pinnedQuestionContext.snippet : '') ||
           toText(anchor || passageSource).slice(0, 500) ||
           summary;
 
@@ -1005,271 +1011,302 @@ export function TimelineExplorer() {
   }, [filteredItems, openItem, selectedDocument?.document_id]);
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100">
-      {/* Header/banner removed as requested */}
-
-      <main className="max-w-7xl mx-auto px-4 py-6">
-        <div className="space-y-6">
-          <div className="rounded-xl border border-slate-800 bg-slate-800 p-4 relative">
-            <label className="block text-sm font-medium text-slate-200 mb-2">Search</label>
-            <div className="relative">
-              <input
-                value={query}
-                onChange={(e) => {
-                  const newQuery = e.target.value;
+    <div className="min-h-screen bg-black text-slate-100">
+      <main className="max-w-7xl mx-auto px-6 py-8">
+        <div className="space-y-4">
+          {/* Search Bar Section */}
+          <div className="relative">
+            <svg className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 z-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              value={query}
+              onChange={(e) => {
+                const newQuery = e.target.value;
+                setPinnedQuestionSourceDocumentId(null);
+                setPinnedQuestionContext(null);
+                setQuery(newQuery);
+                
+                // Auto-load question suggestions when user types
+                if (newQuery.trim() && connected && !loadingQuestions) {
+                  setLoadingQuestions(true);
+                  send('tools/invoke', {
+                    agentId: 'storage-agent',
+                    name: 'search_questions',
+                    arguments: {
+                      query: newQuery.trim(),
+                      limit: 5,
+                      similarity_threshold: 0.3,
+                    },
+                  }).then((response: any) => {
+                    const data = unwrapToolResult(response);
+                    if (data?.questions) {
+                      const unique = dedupeQuestions(data.questions || []);
+                      setSuggestedQuestions(unique.slice(0, 5));
+                      setShowQuestionDropdown(true);
+                      console.log('[TimelineExplorer] Loaded', unique.length, 'suggested questions (deduped)');
+                    } else {
+                      setSuggestedQuestions([]);
+                    }
+                    setLoadingQuestions(false);
+                  }).catch((err: any) => {
+                    console.error('[TimelineExplorer] Error loading questions:', err);
+                    setSuggestedQuestions([]);
+                    setLoadingQuestions(false);
+                  });
+                } else if (!newQuery.trim()) {
+                  setSuggestedQuestions([]);
+                  setShowQuestionDropdown(false);
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  setShowQuestionDropdown(false);
                   setPinnedQuestionSourceDocumentId(null);
                   setPinnedQuestionContext(null);
-                  setQuery(newQuery);
-                  
-                  // Auto-load question suggestions when user types
-                  if (newQuery.trim() && connected && !loadingQuestions) {
-                    setLoadingQuestions(true);
-                    send('tools/invoke', {
-                      agentId: 'storage-agent',
-                      name: 'search_questions',
-                      arguments: {
-                        query: newQuery.trim(),
-                        limit: 5,
-                        similarity_threshold: 0.3,
-                      },
-                    }).then((response: any) => {
-                      const data = unwrapToolResult(response);
-                      if (data?.questions) {
-                        const unique = dedupeQuestions(data.questions || []);
-                        setSuggestedQuestions(unique.slice(0, 5));
-                        setShowQuestionDropdown(true);
-                        console.log('[TimelineExplorer] Loaded', unique.length, 'suggested questions (deduped)');
-                      } else {
-                        setSuggestedQuestions([]);
-                      }
-                      setLoadingQuestions(false);
-                    }).catch((err: any) => {
-                      console.error('[TimelineExplorer] Error loading questions:', err);
-                      setSuggestedQuestions([]);
-                      setLoadingQuestions(false);
-                    });
-                  } else if (!newQuery.trim()) {
-                    setSuggestedQuestions([]);
-                    setShowQuestionDropdown(false);
-                  }
+                  const value = (e.target as HTMLInputElement).value || query;
+                  void searchDocuments(value.trim());
+                }
+              }}
+              placeholder="Search titles, summaries, people, places, and metadata..."
+              className="w-full rounded-lg bg-slate-950 border border-slate-700 px-4 py-3 pl-10 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+            {query && (
+              <button
+                onClick={() => {
+                  setQuery('');
+                  setQueryResults([]);
+                  setPinnedQuestionSourceDocumentId(null);
+                  setPinnedQuestionContext(null);
                 }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    setShowQuestionDropdown(false);
-                    setPinnedQuestionSourceDocumentId(null);
-                    setPinnedQuestionContext(null);
-                    const value = (e.target as HTMLInputElement).value || query;
-                    void searchDocuments(value.trim());
-                  }
-                }}
-                placeholder="Search titles, summaries, people, places, and metadata..."
-                className="w-full rounded-lg bg-slate-900 border border-slate-700 px-4 py-3 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              
-              {/* Question suggestions dropdown */}
-              {showQuestionDropdown && suggestedQuestions.length > 0 && (
-                <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-slate-900 border border-slate-700 rounded-lg shadow-lg max-h-64 overflow-y-auto">
-                  <div className="p-2">
-                    <p className="text-xs text-slate-400 px-2 py-1">Similar pre-generated questions:</p>
-                    {suggestedQuestions.map((q: any, idx: number) => (
-                      <button
-                        key={idx}
-                        onClick={() => {
-                          // Keep the selected question as the search input and pin its source document first.
-                          const sourceDocumentId = q.document_id || q.provenance || q.source_document_id;
-                          if (sourceDocumentId) {
-                            console.log('[TimelineExplorer] Pinning provenance document for selected question:', {
-                              question: q.text,
-                              sourceDocumentId,
-                              similarity: q.similarity,
-                            });
-                            setPinnedQuestionSourceDocumentId(sourceDocumentId);
-                            setPinnedQuestionContext({
-                              text: q.text,
-                              snippet: getQuestionSnippet(q),
-                            });
-                          } else {
-                            console.log('[TimelineExplorer] No source document id on selected question; leaving current view unchanged', q);
-                            setPinnedQuestionSourceDocumentId(null);
-                            setPinnedQuestionContext(null);
-                          }
-                          setShowQuestionDropdown(false);
-                          setQuery(q.text);
-                        }}
-                        className="w-full text-left px-2 py-2 hover:bg-slate-800 rounded text-sm text-slate-200 transition"
-                      >
-                        <div className="font-medium truncate">{q.text}</div>
-                        <div className="text-xs text-slate-400">
-                          Similarity: {(q.similarity * 100).toFixed(0)}%
-                        </div>
-                      </button>
-                    ))}
-                  </div>
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 text-sm font-medium"
+              >
+                Clear
+              </button>
+            )}
+            
+            {/* Question suggestions dropdown */}
+            {showQuestionDropdown && suggestedQuestions.length > 0 && (
+              <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-slate-900 border border-slate-700 rounded-lg shadow-lg max-h-64 overflow-y-auto">
+                <div className="p-2">
+                  <p className="text-xs text-slate-400 px-2 py-1">Similar pre-generated questions:</p>
+                  {suggestedQuestions.map((q: any, idx: number) => (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        // Keep the selected question as the search input and pin its source document first.
+                        const sourceDocumentId = q.document_id || q.provenance || q.source_document_id;
+                        if (sourceDocumentId) {
+                          console.log('[TimelineExplorer] Pinning provenance document for selected question:', {
+                            question: q.text,
+                            sourceDocumentId,
+                            similarity: q.similarity,
+                          });
+                          setPinnedQuestionSourceDocumentId(sourceDocumentId);
+                          setPinnedQuestionContext({
+                            text: q.text,
+                            snippet: getQuestionSnippet(q),
+                          });
+                        } else {
+                          console.log('[TimelineExplorer] No source document id on selected question; leaving current view unchanged', q);
+                          setPinnedQuestionSourceDocumentId(null);
+                          setPinnedQuestionContext(null);
+                        }
+                        setShowQuestionDropdown(false);
+                        setQuery(q.text);
+                      }}
+                      className="w-full text-left px-2 py-2 hover:bg-slate-800 rounded text-sm text-slate-200 transition"
+                    >
+                      <div className="font-medium truncate">{q.text}</div>
+                      <div className="text-xs text-slate-400">
+                        Similarity: {(q.similarity * 100).toFixed(0)}%
+                      </div>
+                    </button>
+                  ))}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
             {loadingQuestions && <p className="mt-2 text-xs text-slate-400">Loading question suggestions...</p>}
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_24rem] gap-6 items-start">
+          {/* Filter Tabs */}
+          <div className="flex items-center gap-2 border-b border-slate-800">
+            <button
+              type="button"
+              onClick={() => setSelectedFilter('dated')}
+              className={`px-3 py-2 text-sm transition flex items-center gap-2 ${selectedFilter === 'dated' ? 'text-slate-100 border-b-2 border-blue-500' : 'text-slate-300 hover:text-slate-100'}`}
+            >
+              📅 Date
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedFilter('topics')}
+              className={`px-3 py-2 text-sm transition flex items-center gap-2 ${selectedFilter === 'topics' ? 'text-slate-100 border-b-2 border-blue-500' : 'text-slate-300 hover:text-slate-100'}`}
+            >
+              🏷️ Tags
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedFilter('people')}
+              className={`px-3 py-2 text-sm transition flex items-center gap-2 ${selectedFilter === 'people' ? 'text-slate-100 border-b-2 border-blue-500' : 'text-slate-300 hover:text-slate-100'}`}
+            >
+              👤 Entities
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedFilter('all')}
+              className={`ml-auto px-3 py-2 text-sm transition flex items-center gap-2 ${selectedFilter === 'all' ? 'text-slate-100 border-b-2 border-blue-500' : 'text-slate-300 hover:text-slate-100'}`}
+            >
+              All
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_20rem] gap-8 items-start">
+            {/* Results Section */}
             <section className="space-y-4">
-              <div className="flex items-center justify-between gap-3 text-sm text-slate-400">
-                <p>{filteredItems.length} matching documents</p>
-                {loading && <p>Loading...</p>}
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-slate-400">{filteredItems.length} results</p>
+                {loading && <p className="text-xs text-slate-400">Loading...</p>}
               </div>
 
               {error && (
-                <div className="rounded-xl border border-red-700 bg-red-950 p-4 text-sm text-red-200">
+                <div className="rounded-lg border border-red-700 bg-red-950 p-4 text-sm text-red-200">
                   {error}
                 </div>
               )}
 
               {!loading && filteredItems.length === 0 && (
-                <div className="rounded-xl border border-slate-800 bg-slate-800 p-10 text-center text-slate-400">
-                  No timeline items match your filters.
+                <div className="rounded-lg border border-slate-800 bg-slate-800/50 p-10 text-center text-slate-400">
+                  No documents match your search.
                 </div>
               )}
 
-              <div className="space-y-3">
-                {filteredItems.map((item) => {
-                  const isSelected = item.documentId === selectedTimelineItem?.documentId;
-                  const isOpening = openingDocumentId === item.documentId;
-
-                  return (
-                    <div
-                      key={item.documentId}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => openItem(item)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault();
-                          openItem(item);
-                        }
-                      }}
-                      className={`relative w-full text-left rounded-xl border p-4 transition-colors cursor-pointer ${
-                        isSelected
-                          ? 'bg-slate-700 border-blue-500 shadow-lg'
-                          : 'bg-slate-800 border-slate-700 hover:bg-slate-700/80'
-                      }`}
-                    >
-                      <div className="flex gap-4">
-                        <div className="relative flex flex-col items-center pt-1">
-                          <div className={`w-3 h-3 rounded-full ${isSelected ? 'bg-blue-400' : 'bg-slate-500'}`} />
-                          <div className="w-px flex-1 bg-slate-700 mt-2" />
-                        </div>
-
-                        <div className="flex-1 min-w-0">
-                          <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="text-xs px-2 py-0.5 rounded-full bg-slate-900 text-slate-300 border border-slate-700">
-                                {item.dateLabel}
-                              </span>
-                              {item.documentType && (
-                                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-900 text-blue-100 border border-blue-700">
-                                  {item.documentType}
-                                </span>
-                              )}
-                              {item.fileFormat && (
-                                <span className="text-xs px-2 py-0.5 rounded-full bg-slate-900 text-slate-300 border border-slate-700">
-                                  {item.fileFormat}
-                                </span>
-                              )}
-                            </div>
-
-                          </div>
-
-                          {(item.passage || item.summary) && (
-                            <div className="mt-2 rounded-xl border border-slate-600/80 bg-slate-950 p-5 shadow-lg shadow-black/25 ring-1 ring-blue-500/10">
-                              <p
-                                className="text-base leading-7 text-slate-50 whitespace-pre-line"
-                                dangerouslySetInnerHTML={{ __html: highlightText(item.passage || item.summary, query) }}
+              <div className="space-y-4">
+                {filteredItems.map((item) => (
+                  <div
+                    key={item.documentId}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openItem(item)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        openItem(item);
+                      }
+                    }}
+                    className="cursor-pointer space-y-2 pb-4 border-b border-slate-800 last:border-b-0 last:pb-0 hover:opacity-80 transition"
+                  >
+                    {/* File name and relevance score */}
+                    <div className="flex items-start justify-between gap-4">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void openFileInNewWindow(item.documentId);
+                        }}
+                        className="text-base font-medium text-blue-400 hover:text-blue-300 truncate text-left"
+                      >
+                        📄 {item.title}
+                      </button>
+                      {typeof item.relevanceScore === 'number' && (
+                        <div className="shrink-0 flex items-center gap-2">
+                          <div className="flex gap-1">
+                            {[...Array(5)].map((_, i) => (
+                              <div
+                                key={i}
+                                className={`w-2 h-2 rounded-full ${
+                                  i < Math.round(item.relevanceScore * 5)
+                                    ? 'bg-slate-400'
+                                    : 'bg-slate-700'
+                                }`}
                               />
-                            </div>
-                          )}
-
-                          <div className="mt-3 flex items-center justify-between">
-                            <div className="min-w-0">
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  void openFileInNewWindow(item.documentId);
-                                }}
-                                className="text-sm font-medium text-slate-300 truncate text-left underline underline-offset-2 decoration-slate-500 hover:text-blue-300 hover:decoration-blue-300"
-                              >
-                                {item.title}
-                              </button>
-                            </div>
-
-                            {typeof item.relevanceScore === 'number' && (
-                              <p className="text-[11px] text-slate-500 ml-3">Confidence: {Math.round(Math.max(0, Math.min(1, item.relevanceScore)) * 100)}%</p>
-                            )}
+                            ))}
                           </div>
-
-                          {item.matchedPath && (
-                            <p className="mt-2 text-[11px] uppercase tracking-wide text-slate-500">
-                              Why: {item.matchReason || item.matchedPath}
-                              {item.pinnedSnippet && (
-                                <span className="ml-2 normal-case text-xs text-slate-400">• stored question snippet</span>
-                              )}
-                            </p>
-                          )}
+                          <span className="text-sm text-slate-400 whitespace-nowrap">
+                            {Math.round(Math.max(0, Math.min(1, item.relevanceScore)) * 100)}%
+                          </span>
                         </div>
-                      </div>
+                      )}
                     </div>
-                  );
-                })}
+
+                    {/* Snippet text */}
+                    {(item.passage || item.summary) && (
+                      <p
+                        className="text-sm leading-relaxed text-slate-300 line-clamp-6 whitespace-pre-wrap"
+                        dangerouslySetInnerHTML={{ __html: highlightText(item.passage || item.summary, query) }}
+                      />
+                    )}
+
+                    {/* Metadata footer */}
+                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                      {item.createdBy === 'ocr-agent' && <span>✓ OCR</span>}
+                      <span>{item.dateLabel}</span>
+                      {item.matchReason && <span>•</span>}
+                      {item.matchReason && (
+                        <span className="text-slate-600">
+                          {item.matchReason}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             </section>
 
-            <aside className="space-y-4 sticky top-6 lg:pt-12">
-              <div className="rounded-xl border border-slate-800 bg-slate-800 p-4">
-                <div className="mb-3">
-                  <h3 className="text-sm font-semibold text-slate-100">Explore next</h3>
-                </div>
+            {/* Suggested Questions Sidebar */}
+            <aside className="sticky top-8 space-y-4">
+              <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-4">
+                <h3 className="text-sm font-semibold text-slate-100 mb-4 uppercase tracking-wider">Suggested</h3>
 
                 {!query.trim() ? (
-                  <p className="text-xs text-slate-400">Search first to load questions.</p>
+                  <p className="text-xs text-slate-400">Search to load suggestions.</p>
                 ) : topQuestionsLoading ? (
-                  <p className="text-xs text-slate-400">Loading questions...</p>
+                  <p className="text-xs text-slate-400">Loading suggestions...</p>
                 ) : visibleExploreNextQuestions.length === 0 ? (
-                  <p className="text-xs text-slate-400">No questions found for the current results.</p>
+                  <p className="text-xs text-slate-400">No suggestions found.</p>
                 ) : (
-                  <div className="space-y-2 max-h-[32rem] overflow-y-auto pr-1">
-                    {visibleExploreNextQuestions.map((question: any, index: number) => (
-                      <button
-                        key={question.question_id || `top-question-${index}`}
-                        type="button"
-                        onClick={() => {
-                          const sourceDocumentId = getQuestionSourceDocumentId(question);
-                          if (sourceDocumentId) {
-                            setPinnedQuestionSourceDocumentId(sourceDocumentId);
-                            setPinnedQuestionContext({
-                              text: question.text,
-                              snippet: getQuestionSnippet(question),
-                            });
-                          }
-                          setShowQuestionDropdown(false);
-                          setQuery(question.text);
-                        }}
-                        className="w-full rounded-lg border border-slate-700 bg-slate-900/80 p-3 text-left hover:bg-slate-700 transition"
-                      >
-                        <div className="text-sm font-medium text-slate-100">{question.text}</div>
-                      </button>
-                    ))}
-                    {topQuestionsMoreVisibleCount < topQuestionsMore.length && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTopQuestionsMoreVisibleCount((current) => Math.min(current + 5, topQuestionsMore.length));
-                        }}
-                        className="w-full rounded-lg border border-dashed border-slate-600 bg-slate-900/50 p-3 text-center text-xs font-medium text-slate-300 hover:bg-slate-700 transition"
-                      >
-                        Show more
-                      </button>
-                    )}
+                  <div className="space-y-2 max-h-96 overflow-y-auto">
+                    {visibleExploreNextQuestions && visibleExploreNextQuestions.length > 0 ? (
+                      <>
+                        {visibleExploreNextQuestions.map((question: any, index: number) => {
+                          if (!question) return null;
+                          return (
+                            <button
+                              key={question.question_id || `top-question-${index}`}
+                              type="button"
+                              onClick={() => {
+                                const sourceDocumentId = getQuestionSourceDocumentId(question);
+                                if (sourceDocumentId) {
+                                  setPinnedQuestionSourceDocumentId(sourceDocumentId);
+                                  setPinnedQuestionContext({
+                                    text: question.text,
+                                    snippet: getQuestionSnippet(question),
+                                  });
+                                }
+                                setShowQuestionDropdown(false);
+                                setQuery(question.text);
+                              }}
+                              className="w-full flex items-start gap-3 p-3 text-left hover:bg-slate-800/50 rounded-lg transition group"
+                            >
+                              <span className="text-slate-500 group-hover:text-slate-400 mt-0.5">→</span>
+                              <span className="text-sm text-slate-300 group-hover:text-slate-100">{question.text}</span>
+                            </button>
+                          );
+                        })}
+                        {topQuestionsMoreVisibleCount < topQuestionsMore.length && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTopQuestionsMoreVisibleCount((current) => Math.min(current + 5, topQuestionsMore.length));
+                            }}
+                            className="w-full py-3 text-center text-sm font-medium text-slate-400 hover:text-slate-300 transition border-t border-slate-700 mt-2"
+                          >
+                            {topQuestionsMore.length - topQuestionsMoreVisibleCount} more suggestions ↓
+                          </button>
+                        )}
+                      </>
+                    ) : null}
                   </div>
                 )}
               </div>

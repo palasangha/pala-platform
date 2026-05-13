@@ -222,17 +222,52 @@ function buildSnippet(candidates, query, anchorText, minimumLines = 6) {
   const uniqueCandidates = uniqueNonEmptyText(candidates);
   if (uniqueCandidates.length === 0) return '';
 
+  // Separate anchor candidate from others
+  const normalizedAnchor = normalizeQuestionText(anchorText);
+  const anchorCandidate = uniqueCandidates.find((c) => normalizeQuestionText(c) === normalizedAnchor);
+  const otherCandidates = uniqueCandidates.filter((c) => normalizeQuestionText(c) !== normalizedAnchor);
+
+  // Score all candidates
   const scored = uniqueCandidates
     .map((candidate) => {
       const snippet = lineWindow(candidate, query, minimumLines, anchorText);
       const lineCount = splitContextLines(snippet).length;
       const score = countLineMatches(snippet, anchorText, query);
-      return { candidate, snippet, lineCount, score };
+      const isAnchor = candidate === anchorCandidate;
+      return { candidate, snippet, lineCount, score, isAnchor };
     })
-    .sort((a, b) => (b.score - a.score) || (b.lineCount - a.lineCount) || (b.candidate.length - a.candidate.length));
+    .sort((a, b) => {
+      // First: prioritize non-anchor candidates with >= minimumLines
+      const aIsRichNonAnchor = !a.isAnchor && a.lineCount >= minimumLines ? 1 : 0;
+      const bIsRichNonAnchor = !b.isAnchor && b.lineCount >= minimumLines ? 1 : 0;
+      if (aIsRichNonAnchor !== bIsRichNonAnchor) return bIsRichNonAnchor - aIsRichNonAnchor;
 
-  const richCandidates = scored.filter((entry) => entry.lineCount >= minimumLines);
-  const best = richCandidates[0] || scored[0];
+      // Second: prioritize any candidate with >= minimumLines
+      const aIsRich = a.lineCount >= minimumLines ? 1 : 0;
+      const bIsRich = b.lineCount >= minimumLines ? 1 : 0;
+      if (aIsRich !== bIsRich) return bIsRich - aIsRich;
+
+      // Third: by score, line count, candidate length
+      return (b.score - a.score) || (b.lineCount - a.lineCount) || (b.candidate.length - a.candidate.length);
+    });
+
+  if (typeof window === 'undefined') {
+    // Node.js environment (tests)
+  } else if (window.__DEBUG_SNIPPET) {
+    console.log('[buildSnippet]', {
+      candidateCount: uniqueCandidates.length,
+      scoredOptions: scored.map((s) => ({
+        isAnchor: s.isAnchor,
+        lineCount: s.lineCount,
+        score: s.score,
+        snippetLength: s.snippet.length,
+        snippet: s.snippet.slice(0, 100),
+      })),
+      selected: scored[0]?.lineCount,
+    });
+  }
+
+  const best = scored[0];
   return best ? best.snippet : '';
 }
 

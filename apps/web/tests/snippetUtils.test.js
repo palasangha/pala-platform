@@ -63,3 +63,39 @@ test('buildSnippet does not stitch lines from multiple candidates', () => {
   assert.equal(lines.length, 6);
   assert.ok(lines.every((line) => line.startsWith('Source B line')));
 });
+
+test('buildSnippet returns 6 lines from full content even when anchor is short', () => {
+  const shortAnchor = 'But this was the contribution of Buddha, the discovery of Buddha: that you cannot come out of your misery.';
+  const fullContent = [
+    'Some introduction text that is not relevant.',
+    'More intro lines here.',
+    'Buddha spoke about suffering and its cessation.',
+    'But this was the contribution of Buddha, the discovery of Buddha: that you cannot come out of your misery.',
+    'Unless you understand the nature of misery deeply.',
+    'The path to liberation requires wisdom and compassion.',
+    'All sentient beings seek to escape suffering.',
+    'The Buddha taught the four noble truths.',
+  ].join('\n');
+  const summary = 'A brief summary of the document';
+
+  const snippet = buildSnippet([shortAnchor, fullContent, summary], 'Buddha teachings causes of misery', shortAnchor, 6);
+  const lines = splitContextLines(snippet);
+
+  assert.equal(lines.length, 6, `Expected 6 lines but got ${lines.length}: ${lines.join(' | ')}`);
+  assert.ok(lines.some((line) => line.includes('contribution of Buddha')), 'Should include the anchor');
+  assert.ok(lines.length >= 6, 'Should return minimum 6 lines, not just the short anchor');
+});
+
+test('buildSnippet with short anchor and empty full content returns best available', () => {
+  const shortAnchor = 'But this was the contribution of Buddha, the discovery of Buddha: that you cannot come out of your misery.';
+  const fullContent = ''; // Empty!
+  const summary = 'A summary about Buddha teachings and the path to enlightenment. Many lines could follow here to provide context.';
+
+  const snippet = buildSnippet([shortAnchor, fullContent, summary], 'Buddha teachings', shortAnchor, 6);
+  const lines = splitContextLines(snippet);
+
+  // When fullContent is empty, we might not get 6 lines, but we should get something reasonable
+  assert.ok(lines.length > 0, 'Should return at least one line');
+  assert.ok(snippet.length > 0, 'Snippet should not be empty');
+});
+
