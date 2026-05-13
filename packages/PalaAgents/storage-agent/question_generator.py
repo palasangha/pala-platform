@@ -259,20 +259,24 @@ Generate the questions now:"""
         if not lines:
             lines = [content_text.strip()]
 
+        # Extract meaningful keywords from question, allowing some short but important words
+        stop_words = {"what", "when", "where", "which", "how", "why", "was", "were", "the", "and", "or", "in", "of", "to", "a", "an", "is", "be", "by", "for", "on", "at", "as", "about", "their", "there", "these", "those", "would", "could", "should", "document", "context", "from", "during", "that"}
         question_terms = [
             token
             for token in re.findall(r"[A-Za-z0-9]+", question_text.lower())
-            if len(token) > 3 and token not in {"what", "when", "where", "which", "about", "their", "there", "these", "those", "would", "could", "should", "document", "context", "from"}
+            if len(token) > 2 and token not in stop_words
         ]
 
         if not question_terms:
-            snippet = lines[0][:300]
+            # Return up to 4 lines as preview when no strong question terms
+            snippet_lines = lines[0:4]
+            snippet = "\n".join(snippet_lines)[:1000]
             return [
                 {
                     "source_path": source_path,
                     "line_start": 1,
-                    "line_end": 1,
-                    "span": {"line_start": 1, "line_end": 1},
+                    "line_end": min(4, len(lines)),
+                    "span": {"line_start": 1, "line_end": min(4, len(lines))},
                     "snippet": snippet,
                     "confidence": 0.3,
                 }
@@ -289,17 +293,55 @@ Generate the questions now:"""
             
             if score > 0:
                 scored_lines.append((adjusted_score, score, idx, line))
+                # Detailed per-line debug logging to help trace evidence selection
+                logger.debug(
+                    "[EVIDENCE-SCORE] question=%s line_index=%d raw_score=%s len=%d length_penalty=%s adjusted_score=%s snippet=%s",
+                    question_text[:80].replace("\n", " "),
+                    idx,
+                    score,
+                    len(line),
+                    line_length_penalty,
+                    adjusted_score,
+                    (line[:160].replace('\n',' '))
+                )
 
         if not scored_lines:
-            snippet = lines[0][:300]
+            # No exact match found - try partial matching with any keyword appearing in any line
+            partial_matches: List[Tuple[int, int, str]] = []
+            for idx, line in enumerate(lines):
+                lower = line.lower()
+                # Count ANY keyword match (even partial word matches)
+                partial_score = sum(1 for term in question_terms if term in lower)
+                if partial_score > 0:
+                    partial_matches.append((partial_score, idx, line))
+            
+            if partial_matches:
+                # Found partial matches - use the best one
+                partial_matches.sort(key=lambda x: (-x[0], x[1]))  # Sort by score desc, then index asc
+                best_partial = partial_matches[0]
+                score, idx, line = best_partial
+                # Provide a wider context window: 3 lines above and 3 lines below the matched line
+                start_idx = max(0, idx - 3)
+                end_idx = min(len(lines), idx + 4)
+                snippet_lines = lines[start_idx:end_idx]
+                snippet = "\n".join(snippet_lines)[:2000]
+                confidence = round(min(score / max(len(question_terms), 1), 1.0), 3)
+                confidence = max(confidence, 0.4)
+            else:
+                # Still no match - return first 4 lines as last resort
+                snippet_lines = lines[0:4]
+                snippet = "\n".join(snippet_lines)[:1000]
+                idx = 0
+                confidence = 0.25
+            
             return [
                 {
                     "source_path": source_path,
-                    "line_start": 1,
-                    "line_end": 1,
-                    "span": {"line_start": 1, "line_end": 1},
+                    "line_start": start_idx + 1,
+                    "line_end": end_idx,
+                    "span": {"line_start": start_idx + 1, "line_end": end_idx},
                     "snippet": snippet,
-                    "confidence": 0.25,
+                    "confidence": confidence,
                 }
             ], snippet
 
@@ -309,6 +351,21 @@ Generate the questions now:"""
         # Only take the top match (single best evidence)
         best_match = scored_lines[0]
         adjusted_score, raw_score, idx, line = best_match
+        # Log the top candidates for further inspection
+        try:
+            top_preview = [
+                {
+                    'rank': i+1,
+                    'adjusted_score': float(item[0]),
+                    'raw_score': int(item[1]),
+                    'line_index': int(item[2]),
+                    'snippet': (item[3][:180].replace('\n',' ')),
+                }
+                for i, item in enumerate(scored_lines[:6])
+            ]
+            logger.debug("[EVIDENCE-TOP-CANDIDATES] question=%s top_candidates=%s", question_text[:80].replace("\n"," "), top_preview)
+        except Exception:
+            logger.debug("[EVIDENCE-TOP-CANDIDATES] could not format top candidates for question: %s", question_text[:80].replace("\n"," "))
         
         # Calculate confidence: raw_score / max_possible_terms
         max_terms = len(question_terms)
@@ -317,13 +374,28 @@ Generate the questions now:"""
         # Ensure minimum confidence even for partial matches
         confidence = max(confidence, 0.5) if raw_score > 0 else 0.3
 
+        logger.debug(
+            "[EVIDENCE-SELECTED] question=%s selected_index=%d raw_score=%s adjusted_score=%s confidence=%s snippet=%s",
+            question_text[:120].replace("\n"," "),
+            idx,
+            raw_score,
+            adjusted_score,
+            confidence,
+            (line[:240].replace('\n',' '))
+        )
+
+        # Build a context window: 3 lines above and 3 lines below the matched line
+        start_idx = max(0, idx - 3)
+        end_idx = min(len(lines), idx + 4)
+        preview_lines = lines[start_idx:end_idx]
+        snippet_text = "\n".join(preview_lines)[:2000]
         evidence = [
             {
                 "source_path": source_path,
-                "line_start": idx + 1,
-                "line_end": idx + 1,
-                "span": {"line_start": idx + 1, "line_end": idx + 1},
-                "snippet": line[:300],
+                "line_start": start_idx + 1,
+                "line_end": end_idx,
+                "span": {"line_start": start_idx + 1, "line_end": end_idx},
+                "snippet": snippet_text,
                 "confidence": confidence,
             }
         ]
@@ -338,6 +410,7 @@ Generate the questions now:"""
         processed_data: Dict[str, Any],
         original_file: str,
         embedding_model,
+            verify_with_llm: bool = False,
     ) -> List[GeneratedQuestion]:
         """
         Generate questions for a single document.
@@ -435,7 +508,258 @@ Generate the questions now:"""
                 generated_questions.append(q)
             
             logger.debug(f"[QUESTION-GEN] Created {len(generated_questions)} question objects for doc {doc_id}")
-            return generated_questions
+            # Post-process: embedding-based fallback for low-confidence or repeated snippets
+            try:
+                # Build mapping of snippet -> count
+                snippet_counts = {}
+                for q in generated_questions:
+                    ev = q.evidence or []
+                    sn = (ev[0]['snippet'].strip() if ev else '')
+                    if sn:
+                        snippet_counts[sn] = snippet_counts.get(sn, 0) + 1
+
+                # Prepare document text for embedding fallback
+                content_text = ''
+                if isinstance(processed_data, dict):
+                    # try same order as extractor
+                    for key in ('content', 'text', 'ocr_text'):
+                        val = processed_data.get(key)
+                        if isinstance(val, str) and val.strip():
+                            content_text = val
+                            break
+                    if not content_text:
+                        res = processed_data.get('result') if isinstance(processed_data.get('result'), dict) else {}
+                        for key in ('content', 'text', 'ocr_text'):
+                            val = res.get(key)
+                            if isinstance(val, str) and val.strip():
+                                content_text = val
+                                break
+
+                # If embedding model is available, compute sentence embeddings once
+                sentence_list = []
+                sentence_embeddings = None
+                if embedding_model and content_text and isinstance(content_text, str):
+                    # Split into sentences (simple splitter)
+                    import re
+                    sentence_list = [s.strip() for s in re.split(r'(?<=[\.!?])\s+', content_text) if s.strip()]
+                    if sentence_list:
+                        try:
+                            sentence_embeddings = embedding_model.encode(sentence_list)
+                        except Exception as e:
+                            logger.debug(f"[EVIDING-FALLBACK] Failed to encode sentences: {e}")
+
+                # Helper to run embedding fallback for single question
+                def _embedding_fallback_for_question(q_text: str):
+                    if not sentence_list or sentence_embeddings is None:
+                        return None
+                    try:
+                        q_emb = embedding_model.encode([q_text])[0]
+                        # cosine similarity
+                        import math
+                        best_idx = None
+                        best_sim = -1.0
+                        for i, sent_emb in enumerate(sentence_embeddings):
+                            # some encoders return lists, ensure numeric arrays
+                            numer = sum(float(a) * float(b) for a, b in zip(q_emb, sent_emb))
+                            denom_a = math.sqrt(sum(float(a) * float(a) for a in q_emb))
+                            denom_b = math.sqrt(sum(float(b) * float(b) for b in sent_emb))
+                            sim = numer / (denom_a * denom_b + 1e-12)
+                            if sim > best_sim:
+                                best_sim = sim
+                                best_idx = i
+                        if best_idx is None:
+                            return None
+                        chosen = sentence_list[best_idx]
+                        # scale similarity to confidence-like value
+                        conf = round(float(best_sim), 3)
+                        return {
+                            'source_path': 'processed_data.content',
+                            'line_start': best_idx + 1,
+                            'line_end': best_idx + 1,
+                            'span': {'line_start': best_idx + 1, 'line_end': best_idx + 1},
+                            'snippet': chosen[:300],
+                            'confidence': conf,
+                        }
+                    except Exception as e:
+                        logger.debug(f"[EVIDENCE-FALLBACK] Exception during embedding fallback: {e}")
+                        return None
+
+                # Apply fallback where needed
+                for q in generated_questions:
+                    ev = q.evidence or []
+                    sn = (ev[0]['snippet'].strip() if ev else '')
+                    conf = float(ev[0].get('confidence', 0.0)) if ev else 0.0
+
+                    need_fallback = False
+                    # condition: low confidence or snippet repeated many times
+                    # Tighten baseline threshold: require confidence >= 0.65 to avoid weak replacements
+                    if conf < 0.65:
+                        need_fallback = True
+                    if sn and snippet_counts.get(sn, 0) > 1:
+                        need_fallback = True
+
+                    if need_fallback and embedding_model and sentence_list:
+                        fallback = _embedding_fallback_for_question(q.text)
+                        # Only accept fallback if embedding similarity/confidence meets threshold
+                        if fallback and float(fallback.get('confidence', 0.0)) >= 0.65:
+                            # Optionally verify with LLM if requested and provider available
+                            verified = True
+                            if verify_with_llm and hasattr(self, '_call_ollama') and callable(self._call_ollama):
+                                try:
+                                    # Run verification synchronously in event loop
+                                    async def _verify():
+                                        return await self._verify_evidence_with_ollama(q.text, fallback['snippet'])
+                                    verified = asyncio.get_event_loop().run_until_complete(_verify())
+                                except Exception:
+                                    verified = True
+
+                            if verified:
+                                # Ensure fallback snippet shows up to 4 sentences (as a short preview)
+                                snippet = fallback.get('snippet', '')
+                                # If fallback snippet is a single sentence, try to expand to up to 4 sentences
+                                # using simple split on sentence boundaries
+                                try:
+                                    import re
+                                    sents = [s.strip() for s in re.split(r'(?<=[\.\!\?])\s+', snippet) if s.strip()]
+                                    preview = '\n'.join(sents[:4]) if sents else snippet
+                                except Exception:
+                                    preview = snippet
+                                q.evidence = [fallback]
+                                q.evidence[0]['snippet'] = preview[:1000]
+                                q.answer_preview = q.evidence[0]['snippet']
+                                q.answer_span = fallback.get('span')
+
+            except Exception as e:
+                logger.debug(f"[QUESTION-GEN] Post-process embedding fallback failed: {e}")
+
+            # Apply quality gate: balance between quality and quantity
+            # More lenient than before to ensure we get enough questions
+            MIN_QUESTIONS = 3  # Lowered to 3 to avoid being too strict
+            CONFIDENCE_FLOOR = 0.55  # Lowered to 0.55 to allow more questions
+            
+            # First pass: count snippet occurrences to identify heavily redundant ones
+            snippet_counts = {}
+            for q in generated_questions:
+                ev = q.evidence or []
+                snippet = ev[0].get('snippet', '').strip() if ev else ''
+                if snippet:
+                    snippet_key = snippet[:100].lower()
+                    snippet_counts[snippet_key] = snippet_counts.get(snippet_key, 0) + 1
+            
+            # Identify redundant snippet keys (shared by 3+ questions - heavily redundant)
+            # Only reject if shared by 3+ questions, not just 2 (allows some related questions)
+            redundant_snippets = {key for key, count in snippet_counts.items() if count > 2}
+            
+            quality_filtered = []
+            
+            for q in generated_questions:
+                ev = q.evidence or []
+                conf = float(ev[0].get('confidence', 0.0)) if ev else 0.0
+                snippet = ev[0].get('snippet', '').strip() if ev else ''
+                
+                # Reject if snippet is heavily redundant (shared by 3+ questions)
+                if snippet:
+                    snippet_key = snippet[:100].lower()
+                    if snippet_key in redundant_snippets:
+                        logger.info(f"[QUALITY-GATE] REJECT question (snippet shared by {snippet_counts[snippet_key]} questions): {q.text[:80]}")
+                        continue
+                
+                # Accept question if confidence meets floor
+                if conf >= CONFIDENCE_FLOOR:
+                    quality_filtered.append(q)
+                    logger.debug(f"[QUALITY-GATE] ACCEPT question: conf={conf:.2f}, q={q.text[:80]}")
+                else:
+                    logger.info(f"[QUALITY-GATE] REJECT question (conf={conf:.2f} < {CONFIDENCE_FLOOR}): {q.text[:80]}")
+            
+            logger.info(f"[QUESTION-GEN] Quality gate: {len(generated_questions)} candidates → {len(quality_filtered)} passed (confidence >= {CONFIDENCE_FLOOR})")
+            
+            # If below minimum, regenerate for more questions
+            if len(quality_filtered) < MIN_QUESTIONS:
+                logger.info(f"[QUESTION-GEN] Only {len(quality_filtered)} questions; regenerating for more diversity...")
+                
+                # Ask for additional diverse questions
+                regen_prompt = f"""{self._build_generation_prompt(context)}
+
+NOTE: You previously generated: {', '.join(q.text[:50] + '...' for q in generated_questions[:3])}
+
+Please generate 8-10 COMPLETELY DIFFERENT questions covering other aspects and details not in the above list."""
+                
+                try:
+                    regen_response = await self._call_ollama(regen_prompt)
+                    
+                    if regen_response:
+                        regen_lines = [line.strip() for line in regen_response.split("\n") if line.strip()]
+                        regen_questions_text = []
+                        for line in regen_lines:
+                            cleaned = line.lstrip("0123456789).‐-*•").strip()
+                            if cleaned and len(cleaned) > 5:
+                                regen_questions_text.append(cleaned)
+                        
+                        logger.info(f"[QUESTION-GEN] Regenerated {len(regen_questions_text)} additional questions")
+                        
+                        # Process regenerated questions
+                        now = datetime.now(timezone.utc).isoformat()
+                        for regen_q_text in regen_questions_text:
+                            if len(quality_filtered) >= MIN_QUESTIONS:
+                                break
+                            
+                            q_id = str(uuid.uuid4())
+                            
+                            # Embed
+                            embedding = None
+                            if embedding_model:
+                                try:
+                                    embedding = embedding_model.encode(regen_q_text).tolist()
+                                except Exception:
+                                    pass
+                            
+                            # Extract evidence
+                            evidence, answer_preview = self._extract_evidence_for_question(
+                                question_text=regen_q_text,
+                                processed_data=processed_data,
+                            )
+                            answer_span = evidence[0].get("span") if evidence else None
+                            
+                            q = GeneratedQuestion(
+                                question_id=q_id,
+                                text=regen_q_text,
+                                provenance=doc_id,
+                                filters=filters,
+                                suggestion_type="question",
+                                embedding=embedding,
+                                evidence=evidence,
+                                answer_preview=answer_preview,
+                                answer_span=answer_span,
+                                created_at=now,
+                                updated_at=now,
+                                model="ollama",
+                            )
+                            
+                            # Check quality
+                            ev = q.evidence or []
+                            conf = float(ev[0].get('confidence', 0.0)) if ev else 0.0
+                            snippet = ev[0].get('snippet', '').strip() if ev else ''
+                            
+                            # Reject if snippet is redundant (shared by multiple questions)
+                            if snippet:
+                                snippet_key = snippet[:100].lower()
+                                if snippet_key in redundant_snippets:
+                                    logger.info(f"[QUALITY-GATE] REJECT regenerated (snippet shared): {q.text[:80]}")
+                                    continue
+                            
+                            if conf >= CONFIDENCE_FLOOR:
+                                quality_filtered.append(q)
+                                logger.debug(f"[QUALITY-GATE] ACCEPT regenerated: conf={conf:.2f}, q={q.text[:80]}")
+                            else:
+                                logger.info(f"[QUALITY-GATE] REJECT regenerated (conf={conf:.2f} < {CONFIDENCE_FLOOR}): {q.text[:80]}")
+                except Exception as e:
+                    logger.warning(f"[QUESTION-GEN] Regeneration failed: {e}")
+            
+            # Return best effort: cap at 10, or return what we have
+            final_questions = quality_filtered[:10]
+            logger.info(f"[QUESTION-GEN] Returning {len(final_questions)} questions (minimum target: {MIN_QUESTIONS})")
+            
+            return final_questions if final_questions else generated_questions[:min(3, len(generated_questions))]
             
         except Exception as e:
             logger.error(f"[QUESTION-GEN] Failed to generate questions for doc {doc_id}: {e}", exc_info=True)
@@ -496,6 +820,26 @@ Generate the questions now:"""
         except Exception as e:
             logger.error(f"[QUESTION-GEN] Failed to call Ollama: {e}", exc_info=True)
             return None
+
+    async def _verify_evidence_with_ollama(self, question_text: str, snippet: str) -> bool:
+        """Ask the LLM to verify whether `snippet` answers `question_text`."""
+        try:
+            verify_prompt = f"Question: {question_text}\n\nSnippet: {snippet}\n\nDoes the snippet directly answer the question above? Answer with 'Yes' or 'No' and one short sentence justification."
+            resp = await self._call_ollama(verify_prompt)
+            if not resp:
+                return False
+            low = resp.strip().lower()
+            if low.startswith('yes') or ' yes' in low.split()[:2]:
+                return True
+            if 'no' in low.split()[:2] or low.startswith('no'):
+                return False
+            # fallback: if response contains clear affirmative
+            if 'yes' in low:
+                return True
+            return False
+        except Exception as e:
+            logger.debug(f"[EVIDENCE-VERIFY] Ollama verification failed: {e}")
+            return False
     
     async def regenerate_questions_for_document(
         self,
@@ -505,6 +849,7 @@ Generate the questions now:"""
         processed_data: Dict[str, Any],
         original_file: str,
         embedding_model,
+        verify_with_llm: bool = False,
     ) -> Tuple[List[GeneratedQuestion], bool]:
         """
         Regenerate questions for an existing document.
@@ -524,7 +869,7 @@ Generate the questions now:"""
         
         try:
             questions = await self.generate_questions_for_document(
-                doc_id, doc_type, metadata, processed_data, original_file, embedding_model
+                doc_id, doc_type, metadata, processed_data, original_file, embedding_model, verify_with_llm=verify_with_llm
             )
             return questions, len(questions) > 0
         except Exception as e:

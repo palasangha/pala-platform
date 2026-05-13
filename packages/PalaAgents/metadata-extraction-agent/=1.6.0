@@ -1,0 +1,17 @@
+Collecting python-docx
+  Downloading python_docx-1.2.0-py3-none-any.whl.metadata (2.0 kB)
+Collecting mammoth
+  Downloading mammoth-1.12.0-py2.py3-none-any.whl.metadata (26 kB)
+Collecting lxml>=3.1.0 (from python-docx)
+  Downloading lxml-6.1.0-cp39-cp39-macosx_10_9_universal2.whl.metadata (4.0 kB)
+Requirement already satisfied: typing_extensions>=4.9.0 in ./venv/lib/python3.9/site-packages (from python-docx) (4.15.0)
+Collecting cobble<0.2,>=0.1.3 (from mammoth)
+  Downloading cobble-0.1.4-py3-none-any.whl.metadata (2.7 kB)
+Downloading python_docx-1.2.0-py3-none-any.whl (252 kB)
+Downloading mammoth-1.12.0-py2.py3-none-any.whl (54 kB)
+Downloading cobble-0.1.4-py3-none-any.whl (4.0 kB)
+Downloading lxml-6.1.0-cp39-cp39-macosx_10_9_universal2.whl (8.6 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 8.6/8.6 MB 14.0 MB/s  0:00:00
+Installing collected packages: lxml, cobble, python-docx, mammoth
+
+Successfully installed cobble-0.1.4 lxml-6.1.0 mammoth-1.12.0 python-docx-1.2.0

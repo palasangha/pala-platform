@@ -14,7 +14,7 @@ import logging
 import os
 import sys
 import uuid
-import websockets
+import websockets  # type: ignore[import-not-found]
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
@@ -159,6 +159,19 @@ class MetadataExtractionAgent:
             raise ValueError(
                 f'output_type must be "pala", "archipelago", or "combined", got: {output_type}'
             )
+
+        if file_format in {"", "bin", "binary", "application/octet-stream", "unknown"}:
+            lower_name = filename.lower()
+            if lower_name.endswith(".docx"):
+                file_format = "docx"
+            elif lower_name.endswith(".pdf"):
+                file_format = "pdf"
+            elif lower_name.endswith(".json"):
+                file_format = "json"
+            elif lower_name.endswith(".md"):
+                file_format = "md"
+            elif lower_name.endswith(".txt"):
+                file_format = "txt"
 
         # If file payload is provided without text, extract text from file first
         if not text and file_data_b64:
@@ -459,6 +472,19 @@ class MetadataExtractionAgent:
         custom_prompt = params.get("custom_prompt")
         schema_version = params.get("schema_version", "1.0.0")
 
+        if file_format in {"", "bin", "binary", "application/octet-stream", "unknown"}:
+            lower_name = filename.lower()
+            if lower_name.endswith(".docx"):
+                file_format = "docx"
+            elif lower_name.endswith(".pdf"):
+                file_format = "pdf"
+            elif lower_name.endswith(".json"):
+                file_format = "json"
+            elif lower_name.endswith(".md"):
+                file_format = "md"
+            elif lower_name.endswith(".txt"):
+                file_format = "txt"
+
         if not file_data_b64:
             raise ValueError("file_data (base64-encoded) is required")
 
@@ -534,7 +560,7 @@ class MetadataExtractionAgent:
         elif file_format == "pdf":
             # PDF format - try to extract text
             try:
-                from pypdf import PdfReader
+                from pypdf import PdfReader  # type: ignore[import-not-found]
                 from io import BytesIO
 
                 pdf_file = BytesIO(file_bytes)
@@ -548,7 +574,7 @@ class MetadataExtractionAgent:
                 logger.info(f"Extracted {len(text)} chars from PDF with {len(pdf_reader.pages)} pages")
             except ImportError:
                 try:
-                    import PyPDF2
+                    import PyPDF2  # type: ignore[import-not-found]
                     from io import BytesIO
 
                     pdf_file = BytesIO(file_bytes)
@@ -575,6 +601,27 @@ class MetadataExtractionAgent:
             except Exception as e:
                 logger.warning(f"PDF extraction error: {e}")
                 text = f"PDF file: {filename} (extraction error)"
+        elif file_format in ["docx"]:
+            # DOCX: try python-docx if available, else try mammoth
+            from io import BytesIO
+            try:
+                from docx import Document  # type: ignore[import-not-found]
+                bio = BytesIO(file_bytes)
+                doc = Document(bio)
+                paragraphs = [p.text for p in doc.paragraphs if p.text and p.text.strip()]
+                text = "\n\n".join(paragraphs)
+                logger.info(f"Extracted {len(text)} chars from DOCX document using python-docx")
+            except Exception:
+                # Fallback to mammoth if python-docx isn't available or fails
+                try:
+                    import mammoth  # type: ignore[import-not-found]
+                    bio = BytesIO(file_bytes)
+                    result = mammoth.extract_raw_text(bio)
+                    text = result.value
+                    logger.info("Extracted text from DOCX using mammoth")
+                except Exception:
+                    logger.warning("DOCX extraction failed (python-docx and mammoth unavailable)")
+                    text = f"Document: {filename}\nFormat: {file_format}\n(Unable to extract DOCX text - install python-docx or mammoth)"
 
         else:
             # Unknown format - try UTF-8 decoding

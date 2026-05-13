@@ -67,16 +67,25 @@ setup_shared_agent_venv() {
         "$AGENT_VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel || true
     fi
 
-    echo "[setup-dev] Installing agent Python dependencies (python-dotenv, boto3, websockets)..."
+    echo "[setup-dev] Installing agent Python dependencies (python-dotenv, boto3, websockets, sentence-transformers)..."
     if [[ -x "$AGENT_VENV_DIR/bin/python" ]]; then
-        if "$AGENT_VENV_DIR/bin/python" -m pip install python-dotenv boto3 websockets; then
-            echo "[setup-dev] Python dependencies installed in shared venv."
+        if "$AGENT_VENV_DIR/bin/python" -m pip install python-dotenv boto3 websockets sentence-transformers; then
+            echo "[setup-dev] ✓ Python dependencies installed in shared venv."
+            # Verify sentence-transformers was actually installed (CRITICAL for quality gate)
+            if "$AGENT_VENV_DIR/bin/python" -c "import sentence_transformers; print('[setup-dev] ✓ sentence-transformers verified')" 2>/dev/null; then
+                echo "[setup-dev] SUCCESS: sentence-transformers is ready"
+            else
+                echo "[setup-dev] FATAL: sentence-transformers import failed even after pip install"
+                return 1
+            fi
         else
-            echo "[setup-dev] WARNING: Could not install one or more dependencies into $AGENT_VENV_DIR"
+            echo "[setup-dev] FATAL: Could not install one or more dependencies into $AGENT_VENV_DIR"
             echo "[setup-dev] Pip output above shows the root cause."
+            return 1
         fi
     else
-        echo "[setup-dev] WARNING: shared venv python missing; per-agent venvs will be used"
+        echo "[setup-dev] FATAL: shared venv python missing; cannot proceed"
+        return 1
     fi
 }
 

@@ -52,6 +52,7 @@ type TimelineItem = {
   matchedPath: string;
   matchReason?: string;
   relevanceScore: number;
+  pinnedSnippet?: boolean;
 };
 
 const SEARCH_STOPWORDS = new Set([
@@ -240,6 +241,10 @@ function normalizeTimelineDocument(doc: TimelineDocument): TimelineDocument {
 function getPreviewMimeType(doc: TimelineDocument) {
   if (!doc) return '';
   if (doc.original_file_mime) return doc.original_file_mime;
+  const lowerName = (doc.original_file || '').toLowerCase();
+  if (doc.file_format === 'docx' || lowerName.endsWith('.docx')) {
+    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  }
   if (doc.file_format === 'pdf') return 'application/pdf';
   if (doc.file_format === 'json') return 'application/json';
   if (doc.file_format === 'md') return 'text/markdown';
@@ -273,6 +278,16 @@ function renderInlinePreview(doc: TimelineDocument) {
   const mimeType = getPreviewMimeType(doc);
   const base64Value = doc.original_file_data;
   const summary = toText(doc.metadata?.content?.summary || doc.processed_data?.summary || doc.processed_data?.text || doc.processed_data?.content);
+  const isDocx = (doc.file_format || '').toLowerCase() === 'docx' || (doc.original_file || '').toLowerCase().endsWith('.docx') || mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+  if (isDocx) {
+    const extractedText = toText(doc.processed_data?.result?.content || doc.processed_data?.content || doc.processed_data?.text || summary);
+    return (
+      <pre className="whitespace-pre-wrap break-words bg-slate-950 border border-slate-700 rounded p-4 text-sm text-slate-200 max-h-[24rem] overflow-auto">
+        {extractedText || summary || 'No DOCX text preview available.'}
+      </pre>
+    );
+  }
 
   if (base64Value && mimeType === 'application/pdf') {
     return (
@@ -357,6 +372,28 @@ function extractMeaningfulTerms(text: string) {
   );
 }
 
+function normalizeQuestionText(text: string) {
+  return text.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function getQuestionSnippet(question: any) {
+  const evidence = Array.isArray(question?.evidence) ? question.evidence : [];
+  return toText(question?.answer_preview).trim() || toText(evidence[0]?.snippet).trim() || '';
+}
+
+function dedupeQuestions(questions: any[]) {
+  const seen = new Set<string>();
+  const out: any[] = [];
+  for (const q of questions || []) {
+    const key = toText(q?.question_id) || normalizeQuestionText(toText(q?.text || ''));
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(q);
+    }
+  }
+  return out;
+}
+
 function buildExpandedTimelineQuery(query: string, filter: TimelineFilter, year: string, item?: TimelineItem | null) {
   const parts: string[] = [];
   const trimmed = query.trim();
@@ -401,7 +438,10 @@ export function TimelineExplorer() {
   const [suggestedQuestions, setSuggestedQuestions] = useState<any[]>([]);
   const [showQuestionDropdown, setShowQuestionDropdown] = useState(false);
   const [loadingQuestions, setLoadingQuestions] = useState(false);
+  const [topQuestions, setTopQuestions] = useState<any[]>([]);
+  const [topQuestionsLoading, setTopQuestionsLoading] = useState(false);
   const [pinnedQuestionSourceDocumentId, setPinnedQuestionSourceDocumentId] = useState<string | null>(null);
+  const [pinnedQuestionContext, setPinnedQuestionContext] = useState<{ text: string; snippet: string } | null>(null);
   const [showFullFile, setShowFullFile] = useState(false);
   const [openingDocumentId, setOpeningDocumentId] = useState<string | null>(null);
 
@@ -668,6 +708,79 @@ export function TimelineExplorer() {
     return () => clearTimeout(t);
   }, [query, searchDocuments]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadTopQuestions = async () => {
+      if (!connected || !query.trim() || queryResults.length === 0) {
+        setTopQuestions([]);
+        return;
+      }
+
+      setTopQuestionsLoading(true);
+      try {
+        const collected: any[] = [];
+        const activeQuery = normalizeQuestionText(query);
+        const seenQuestionKeys = new Set<string>();
+
+        for (const doc of queryResults.slice(0, 5)) {
+          if (!doc.document_id) continue;
+
+          const response: any = await send('tools/invoke', {
+            agentId: 'storage-agent',
+            name: 'get_document_questions',
+            arguments: { document_id: doc.document_id },
+          });
+
+          const data = unwrapToolResult(response);
+          const questions = Array.isArray(data?.questions) ? data.questions : [];
+
+          for (const question of questions) {
+            const questionText = toText(question?.text).trim();
+            if (!questionText) continue;
+
+            const normalizedQuestion = normalizeQuestionText(questionText);
+            if (normalizedQuestion === activeQuery) continue;
+
+            const questionKey = question.question_id || normalizedQuestion;
+            if (seenQuestionKeys.has(questionKey)) continue;
+            seenQuestionKeys.add(questionKey);
+
+            collected.push({
+              ...question,
+              _sourceDocumentId: doc.document_id,
+              _sourceTitle: doc.original_file || doc.title || doc.document_id,
+              _sourceRelevance: doc.relevance_score,
+            });
+
+            if (collected.length >= 5) break;
+          }
+
+          if (collected.length >= 5) break;
+        }
+
+        if (!cancelled) {
+          setTopQuestions(collected.slice(0, 5));
+        }
+      } catch (err) {
+        console.error('[TimelineExplorer] Failed to load top questions:', err);
+        if (!cancelled) {
+          setTopQuestions([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setTopQuestionsLoading(false);
+        }
+      }
+    };
+
+    void loadTopQuestions();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [connected, query, queryResults, send]);
+
   const timelineItems = useMemo<TimelineItem[]>(() => {
     return visibleDocuments
       .map((doc, idx) => {
@@ -712,10 +825,21 @@ export function TimelineExplorer() {
         const places = normalized.places || [];
         const topics = normalized.topics || [];
         const passageSource = normalized.matched_text || normalized.excerpt || normalized.summary || normalized.search_text || normalized.original_file_data || summary;
-        const passage = sentenceWindow(passageSource, query) || toText(passageSource).slice(0, 400) || summary;
+        const documentId = toText(doc.document_id || doc.id);
+        const isPinnedQuestionMatch =
+          pinnedQuestionSourceDocumentId &&
+          pinnedQuestionContext &&
+          documentId === pinnedQuestionSourceDocumentId &&
+          normalizeQuestionText(query) === normalizeQuestionText(pinnedQuestionContext.text);
+
+        const passage =
+          (isPinnedQuestionMatch ? pinnedQuestionContext.snippet : '') ||
+          sentenceWindow(passageSource, query) ||
+          toText(passageSource).slice(0, 400) ||
+          summary;
 
         return {
-          documentId: toText(doc.document_id || doc.id),
+          documentId,
           title,
           dateLabel: formatDateLabel(documentDate),
           sortDate,
@@ -729,13 +853,14 @@ export function TimelineExplorer() {
           fileFormat: toText(doc.file_format),
           source: normalized,
           passage,
+          pinnedSnippet: isPinnedQuestionMatch,
           matchedPath: toText(doc.matched_path || doc.match_method),
           matchReason: toText(doc.match_reason || doc.matchReason),
           relevanceScore: Number(doc.relevance_score || 0),
         };
       })
       .filter((item) => item.documentId);
-  }, [query, visibleDocuments]);
+  }, [pinnedQuestionContext, pinnedQuestionSourceDocumentId, query, visibleDocuments]);
 
   const filteredItems = useMemo(() => {
     return timelineItems
@@ -870,6 +995,7 @@ export function TimelineExplorer() {
                 onChange={(e) => {
                   const newQuery = e.target.value;
                   setPinnedQuestionSourceDocumentId(null);
+                  setPinnedQuestionContext(null);
                   setQuery(newQuery);
                   
                   // Auto-load question suggestions when user types
@@ -886,9 +1012,10 @@ export function TimelineExplorer() {
                     }).then((response: any) => {
                       const data = unwrapToolResult(response);
                       if (data?.questions) {
-                        setSuggestedQuestions(data.questions || []);
+                        const unique = dedupeQuestions(data.questions || []);
+                        setSuggestedQuestions(unique.slice(0, 5));
                         setShowQuestionDropdown(true);
-                        console.log('[TimelineExplorer] Loaded', data.questions.length, 'suggested questions');
+                        console.log('[TimelineExplorer] Loaded', unique.length, 'suggested questions (deduped)');
                       } else {
                         setSuggestedQuestions([]);
                       }
@@ -901,6 +1028,16 @@ export function TimelineExplorer() {
                   } else if (!newQuery.trim()) {
                     setSuggestedQuestions([]);
                     setShowQuestionDropdown(false);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    setShowQuestionDropdown(false);
+                    setPinnedQuestionSourceDocumentId(null);
+                    setPinnedQuestionContext(null);
+                    const value = (e.target as HTMLInputElement).value || query;
+                    void searchDocuments(value.trim());
                   }
                 }}
                 placeholder="Search titles, summaries, people, places, and metadata..."
@@ -925,9 +1062,14 @@ export function TimelineExplorer() {
                               similarity: q.similarity,
                             });
                             setPinnedQuestionSourceDocumentId(sourceDocumentId);
+                            setPinnedQuestionContext({
+                              text: q.text,
+                              snippet: getQuestionSnippet(q),
+                            });
                           } else {
                             console.log('[TimelineExplorer] No source document id on selected question; leaving current view unchanged', q);
                             setPinnedQuestionSourceDocumentId(null);
+                            setPinnedQuestionContext(null);
                           }
                           setShowQuestionDropdown(false);
                           setQuery(q.text);
@@ -947,7 +1089,7 @@ export function TimelineExplorer() {
             {loadingQuestions && <p className="mt-2 text-xs text-slate-400">Loading question suggestions...</p>}
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_24rem] gap-6 items-start">
+          <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_24rem] gap-6 items-start">
             <section className="space-y-4">
               <div className="flex items-center justify-between gap-3 text-sm text-slate-400">
                 <p>{filteredItems.length} matching documents</p>
@@ -1013,51 +1155,44 @@ export function TimelineExplorer() {
                               )}
                             </div>
 
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                void openFileInNewWindow(item.documentId);
-                              }}
-                              className="shrink-0 rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-100 hover:bg-slate-700 disabled:opacity-60"
-                              disabled={isOpening}
-                            >
-                              {isOpening ? 'Opening...' : 'Open File'}
-                            </button>
                           </div>
 
-                          <h3 className="text-base font-semibold text-white truncate">{item.title}</h3>
-
                           {(item.passage || item.summary) && (
-                            <p
-                              className="mt-2 text-sm text-slate-300 line-clamp-5"
-                              dangerouslySetInnerHTML={{ __html: highlightText(item.passage || item.summary, query) }}
-                            />
+                            <div className="mt-2 rounded-xl border border-slate-600/80 bg-slate-950 p-5 shadow-lg shadow-black/25 ring-1 ring-blue-500/10">
+                              <p
+                                className="text-base leading-7 text-slate-50 line-clamp-7"
+                                dangerouslySetInnerHTML={{ __html: highlightText(item.passage || item.summary, query) }}
+                              />
+                            </div>
                           )}
+
+                          <div className="mt-3 flex items-center justify-between">
+                            <div className="min-w-0">
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void openFileInNewWindow(item.documentId);
+                                }}
+                                className="text-sm font-medium text-slate-300 truncate text-left underline underline-offset-2 decoration-slate-500 hover:text-blue-300 hover:decoration-blue-300"
+                              >
+                                {item.title}
+                              </button>
+                            </div>
+
+                            {typeof item.relevanceScore === 'number' && (
+                              <p className="text-[11px] text-slate-500 ml-3">Confidence: {Math.round(Math.max(0, Math.min(1, item.relevanceScore)) * 100)}%</p>
+                            )}
+                          </div>
 
                           {item.matchedPath && (
                             <p className="mt-2 text-[11px] uppercase tracking-wide text-slate-500">
                               Why: {item.matchReason || item.matchedPath}
+                              {item.pinnedSnippet && (
+                                <span className="ml-2 normal-case text-xs text-slate-400">• stored question snippet</span>
+                              )}
                             </p>
                           )}
-
-                          <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
-                            {item.people.slice(0, 4).map((person) => (
-                              <span key={person} className="px-2 py-0.5 rounded-full bg-emerald-900 text-emerald-100 border border-emerald-700">
-                                {person}
-                              </span>
-                            ))}
-                            {item.places.slice(0, 4).map((place) => (
-                              <span key={place} className="px-2 py-0.5 rounded-full bg-amber-900 text-amber-100 border border-amber-700">
-                                {place}
-                              </span>
-                            ))}
-                            {item.topics.slice(0, 4).map((topic) => (
-                              <span key={topic} className="px-2 py-0.5 rounded-full bg-indigo-900 text-indigo-100 border border-indigo-700">
-                                {topic}
-                              </span>
-                            ))}
-                          </div>
                         </div>
                       </div>
                     </div>
@@ -1065,6 +1200,46 @@ export function TimelineExplorer() {
                 })}
               </div>
             </section>
+
+            <aside className="space-y-4 sticky top-6 lg:pt-12">
+              <div className="rounded-xl border border-slate-800 bg-slate-800 p-4">
+                <div className="mb-3">
+                  <h3 className="text-sm font-semibold text-slate-100">Explore next</h3>
+                </div>
+
+                {!query.trim() ? (
+                  <p className="text-xs text-slate-400">Search first to load questions.</p>
+                ) : topQuestionsLoading ? (
+                  <p className="text-xs text-slate-400">Loading questions...</p>
+                ) : topQuestions.length === 0 ? (
+                  <p className="text-xs text-slate-400">No questions found for the current results.</p>
+                ) : (
+                  <div className="space-y-2 max-h-[32rem] overflow-y-auto pr-1">
+                    {topQuestions.map((question: any, index: number) => (
+                      <button
+                        key={question.question_id || `top-question-${index}`}
+                        type="button"
+                        onClick={() => {
+                          const sourceDocumentId = question._sourceDocumentId || question.document_id;
+                          if (sourceDocumentId) {
+                            setPinnedQuestionSourceDocumentId(sourceDocumentId);
+                            setPinnedQuestionContext({
+                              text: question.text,
+                              snippet: getQuestionSnippet(question),
+                            });
+                          }
+                          setShowQuestionDropdown(false);
+                          setQuery(question.text);
+                        }}
+                        className="w-full rounded-lg border border-slate-700 bg-slate-900/80 p-3 text-left hover:bg-slate-700 transition"
+                      >
+                        <div className="text-sm font-medium text-slate-100">{question.text}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </aside>
           </div>
         </div>
       </main>

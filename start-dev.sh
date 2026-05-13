@@ -18,8 +18,8 @@ echo -e "${BLUE}================================================${NC}\n"
 
 # Store the root directory
 ROOT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-# Set agent venv dir for all agent launches
-AGENT_VENV_DIR="$(cd "$ROOT_DIR/.." && pwd)/agent-venv"
+# Set agent venv dir for all agent launches (it's in the project root, not parent)
+AGENT_VENV_DIR="$ROOT_DIR/agent-venv"
 cd "$ROOT_DIR"
 
 is_python_healthy() {
@@ -187,6 +187,29 @@ echo -e "${GREEN}[0/6] Validating required dependencies...${NC}"
 if ! "$ROOT_DIR/setup-dev.sh"; then
     echo -e "\n${RED}Dependency gate failed. Services were not started.${NC}"
     echo -e "${YELLOW}Fix missing dependencies, then run:${NC} ./start-dev.sh\n"
+    exit 1
+fi
+
+# Critical: Verify sentence-transformers for question generation quality
+echo -e "${GREEN}Verifying sentence-transformers installation...${NC}"
+AGENT_PYTHON=""
+if [ -f "$AGENT_VENV_DIR/bin/python" ] && [ -x "$AGENT_VENV_DIR/bin/python" ]; then
+    AGENT_PYTHON="$AGENT_VENV_DIR/bin/python"
+elif [ -f "$AGENT_VENV_DIR/bin/python3" ] && [ -x "$AGENT_VENV_DIR/bin/python3" ]; then
+    AGENT_PYTHON="$AGENT_VENV_DIR/bin/python3"
+fi
+
+if [ -n "$AGENT_PYTHON" ]; then
+    if $AGENT_PYTHON -c "import sentence_transformers; print('[startup] ✓ sentence-transformers v' + sentence_transformers.__version__ + ' is ready')" 2>&1; then
+        echo -e "${GREEN}✓ sentence-transformers verified in agent venv${NC}"
+    else
+        echo -e "${RED}FATAL: sentence-transformers not found in $AGENT_VENV_DIR${NC}"
+        echo -e "${YELLOW}sentence-transformers is required for high-quality question generation.${NC}"
+        echo -e "${YELLOW}The pip install may have failed. Check output above.${NC}"
+        exit 1
+    fi
+else
+    echo -e "${RED}FATAL: Could not find Python in agent venv at $AGENT_VENV_DIR${NC}"
     exit 1
 fi
 echo ""

@@ -78,6 +78,29 @@ logger.setLevel(logging.DEBUG)
 logging.getLogger().debug("DEBUG LOG TEST: module import time")
 
 agent_dir = Path(__file__).parent
+
+
+def infer_file_format(file_format: str, original_file: str = '', original_file_mime: str = '') -> str:
+    normalized = (file_format or '').strip().lower()
+    original_name = (original_file or '').strip().lower()
+    mime = (original_file_mime or '').strip().lower()
+
+    if normalized in {'', 'bin', 'binary', 'application/octet-stream', 'unknown'}:
+        if original_name.endswith('.docx') or 'wordprocessingml.document' in mime:
+            return 'docx'
+        if original_name.endswith('.pdf') or 'pdf' in mime:
+            return 'pdf'
+        if original_name.endswith('.json'):
+            return 'json'
+        if original_name.endswith('.md'):
+            return 'md'
+        if original_name.endswith('.txt'):
+            return 'txt'
+
+    if normalized == 'doc':
+        return 'docx'
+
+    return normalized or 'txt'
 storage_dir = agent_dir / 'data'
 storage_dir.mkdir(exist_ok=True)
 
@@ -149,10 +172,7 @@ class SimpleOllamaProvider:
         self.base_url = base_url or os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
         self.model = model or os.getenv('OLLAMA_MODEL', 'mistral')
         self._available = self._check_availability()
-        if self._available:
-            logger.info(f"[OLLAMA] ✅ Provider ready (model={self.model}, url={self.base_url})")
-        else:
-            logger.warning(f"[OLLAMA] ⚠️  Provider not available at {self.base_url}")
+        logger.info(f"[OLLAMA] ✅ Provider ready (model={self.model}, url={self.base_url}") if self._available else logger.warning(f"[OLLAMA] ⚠️  Provider not available at {self.base_url}")
     
     def is_available(self) -> bool:
         return self._available
@@ -162,15 +182,7 @@ class SimpleOllamaProvider:
         try:
             import requests
             response = requests.get(f"{self.base_url}/api/tags", timeout=5)
-            if response.status_code != 200:
-                return False
-            tags_data = response.json()
-            models = tags_data.get("models", [])
-            model_names = [m.get("name", "") for m in models]
-            available = any(self.model in name for name in model_names)
-            if not available:
-                logger.warning(f"[OLLAMA] Model '{self.model}' not found. Available: {model_names}")
-            return available
+            return response.status_code == 200 and any(self.model in name for name in [m.get("name", "") for m in response.json().get("models", [])]) or logger.warning(f"[OLLAMA] Model '{self.model}' not found. Available: {[m.get('name', '') for m in response.json().get('models', [])]}")
         except Exception as e:
             logger.debug(f"[OLLAMA] Availability check failed: {e}")
             return False
@@ -731,7 +743,11 @@ async def tool_store_document(params: Dict[str, Any]) -> Dict[str, Any]:
         # Get required fields
         doc_type = params.get('type', params.get('content_type', 'document'))
         original_file = params.get('original_file', params.get('original_file_path', 'unknown'))
-        file_format = params.get('file_format', 'txt')
+        file_format = infer_file_format(
+            params.get('file_format', 'txt'),
+            original_file,
+            params.get('original_file_mime', '')
+        )
         created_by = params.get('created_by', 'api')
         
         metadata = params.get('metadata', {})
