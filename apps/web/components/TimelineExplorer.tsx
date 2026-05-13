@@ -340,24 +340,174 @@ function highlightText(text: string, query: string) {
   return escapeHtml(text).replace(re, (match) => `<mark class="rounded bg-blue-400/30 text-blue-100 px-1">${match}</mark>`);
 }
 
-function sentenceWindow(text: string, query: string) {
-  const clean = toText(text).replace(/\s+/g, ' ').trim();
-  if (!clean) return '';
+function splitContextLines(text: string) {
+  const normalized = toText(text).replace(/\r\n/g, '\n').replace(/\u00a0/g, ' ').trim();
+  if (!normalized) return [] as string[];
 
+  const newlineParts = normalized
+    .split(/\n+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const lines: string[] = [];
+  for (const part of newlineParts) {
+    const sentenceParts = part
+      .split(/(?<=[.!?])\s+/)
+      .map((sentence) => sentence.trim())
+      .filter(Boolean);
+
+    const units = sentenceParts.length > 0 ? sentenceParts : [part];
+    for (const unit of units) {
+      if (unit.length <= 160) {
+        lines.push(unit);
+        continue;
+      }
+
+      let start = 0;
+      while (start < unit.length) {
+        const chunk = unit.slice(start, start + 160).trim();
+        if (chunk) lines.push(chunk);
+        start += 160;
+      }
+    }
+  }
+
+  return lines;
+}
+
+function uniqueNonEmptyText(values: string[]) {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const text = toText(value).trim();
+    if (!text) continue;
+    const key = normalizeQuestionText(text);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
+}
+
+function pickBestLineIndex(lines: string[], terms: string[]) {
+  if (lines.length === 0 || terms.length === 0) return -1;
+
+  let bestIndex = -1;
+  let bestScore = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    const lower = lines[index].toLowerCase();
+    const score = terms.reduce((total, term) => (lower.includes(term) ? total + 1 : total), 0);
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+
+  return bestScore > 0 ? bestIndex : -1;
+}
+
+function lineWindow(text: string, query: string, minimumLines = 6, anchorText = '') {
+  const lines = splitContextLines(text);
+  if (lines.length === 0) return '';
+
+  const normalizedQuery = normalizeQuestionText(query);
+  const normalizedAnchor = normalizeQuestionText(anchorText);
   const terms = extractMeaningfulTerms(query);
-  if (terms.length === 0) return clean.slice(0, 240);
+  const anchorTerms = extractMeaningfulTerms(anchorText);
 
-  const sentences = clean.split(/(?<=[.!?])\s+/);
-  const hitIndex = sentences.findIndex((sentence) => {
-    const lower = sentence.toLowerCase();
-    return terms.some((term) => lower.includes(term));
-  });
+  let hitIndex = -1;
+  if (normalizedAnchor) {
+    hitIndex = lines.findIndex((line) => normalizeQuestionText(line).includes(normalizedAnchor));
+  }
 
-  if (hitIndex === -1) return clean.slice(0, 240);
+  if (hitIndex === -1 && anchorTerms.length > 0) {
+    hitIndex = pickBestLineIndex(lines, anchorTerms);
+  }
 
-  const start = Math.max(0, hitIndex - 2);
-  const end = Math.min(sentences.length, hitIndex + 3);
-  return sentences.slice(start, end).join(' ').slice(0, 320);
+  if (hitIndex === -1 && terms.length > 0) {
+    hitIndex = pickBestLineIndex(lines, terms);
+  }
+
+  if (hitIndex === -1 && normalizedQuery) {
+    hitIndex = lines.findIndex((line) => normalizeQuestionText(line).includes(normalizedQuery));
+  }
+
+  let start = 0;
+  if (hitIndex !== -1) {
+    start = Math.max(0, hitIndex - 2);
+  }
+
+  let end = Math.min(lines.length, start + minimumLines);
+  if (end - start < minimumLines) {
+    start = Math.max(0, end - minimumLines);
+  }
+
+  return lines.slice(start, end).join('\n');
+}
+
+function countLineMatches(snippet: string, anchorText: string, query: string) {
+  const lines = splitContextLines(snippet);
+  if (lines.length === 0) return 0;
+
+  const anchorTerms = extractMeaningfulTerms(anchorText);
+  const queryTerms = extractMeaningfulTerms(query);
+  const anchorExact = normalizeQuestionText(anchorText);
+  const queryExact = normalizeQuestionText(query);
+
+  let score = 0;
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+    const normalizedLine = normalizeQuestionText(line);
+
+    if (anchorExact && normalizedLine.includes(anchorExact)) score += 8;
+    if (queryExact && normalizedLine.includes(queryExact)) score += 4;
+    score += anchorTerms.reduce((total, term) => (lower.includes(term) ? total + 2 : total), 0);
+    score += queryTerms.reduce((total, term) => (lower.includes(term) ? total + 1 : total), 0);
+  }
+
+  return score;
+}
+
+function buildSnippet(
+  candidates: string[],
+  query: string,
+  anchorText: string,
+  minimumLines = 6,
+) {
+  const uniqueCandidates = uniqueNonEmptyText(candidates);
+  if (uniqueCandidates.length === 0) return '';
+
+  const scored = uniqueCandidates
+    .map((candidate) => {
+      const snippet = lineWindow(candidate, query, minimumLines, anchorText);
+      const lineCount = splitContextLines(snippet).length;
+      const score = countLineMatches(snippet, anchorText, query);
+      return { candidate, snippet, lineCount, score };
+    })
+    .sort((a, b) => (b.score - a.score) || (b.lineCount - a.lineCount) || (b.candidate.length - a.candidate.length));
+
+  const best = scored[0];
+  if (best.lineCount >= minimumLines) {
+    return best.snippet;
+  }
+
+  const combinedLines = splitContextLines(best.snippet);
+  const seen = new Set(combinedLines.map((line) => normalizeQuestionText(line)));
+
+  for (const entry of scored.slice(1)) {
+    const lines = splitContextLines(entry.snippet);
+    for (const line of lines) {
+      const key = normalizeQuestionText(line);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      combinedLines.push(line);
+      if (combinedLines.length >= minimumLines) {
+        return combinedLines.slice(0, minimumLines).join('\n');
+      }
+    }
+  }
+
+  return combinedLines.slice(0, minimumLines).join('\n');
 }
 
 function extractMeaningfulTerms(text: string) {
@@ -612,6 +762,9 @@ export function TimelineExplorer() {
             people: Array.isArray(doc.people) ? doc.people : extractNames(doc.people),
             places: Array.isArray(doc.places) ? doc.places : extractNames(doc.places),
             topics: Array.isArray(doc.topics) ? doc.topics : extractNames(doc.topics),
+            metadata: doc.metadata,
+            processed_data: doc.processed_data,
+            app_data: doc.app_data,
             original_file_data: doc.original_file_data,
             original_file_mime: doc.original_file_mime,
             matched_text: matchedText,
@@ -623,11 +776,23 @@ export function TimelineExplorer() {
 
           if (!source.document_id) return null;
 
-          // Backend now returns real file passages in matched_text
-          // Use matched_text (real passage) > excerpt > summary
-          let passageSource = source.matched_text || source.excerpt || source.summary || '';
-          
-          const passage = passageSource ? toText(passageSource).slice(0, 400) : '';
+          const fullContentSource =
+            toText(source.processed_data?.result?.content) ||
+            toText(source.processed_data?.content) ||
+            toText(source.processed_data?.text) ||
+            toText(source.metadata?.content?.summary?.text) ||
+            toText(source.metadata?.content?.summary) ||
+            '';
+
+          const anchor = source.matched_text || source.excerpt || '';
+          const passage =
+            buildSnippet(
+              [anchor, fullContentSource, source.summary],
+              trimmed,
+              anchor,
+              6,
+            ) ||
+            toText(anchor || fullContentSource || source.summary).slice(0, 500);
 
           return {
             ...source,
@@ -824,18 +989,44 @@ export function TimelineExplorer() {
         const people = normalized.people || [];
         const places = normalized.places || [];
         const topics = normalized.topics || [];
-        const passageSource = normalized.matched_text || normalized.excerpt || normalized.summary || normalized.search_text || normalized.original_file_data || summary;
+        const fullContentSource =
+          toText(normalized.processed_data?.result?.content) ||
+          toText(normalized.processed_data?.content) ||
+          toText(normalized.processed_data?.text) ||
+          toText(normalized.metadata?.content?.summary?.text) ||
+          toText(normalized.metadata?.content?.summary) ||
+          '';
         const documentId = toText(doc.document_id || doc.id);
         const isPinnedQuestionMatch =
           pinnedQuestionSourceDocumentId &&
           pinnedQuestionContext &&
           documentId === pinnedQuestionSourceDocumentId &&
           normalizeQuestionText(query) === normalizeQuestionText(pinnedQuestionContext.text);
+        const anchor = isPinnedQuestionMatch
+          ? (pinnedQuestionContext?.snippet || normalized.matched_text || normalized.excerpt || '')
+          : (normalized.matched_text || normalized.excerpt || '');
+        const passageSource = fullContentSource || normalized.summary || normalized.search_text || summary;
+
+        const pinnedSnippetContext = isPinnedQuestionMatch
+          ? buildSnippet(
+              [pinnedQuestionContext?.snippet || '', anchor, fullContentSource, normalized.summary, normalized.search_text || ''],
+              query,
+              pinnedQuestionContext?.snippet || anchor,
+              6,
+            )
+          : '';
+        const defaultContext = buildSnippet(
+          [anchor, fullContentSource, normalized.summary, normalized.search_text || ''],
+          query,
+          anchor,
+          6,
+        );
 
         const passage =
+          pinnedSnippetContext ||
+          defaultContext ||
           (isPinnedQuestionMatch ? pinnedQuestionContext.snippet : '') ||
-          sentenceWindow(passageSource, query) ||
-          toText(passageSource).slice(0, 400) ||
+          toText(anchor || passageSource).slice(0, 500) ||
           summary;
 
         return {
@@ -1160,7 +1351,7 @@ export function TimelineExplorer() {
                           {(item.passage || item.summary) && (
                             <div className="mt-2 rounded-xl border border-slate-600/80 bg-slate-950 p-5 shadow-lg shadow-black/25 ring-1 ring-blue-500/10">
                               <p
-                                className="text-base leading-7 text-slate-50 line-clamp-7"
+                                className="text-base leading-7 text-slate-50 whitespace-pre-line"
                                 dangerouslySetInnerHTML={{ __html: highlightText(item.passage || item.summary, query) }}
                               />
                             </div>
