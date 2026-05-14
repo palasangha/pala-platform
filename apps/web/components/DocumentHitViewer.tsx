@@ -59,20 +59,21 @@ function extractDocumentText(doc: RetrievedDocument): string {
   return candidate;
 }
 
-function extractTerms(query: string) {
-  return query
-    .toLowerCase()
-    .split(/[^a-z0-9\u00C0-\u024F]+/)
-    .map((term) => term.trim())
-    .filter((term) => term.length > 2);
+function escapeForRegex(s: string) {
+  return s.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
 }
 
+// Highlight the full phrase (case-insensitive). Falls back to whole-line escape if empty.
 function highlightText(text: string, query: string) {
-  if (!query.trim()) return escapeHtml(text);
-  const terms = extractTerms(query).map((term) => term.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'));
-  if (terms.length === 0) return escapeHtml(text);
-  const re = new RegExp(terms.join('|'), 'gi');
-  return escapeHtml(text).replace(re, (match) => `<mark class="rounded bg-amber-400/30 text-amber-100 px-1">${match}</mark>`);
+  const q = (query || '').trim();
+  if (!q) return escapeHtml(text);
+  const phrase = escapeForRegex(q);
+  try {
+    const re = new RegExp(phrase, 'gi');
+    return escapeHtml(text).replace(re, (match) => `<mark class="rounded bg-amber-400/30 text-amber-100 px-1">${match}</mark>`);
+  } catch (err) {
+    return escapeHtml(text);
+  }
 }
 
 function buildSearchableLines(text: string) {
@@ -141,13 +142,13 @@ export default function DocumentHitViewer({ documentId, initialQuery = '', initi
   const lines = useMemo(() => buildSearchableLines(documentText || ''), [documentText]);
 
   const matchIndexes = useMemo(() => {
-    const terms = extractTerms(searchText);
-    if (terms.length === 0) return [] as number[];
+    const phrase = (searchText || '').trim().toLowerCase();
+    if (!phrase) return [] as number[];
 
     return lines
       .map((line, index) => {
-        const lower = line.toLowerCase();
-        return terms.some((term) => lower.includes(term)) ? index : -1;
+        const lower = (line || '').toLowerCase();
+        return lower.includes(phrase) ? index : -1;
       })
       .filter((index) => index >= 0);
   }, [lines, searchText]);
