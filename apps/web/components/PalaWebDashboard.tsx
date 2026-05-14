@@ -76,7 +76,15 @@ export function PalaWebDashboard() {
       <main className="max-w-7xl mx-auto px-4 py-8">
         {activeTab === 'browse' && (
           <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-            <Browse send={send} className="min-h-[60vh]" />
+            <Browse
+              send={send}
+              className="min-h-[60vh]"
+              onOpenDocument={(documentId) => {
+                if (typeof window === 'undefined' || !documentId) return;
+                const url = new URL(`/document/${encodeURIComponent(documentId)}`, window.location.origin);
+                window.open(url.toString(), '_blank', 'noopener,noreferrer');
+              }}
+            />
           </div>
         )}
         {activeTab === 'developer' && <DeveloperPanel />}

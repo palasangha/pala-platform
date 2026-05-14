@@ -43,7 +43,7 @@ const DEFAULT_TAG_ENTITY_LIMIT = 20;
 const annotateMonthNodes = (year: number, months: BrowseNode[]) =>
   months.map(month => ({ ...month, year }));
 
-export function Browse({ className = '', send }: BrowseProps) {
+export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
   const [browseMode, setBrowseMode] = useState<BrowseMode>('explore');
   const [hierarchy, setHierarchy] = useState<BrowseNode[]>([]);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
@@ -166,6 +166,12 @@ export function Browse({ className = '', send }: BrowseProps) {
         {summary ? <p className="whitespace-pre-wrap">{summary}</p> : <p>No inline preview available for this file type.</p>}
       </div>
     );
+  };
+
+  const openDocumentTab = (documentId: string) => {
+    if (typeof window === 'undefined' || !documentId) return;
+    const url = new URL(`/document/${encodeURIComponent(documentId)}`, window.location.origin);
+    window.open(url.toString(), '_blank', 'noopener,noreferrer');
   };
 
   const invokeBrowseTool = async (name: string, arguments_: Record<string, any> = {}) => {
@@ -532,6 +538,11 @@ export function Browse({ className = '', send }: BrowseProps) {
                         onClick={() => {
                           setSelectedDoc(doc);
                           void loadDocumentDetails(doc.id);
+                          if (onOpenDocument) {
+                            onOpenDocument(doc.id, false);
+                          } else {
+                            openDocumentTab(doc.id);
+                          }
                         }}
                         className={`w-full text-left p-3 rounded-lg border-2 transition ${
                           selectedDoc?.id === doc.id

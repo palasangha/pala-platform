@@ -985,10 +985,20 @@ export function TimelineExplorer() {
   );
 
   const openFileInNewWindow = useCallback(
-    (documentId: string) => {
-      openDocumentInViewer(documentId);
+    (documentId: string, hitText: string = '') => {
+      if (!documentId || typeof window === 'undefined') return;
+
+      const url = new URL(`/document/${encodeURIComponent(documentId)}`, window.location.origin);
+      if (query.trim()) {
+        url.searchParams.set('q', query.trim());
+      }
+      if (hitText.trim()) {
+        url.searchParams.set('hit', hitText.trim());
+      }
+
+      window.open(url.toString(), '_blank', 'noopener,noreferrer');
     },
-    [openDocumentInViewer]
+    [query]
   );
 
   useEffect(() => {
@@ -1188,11 +1198,11 @@ export function TimelineExplorer() {
                     key={item.documentId}
                     role="button"
                     tabIndex={0}
-                    onClick={() => openItem(item)}
+                    onClick={() => openFileInNewWindow(item.documentId, item.passage || item.summary || '')}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' || event.key === ' ') {
                         event.preventDefault();
-                        openItem(item);
+                        openFileInNewWindow(item.documentId, item.passage || item.summary || '');
                       }
                     }}
                     className="cursor-pointer space-y-2 pb-4 border-b border-slate-800 last:border-b-0 last:pb-0 hover:opacity-80 transition"
@@ -1203,7 +1213,7 @@ export function TimelineExplorer() {
                         type="button"
                         onClick={(event) => {
                           event.stopPropagation();
-                          void openFileInNewWindow(item.documentId);
+                          void openFileInNewWindow(item.documentId, item.passage || item.summary || '');
                         }}
                         className="text-base font-medium text-blue-400 hover:text-blue-300 truncate text-left"
                       >
