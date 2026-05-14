@@ -858,7 +858,7 @@ export function TimelineExplorer() {
           [anchor, fullContentSource, normalized.summary, normalized.search_text || ''],
           query,
           anchor,
-          6,
+          999,
         );
 
         const passage =
@@ -1233,7 +1233,7 @@ export function TimelineExplorer() {
                     {/* Snippet text */}
                     {(item.passage || item.summary) && (
                       <p
-                        className="text-sm leading-relaxed text-slate-300 line-clamp-6 whitespace-pre-wrap"
+                        className="text-sm leading-relaxed text-slate-300 whitespace-pre-wrap"
                         dangerouslySetInnerHTML={{ __html: highlightText(item.passage || item.summary, query) }}
                       />
                     )}
