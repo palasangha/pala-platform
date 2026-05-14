@@ -1182,6 +1182,34 @@ export function ContentBrowser() {
             </button>
             <button
               onClick={() => {
+                if (!connected || !client) {
+                  console.log('[UI] Cannot regenerate questions: disconnected');
+                  return;
+                }
+
+                console.log('[UI] Regenerating questions for visible docs:', visibleContents.map((doc) => ({
+                  document_id: doc.document_id,
+                  original_file: doc.original_file,
+                })));
+
+                visibleContents.forEach((doc) => {
+                  setLoadingQuestionsById((current) => ({
+                    ...current,
+                    [doc.document_id]: true,
+                  }));
+                  sendStorageToolInvoke(
+                    'regenerate_document_questions',
+                    { document_id: doc.document_id },
+                    `regen-all-questions-${doc.document_id}-${Date.now()}`
+                  );
+                });
+              }}
+              className="px-3 py-2 bg-orange-600 text-white rounded-lg text-xs font-medium hover:bg-orange-700"
+            >
+              Regenerate all questions
+            </button>
+            <button
+              onClick={() => {
                 // Build export data from loaded questions for visible documents
                 const rows: any[] = [];
                 visibleContents.forEach((doc) => {

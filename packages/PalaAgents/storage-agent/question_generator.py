@@ -259,6 +259,25 @@ Generate the questions now:"""
         if not lines:
             lines = [content_text.strip()]
 
+        def format_snippet_lines(snippet_lines: List[str], max_chars_per_line: int = 220) -> List[str]:
+            formatted_lines: List[str] = []
+            for snippet_line in snippet_lines:
+                compact_line = re.sub(r"\s+", " ", snippet_line).strip()
+                formatted_lines.append(compact_line)
+            return formatted_lines
+
+        def center_snippet_by_words(snippet_text: str, max_words: int = 180) -> str:
+            words = re.findall(r"\S+", snippet_text)
+            if len(words) <= max_words:
+                return snippet_text
+
+            start = max(0, (len(words) - max_words) // 2)
+            end = start + max_words
+            if end > len(words):
+                end = len(words)
+                start = max(0, end - max_words)
+            return " ".join(words[start:end])
+
         # Extract meaningful keywords from question, allowing some short but important words
         stop_words = {"what", "when", "where", "which", "how", "why", "was", "were", "the", "and", "or", "in", "of", "to", "a", "an", "is", "be", "by", "for", "on", "at", "as", "about", "their", "there", "these", "those", "would", "could", "should", "document", "context", "from", "during", "that"}
         question_terms = [
@@ -268,15 +287,15 @@ Generate the questions now:"""
         ]
 
         if not question_terms:
-            # Return up to 4 lines as preview when no strong question terms
-            snippet_lines = lines[0:4]
-            snippet = "\n".join(snippet_lines)[:1000]
+            # Return a compact 6-line preview when no strong question terms
+            snippet_lines = format_snippet_lines(lines[0:6])
+            snippet = center_snippet_by_words("\n".join(snippet_lines))
             return [
                 {
                     "source_path": source_path,
                     "line_start": 1,
-                    "line_end": min(4, len(lines)),
-                    "span": {"line_start": 1, "line_end": min(4, len(lines))},
+                    "line_end": min(6, len(lines)),
+                    "span": {"line_start": 1, "line_end": min(6, len(lines))},
                     "snippet": snippet,
                     "confidence": 0.3,
                 }
@@ -320,17 +339,28 @@ Generate the questions now:"""
                 partial_matches.sort(key=lambda x: (-x[0], x[1]))  # Sort by score desc, then index asc
                 best_partial = partial_matches[0]
                 score, idx, line = best_partial
-                # Provide a wider context window: 3 lines above and 3 lines below the matched line
-                start_idx = max(0, idx - 3)
-                end_idx = min(len(lines), idx + 4)
-                snippet_lines = lines[start_idx:end_idx]
-                snippet = "\n".join(snippet_lines)[:2000]
+                # Provide a wider context window: aim for 6-12 lines with matched line in middle
+                lines_before = 4
+                lines_after = 5
+                start_idx = max(0, idx - lines_before)
+                end_idx = min(len(lines), idx + lines_after + 1)
+                # Adjust to ensure we get 6-12 lines
+                actual_lines = end_idx - start_idx
+                if actual_lines < 6 and len(lines) >= 6:
+                    if start_idx == 0:
+                        end_idx = min(len(lines), 9)
+                    else:
+                        start_idx = max(0, end_idx - 9)
+                snippet_lines = format_snippet_lines(lines[start_idx:end_idx])
+                snippet = center_snippet_by_words("\n".join(snippet_lines))
                 confidence = round(min(score / max(len(question_terms), 1), 1.0), 3)
                 confidence = max(confidence, 0.4)
             else:
-                # Still no match - return first 4 lines as last resort
-                snippet_lines = lines[0:4]
-                snippet = "\n".join(snippet_lines)[:1000]
+                # Still no match - return first 6-9 lines as last resort
+                snippet_lines = format_snippet_lines(lines[0:9])
+                snippet = center_snippet_by_words("\n".join(snippet_lines))
+                start_idx = 0
+                end_idx = len(snippet_lines)
                 idx = 0
                 confidence = 0.25
             
@@ -384,11 +414,22 @@ Generate the questions now:"""
             (line[:240].replace('\n',' '))
         )
 
-        # Build a context window: 3 lines above and 3 lines below the matched line
-        start_idx = max(0, idx - 3)
-        end_idx = min(len(lines), idx + 4)
-        preview_lines = lines[start_idx:end_idx]
-        snippet_text = "\n".join(preview_lines)[:2000]
+        # Build a context window: aim for 6-12 lines with matched line in middle
+        lines_before = 4
+        lines_after = 5
+        start_idx = max(0, idx - lines_before)
+        end_idx = min(len(lines), idx + lines_after + 1)
+        
+        # Adjust to ensure we get 6-12 lines
+        actual_lines = end_idx - start_idx
+        if actual_lines < 6 and len(lines) >= 6:
+            if start_idx == 0:
+                end_idx = min(len(lines), 9)
+            else:
+                start_idx = max(0, end_idx - 9)
+        
+        preview_lines = format_snippet_lines(lines[start_idx:end_idx])
+        snippet_text = center_snippet_by_words("\n".join(preview_lines))
         evidence = [
             {
                 "source_path": source_path,
@@ -614,18 +655,10 @@ Generate the questions now:"""
                                     verified = True
 
                             if verified:
-                                # Ensure fallback snippet shows up to 4 sentences (as a short preview)
+                                # Keep the fallback snippet exactly as extracted so line counts stay stable.
                                 snippet = fallback.get('snippet', '')
-                                # If fallback snippet is a single sentence, try to expand to up to 4 sentences
-                                # using simple split on sentence boundaries
-                                try:
-                                    import re
-                                    sents = [s.strip() for s in re.split(r'(?<=[\.\!\?])\s+', snippet) if s.strip()]
-                                    preview = '\n'.join(sents[:4]) if sents else snippet
-                                except Exception:
-                                    preview = snippet
                                 q.evidence = [fallback]
-                                q.evidence[0]['snippet'] = preview[:1000]
+                                q.evidence[0]['snippet'] = snippet
                                 q.answer_preview = q.evidence[0]['snippet']
                                 q.answer_span = fallback.get('span')
 
