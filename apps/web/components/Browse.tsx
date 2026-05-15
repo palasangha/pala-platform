@@ -137,7 +137,7 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
         <iframe
           title={`Preview ${doc.original_file || doc.document_id || 'document'}`}
           src={`data:application/pdf;base64,${base64Value}`}
-          className={`w-full rounded border border-slate-700 bg-slate-950 ${expanded ? 'h-[78vh]' : 'h-[28rem]'}`}
+          className={`w-full rounded border border-gray-300 bg-gray-50 ${expanded ? 'h-[78vh]' : 'h-[28rem]'}`}
         />
       );
     }
@@ -145,7 +145,7 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
     if (base64Value && (mimeType.startsWith('text/') || mimeType === 'application/json' || doc.file_format === 'json')) {
       const textContent = decodeBase64(base64Value);
       return (
-        <pre className={`whitespace-pre-wrap break-words bg-slate-950 border border-slate-700 rounded p-4 text-sm text-slate-200 overflow-auto ${expanded ? 'max-h-[78vh]' : 'max-h-[28rem]'}`}>
+        <pre className={`whitespace-pre-wrap break-words bg-white border border-gray-300 rounded p-4 text-sm text-gray-800 overflow-auto ${expanded ? 'max-h-[78vh]' : 'max-h-[28rem]'}`}>
           {textContent || summary || 'No text preview available.'}
         </pre>
       );
@@ -156,13 +156,13 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
         <img
           src={`data:${mimeType || 'image/*'};base64,${base64Value}`}
           alt={doc.original_file || doc.document_id || 'document preview'}
-          className={`max-w-full rounded border border-slate-700 bg-slate-950 object-contain ${expanded ? 'max-h-[78vh]' : 'max-h-[28rem]'}`}
+          className={`max-w-full rounded border border-gray-300 bg-gray-50 object-contain ${expanded ? 'max-h-[78vh]' : 'max-h-[28rem]'}`}
         />
       );
     }
 
     return (
-      <div className="rounded border border-slate-700 bg-slate-950 p-4 text-sm text-slate-300">
+      <div className="rounded border border-gray-300 bg-gray-50 p-4 text-sm text-gray-700">
         {summary ? <p className="whitespace-pre-wrap">{summary}</p> : <p>No inline preview available for this file type.</p>}
       </div>
     );
@@ -359,11 +359,11 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
         <div key={nodeKey} className="pl-8">
           <button
             onClick={() => node.year && handleYearMonthClick(node.year, node.month!)}
-            className="w-full text-left px-3 py-2 rounded hover:bg-slate-800/50 flex items-center gap-2 text-sm font-medium text-slate-100"
+            className="w-full text-left px-3 py-2 rounded hover:bg-gray-200 flex items-center gap-2 text-sm font-medium text-gray-900"
           >
-            <span className="text-slate-400">📅</span>
-            <span className="text-sm text-slate-100">Month {node.month}</span>
-            <span className="ml-auto text-xs text-slate-400 bg-slate-800 px-2 py-1 rounded">
+            <span className="text-gray-600">📅</span>
+            <span className="text-sm text-gray-900">Month {node.month}</span>
+            <span className="ml-auto text-xs text-gray-600 bg-gray-200 px-2 py-1 rounded">
               {node.count || 0}
             </span>
           </button>
@@ -377,7 +377,7 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
           onClick={() => loadChildren(node)}
           disabled={!hasChildren}
           className={`w-full text-left px-3 py-2 rounded flex items-center gap-2 text-sm transition ${
-            !hasChildren ? 'opacity-50 cursor-default text-slate-400' : 'hover:bg-slate-800/40'
+            !hasChildren ? 'opacity-50 cursor-default text-gray-600' : 'hover:bg-gray-200'
           }`}
         >
           {hasChildren ? (
@@ -391,22 +391,22 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
           )}
           
           {browseMode === 'date' && node.year && (
-            <span className="font-medium text-slate-200">{node.year}</span>
+            <span className="font-medium text-gray-800">{node.year}</span>
           )}
           {browseMode === 'tags' && (
-            <span className="text-slate-300">🏷️</span>
+            <span className="text-gray-700">🏷️</span>
           )}
           {browseMode === 'entities' && (
-            <span className="text-slate-300">👥</span>
+            <span className="text-gray-700">👥</span>
           )}
           
           {(node.name || node.year) && (
-            <span className={isExpanded ? 'font-semibold text-slate-100' : 'text-slate-200'}>
+            <span className={isExpanded ? 'font-semibold text-gray-900' : 'text-gray-800'}>
               {node.name || node.year}
             </span>
           )}
           
-          <span className="ml-auto text-xs text-slate-400 bg-slate-800 px-2 py-1 rounded">
+          <span className="ml-auto text-xs text-gray-600 bg-gray-200 px-2 py-1 rounded">
             {node.count || 0}
           </span>
         </button>
@@ -429,9 +429,9 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
   };
 
   return (
-    <div className={`flex gap-4 h-full bg-slate-950 text-slate-100 ${className}`}>
-      <div className="flex-1 border-r border-slate-800 overflow-auto bg-slate-900/50">
-        <div className="p-4 border-b border-slate-800 sticky top-0 bg-slate-950/95 backdrop-blur">
+    <div className={`flex gap-4 h-full bg-white text-gray-900 ${className}`}>
+      <div className="flex-1 border-r border-gray-200 overflow-auto bg-gray-50">
+        <div className="p-4 border-b border-gray-200 sticky top-0 bg-white/95 backdrop-blur">
           <div className="flex gap-2 mb-4">
             {(['explore', 'date', 'tags', 'entities'] as const).map(mode => (
               <button
@@ -443,8 +443,8 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
                 }}
                 className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${
                   browseMode === mode
-                    ? 'bg-blue-500/20 text-blue-300 font-medium ring-1 ring-blue-500/40'
-                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                    ? 'bg-blue-100 text-blue-700 font-medium ring-1 ring-blue-300'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
               >
                 <span>{modeIcon[mode]}</span>
@@ -461,11 +461,11 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
                 value={tagEntitySearch}
                 onChange={e => setTagEntitySearch(e.target.value)}
                 placeholder={`Search ${browseMode}...`}
-                className="w-full px-3 py-2 rounded bg-slate-800 text-slate-100 border border-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full px-3 py-2 rounded bg-white text-gray-900 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
               {hierarchy.length > DEFAULT_TAG_ENTITY_LIMIT && !tagEntitySearch && (
                 <button
-                  className="self-start px-2 py-1 rounded text-xs bg-slate-800 text-slate-200 hover:bg-slate-700"
+                  className="self-start px-2 py-1 rounded text-xs bg-gray-100 text-gray-700 hover:bg-gray-200"
                   onClick={() => setShowAllTagsEntities(v => !v)}
                 >
                   {showAllTagsEntities ? `Show less` : `Show all (${hierarchy.length})`}
@@ -476,7 +476,7 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
         </div>
 
         {browseMode === 'explore' ? (
-          <div className="h-[calc(100vh-14rem)] min-h-[60vh] rounded-lg border border-slate-800 bg-slate-950 overflow-hidden">
+          <div className="h-[calc(100vh-14rem)] min-h-[60vh] rounded-lg border border-gray-200 bg-white overflow-hidden">
             <iframe src="/explore" className="h-full w-full border-none" title="Explore" />
           </div>
         ) : ( 
@@ -488,14 +488,14 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
             )}
 
             {isLoading && (
-              <div className="p-4 text-center text-slate-400">
+              <div className="p-4 text-center text-gray-600">
                 <div className="inline-block animate-spin">⚙️</div>
                 <p>Loading...</p>
               </div>
             )}
 
             {!isLoading && hierarchy.length === 0 && !error && (
-              <div className="p-4 text-center text-slate-400">
+              <div className="p-4 text-center text-gray-600">
                 No {browseMode} data available
               </div>
             )}
@@ -511,15 +511,15 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
 
       {browseMode !== 'explore' && (
         <>
-          <div className="flex-1 flex flex-col border-r border-slate-800 overflow-auto bg-slate-900/40">
+          <div className="flex-1 flex flex-col border-r border-gray-200 overflow-auto bg-gray-50">
             {selectedPath.length > 0 && (
-              <div className="p-4 border-b border-slate-800 bg-slate-950/95 sticky top-0 backdrop-blur">
+              <div className="p-4 border-b border-gray-200 bg-white/95 sticky top-0 backdrop-blur">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm text-slate-400">Path:</span>
+                  <span className="text-sm text-gray-600">Path:</span>
                   {selectedPath.map((node, i) => (
                     <React.Fragment key={i}>
-                      {i > 0 && <span className="text-slate-500">›</span>}
-                      <span className="text-sm font-medium text-slate-100 bg-slate-900 px-2 py-1 rounded border border-slate-700">
+                      {i > 0 && <span className="text-gray-600">›</span>}
+                      <span className="text-sm font-medium text-gray-900 bg-gray-100 px-2 py-1 rounded border border-gray-300">
                         {node.name || node.year || `Month ${node.month}`}
                       </span>
                     </React.Fragment>
@@ -546,17 +546,17 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
                         }}
                         className={`w-full text-left p-3 rounded-lg border-2 transition ${
                           selectedDoc?.id === doc.id
-                            ? 'border-blue-500/70 bg-blue-500/10'
-                            : 'border-slate-700 bg-slate-950/60 hover:border-slate-500 hover:bg-slate-900'
+                            ? 'border-blue-500 bg-blue-50'
+                            : 'border-gray-200 bg-gray-50 hover:border-gray-300 hover:bg-gray-100'
                         }`}
                       >
                         <div className="flex items-start gap-2">
-                          <span className="text-slate-400 mt-1 flex-shrink-0">📄</span>
+                          <span className="text-gray-500 mt-1 flex-shrink-0">📄</span>
                           <div className="flex-1 min-w-0">
-                            <p className="font-medium text-slate-100 truncate text-sm">
+                            <p className="font-medium text-gray-900 truncate text-sm">
                               {doc.title}
                             </p>
-                            <p className="text-xs text-slate-400 mt-1">
+                            <p className="text-xs text-gray-500 mt-1">
                               {doc.metadata?.date
                                 ? new Date(doc.metadata.date).toLocaleDateString()
                                 : new Date(doc.created_at).toLocaleDateString()}
@@ -571,27 +571,27 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
             )}
 
             {documents.length === 0 && selectedPath.length > 0 && !isLoading && (
-              <div className="flex-1 flex items-center justify-center text-slate-400">
+              <div className="flex-1 flex items-center justify-center text-gray-600">
                 <p>No documents found</p>
               </div>
             )}
 
             {documents.length === 0 && selectedPath.length === 0 && (
-              <div className="flex-1 flex items-center justify-center text-slate-500">
+              <div className="flex-1 flex items-center justify-center text-gray-500">
                 <p>Select a {browseMode} to view documents</p>
               </div>
             )}
           </div>
 
           {selectedDoc && (
-            <div className="flex-1 border-l border-slate-800 flex flex-col overflow-auto bg-slate-950/60">
-              <div className="p-4 border-b border-slate-800 flex items-center justify-between sticky top-0 bg-slate-950/95 backdrop-blur">
-                <h3 className="font-semibold text-slate-100">Open File</h3>
+            <div className="flex-1 border-l border-gray-200 flex flex-col overflow-auto bg-white">
+              <div className="p-4 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white/95 backdrop-blur">
+                <h3 className="font-semibold text-gray-900">Open File</h3>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setExpandedPreviewOpen(true)}
                     disabled={!selectedDetails || detailsLoading}
-                    className="px-2 py-1 rounded text-xs bg-slate-800 text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+                    className="px-2 py-1 rounded text-xs bg-gray-200 text-gray-900 hover:bg-gray-300 disabled:opacity-50"
                   >
                     Expand
                   </button>
@@ -601,7 +601,7 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
                       setSelectedDetails(null);
                       setExpandedPreviewOpen(false);
                     }}
-                    className="p-1 rounded text-slate-400 hover:text-slate-100 hover:bg-slate-800"
+                    className="p-1 rounded text-gray-600 hover:text-gray-900 hover:bg-gray-200"
                   >
                     ✕
                   </button>
@@ -610,11 +610,11 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
 
               <div className="flex-1 overflow-auto p-4 space-y-4">
                 {detailsLoading ? (
-                  <div className="rounded border border-slate-700 bg-slate-900 p-4 text-sm text-slate-300">Loading original file…</div>
+                  <div className="rounded border border-gray-300 bg-gray-50 p-4 text-sm text-gray-700">Loading original file…</div>
                 ) : selectedDetails ? (
                   renderInlinePreview(selectedDetails)
                 ) : (
-                  <div className="rounded border border-slate-700 bg-slate-900 p-4 text-sm text-slate-300">No preview loaded.</div>
+                  <div className="rounded border border-gray-300 bg-gray-50 p-4 text-sm text-gray-700">No preview loaded.</div>
                 )}
               </div>
             </div>
@@ -623,13 +623,13 @@ export function Browse({ className = '', send, onOpenDocument }: BrowseProps) {
       )}
 
       {expandedPreviewOpen && selectedDetails && (
-        <div className="fixed inset-0 z-50 bg-black/90 p-6">
-          <div className="h-full w-full rounded-lg border border-slate-700 bg-slate-950 flex flex-col">
-            <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-              <h4 className="text-sm font-semibold text-slate-100">{selectedDetails.original_file || selectedDetails.document_id || 'File Preview'}</h4>
+        <div className="fixed inset-0 z-50 bg-white p-6">
+          <div className="h-full w-full rounded-lg border border-gray-300 bg-white flex flex-col">
+            <div className="flex items-center justify-between border-b border-gray-300 px-4 py-3">
+              <h4 className="text-sm font-semibold text-gray-900">{selectedDetails.original_file || selectedDetails.document_id || 'File Preview'}</h4>
               <button
                 onClick={() => setExpandedPreviewOpen(false)}
-                className="px-2 py-1 rounded text-xs bg-slate-800 text-slate-200 hover:bg-slate-700"
+                className="px-2 py-1 rounded text-xs bg-gray-200 text-gray-900 hover:bg-gray-300"
               >
                 Close
               </button>

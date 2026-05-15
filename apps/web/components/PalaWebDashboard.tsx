@@ -12,9 +12,9 @@ export function PalaWebDashboard() {
   const { connected, send } = useWebSocket();
 
   return (
-    <div className="min-h-screen bg-slate-900">
+    <div className="min-h-screen bg-white">
       {/* Header */}
-      <header className="bg-slate-950 border-b border-slate-800">
+      <header className="bg-gray-50 border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
@@ -22,13 +22,13 @@ export function PalaWebDashboard() {
                 <span className="text-white font-bold text-lg">P</span>
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-white">Pala Platform</h1>
-                <p className="text-xs text-slate-400">Unified Storage & Services Layer</p>
+                <h1 className="text-2xl font-bold text-gray-900">Pala Platform</h1>
+                <p className="text-xs text-gray-500">Unified Storage & Services Layer</p>
               </div>
             </div>
             <div
               className={`px-3 py-1 rounded-full text-sm font-medium ${
-                connected ? 'bg-green-900 text-green-200' : 'bg-red-900 text-red-200'
+                connected ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
               }`}
             >
               {connected ? '● Connected' : '● Disconnected'}
@@ -36,14 +36,14 @@ export function PalaWebDashboard() {
           </div>
 
           {/* Navigation */}
-          <div className="flex gap-1 border-b border-slate-800">
+          <div className="flex gap-1 border-b border-gray-200">
             {/* Explore moved into Browse. Default entry point is Browse. */}
             <button
               onClick={() => setActiveTab('developer')}
               className={`px-4 py-2 border-b-2 font-medium text-sm transition-colors ${
                 activeTab === 'developer'
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-slate-400 hover:text-slate-300'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-600 hover:text-gray-900'
               }`}
             >
               Developer
@@ -52,8 +52,8 @@ export function PalaWebDashboard() {
               onClick={() => setActiveTab('browse')}
               className={`px-4 py-2 border-b-2 font-medium text-sm transition-colors ${
                 activeTab === 'browse'
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-slate-400 hover:text-slate-300'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-600 hover:text-gray-900'
               }`}
             >
               Browse
@@ -62,8 +62,8 @@ export function PalaWebDashboard() {
               onClick={() => setActiveTab('storage')}
               className={`px-4 py-2 border-b-2 font-medium text-sm transition-colors ${
                 activeTab === 'storage'
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-slate-400 hover:text-slate-300'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-600 hover:text-gray-900'
               }`}
             >
               Storage Explorer
@@ -75,7 +75,7 @@ export function PalaWebDashboard() {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 py-8">
         {activeTab === 'browse' && (
-          <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+          <div className="rounded-xl border border-gray-200 bg-white p-4">
             <Browse
               send={send}
               className="min-h-[60vh]"
@@ -92,8 +92,8 @@ export function PalaWebDashboard() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-slate-800 bg-slate-950 mt-12">
-        <div className="max-w-7xl mx-auto px-4 py-6 text-center text-xs text-slate-500">
+      <footer className="border-t border-gray-200 bg-gray-50 mt-12">
+        <div className="max-w-7xl mx-auto px-4 py-6 text-center text-xs text-gray-500">
           <p>Pala Platform · {new Date().getFullYear()}</p>
         </div>
       </footer>
@@ -725,8 +725,8 @@ function DeveloperPanel() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">
         {/* Left Panel: Tool List (1 column) */}
         <div className="lg:col-span-1 overflow-y-auto">
-          <div className="bg-slate-800 rounded-lg p-6 border border-slate-700 sticky top-0">
-            <h2 className="text-lg font-semibold text-white mb-4">Available Tools</h2>
+          <div className="bg-gray-100 rounded-lg p-6 border border-gray-300 sticky top-0">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Available Tools</h2>
 
             {/* Agent Selector */}
             <div className="space-y-2">
@@ -742,8 +742,8 @@ function DeveloperPanel() {
                     }}
                     className={`w-full px-4 py-2 rounded-lg text-left font-medium transition-colors ${
                       selectedAgent === agent.id
-                        ? 'bg-blue-900 text-blue-100'
-                        : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                        ? 'bg-blue-100 text-blue-900'
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                     }`}
                   >
                     {agent.name}
@@ -762,8 +762,8 @@ function DeveloperPanel() {
                           }}
                           className={`w-full px-3 py-2 rounded text-left text-sm transition-colors ${
                             selectedTool === tool.name
-                              ? 'bg-slate-600 text-white'
-                              : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                              ? 'bg-gray-300 text-gray-900'
+                              : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
                           }`}
                         >
                           <div className="font-mono text-xs">{tool.name}</div>
@@ -781,15 +781,15 @@ function DeveloperPanel() {
         {/* Right Panel: Input & Invoke (2 columns) */}
         <div className="lg:col-span-2 space-y-6 overflow-y-auto min-h-0">
           {/* Invoke Panel */}
-          <div className="bg-slate-800 rounded-lg p-6 border border-slate-700 space-y-4">
+          <div className="bg-gray-100 rounded-lg p-6 border border-gray-300 space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-md font-semibold text-white">Test Tool: <span className="font-mono text-blue-300">{selectedTool}</span></h3>
+              <h3 className="text-md font-semibold text-gray-900">Test Tool: <span className="font-mono text-blue-600">{selectedTool}</span></h3>
               {currentTool?.examples?.length ? (
                 <div className="flex items-center gap-2">
                   <select
                     value={selectedExampleIndex}
                     onChange={(e) => setSelectedExampleIndex(Number(e.target.value))}
-                    className="text-xs px-2 py-1 bg-slate-700 border border-slate-600 text-slate-300 rounded"
+                    className="text-xs px-2 py-1 bg-gray-200 border border-gray-300 text-gray-900 rounded"
                   >
                     <option value={0}>Full Schema</option>
                     {currentTool.examples.map((example, index) => (
@@ -811,7 +811,7 @@ function DeveloperPanel() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">Input Parameters</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Input Parameters</label>
               {/* File picker for tools that support file upload */}
               {(currentTool?.name === 'store_document' ||
                 currentTool?.name === 'process_and_store_document' ||
@@ -821,17 +821,17 @@ function DeveloperPanel() {
                     type="file"
                     multiple
                     onChange={handleFileInputChange}
-                    className="px-2 py-1 text-xs bg-slate-700 text-slate-200 rounded border border-slate-600"
+                    className="px-2 py-1 text-xs bg-gray-200 text-gray-900 rounded border border-gray-300"
                   />
                   {selectedFiles.length > 0 && (
-                    <div className="text-xs text-slate-400 space-y-1">
+                    <div className="text-xs text-gray-600 space-y-1">
                       {selectedFiles.map((file) => (
                         <div key={`${file.name}-${file.size}`}>Selected: {file.name} ({(file.size / 1024).toFixed(1)} KB)</div>
                       ))}
                     </div>
                   )}
                   {uploadProgress && (
-                    <div className="text-xs font-medium text-blue-300 bg-slate-900/60 border border-slate-600 rounded px-3 py-2">
+                    <div className="text-xs font-medium text-blue-600 bg-blue-50 border border-blue-300 rounded px-3 py-2">
                       {uploadProgress}
                     </div>
                   )}
@@ -842,7 +842,7 @@ function DeveloperPanel() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={currentTool?.placeholder || 'Enter input...'}
-                className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-slate-100 text-sm font-mono placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-900 text-sm font-mono placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 rows={8}
               />
             </div>
@@ -862,9 +862,9 @@ function DeveloperPanel() {
 
           {/* Results Panel */}
           {result && (
-            <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
-              <label className="block text-sm font-medium text-slate-300 mb-2">Result</label>
-              <pre className="bg-slate-900 p-3 rounded-lg text-xs overflow-x-auto text-green-400 border border-slate-600 max-h-64">
+            <div className="bg-gray-100 rounded-lg p-6 border border-gray-300">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Result</label>
+              <pre className="bg-white p-3 rounded-lg text-xs overflow-x-auto text-green-700 border border-gray-300 max-h-64">
                 {JSON.stringify(result, null, 2)}
               </pre>
               {/* Download button if result contains file data */}
@@ -908,10 +908,10 @@ function DeveloperPanel() {
       </div>
 
       {/* Bottom Panel: Expandable Integration Guide */}
-      <div className="border-t border-slate-700 pt-6">
+      <div className="border-t border-gray-300 pt-6">
         <button
           onClick={() => setExpandedGuide(!expandedGuide)}
-          className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-750 rounded-lg border border-slate-700 text-white font-medium transition-colors"
+          className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg border border-gray-300 text-gray-900 font-medium transition-colors"
         >
           <span className={`transform transition-transform ${expandedGuide ? 'rotate-180' : ''}`}>▼</span>
           Integration Guide & Tool Schema
@@ -920,19 +920,19 @@ function DeveloperPanel() {
         {expandedGuide && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-4">
             {/* Integration Guide */}
-            <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
-              <h3 className="text-md font-semibold text-white mb-3">How to Integrate</h3>
-              <div className="space-y-3 text-sm text-slate-300">
+            <div className="bg-gray-100 rounded-lg p-6 border border-gray-300">
+              <h3 className="text-md font-semibold text-gray-900 mb-3">How to Integrate</h3>
+              <div className="space-y-3 text-sm text-gray-700">
                 <div>
-                  <p className="font-medium text-slate-200 mb-1">1. Connect to MCP Server</p>
-                  <pre className="bg-slate-900 p-2 rounded text-xs text-blue-300 border border-slate-600 overflow-x-auto">
+                  <p className="font-medium text-gray-800 mb-1">1. Connect to MCP Server</p>
+                  <pre className="bg-white p-2 rounded text-xs text-blue-600 border border-gray-300 overflow-x-auto">
 {`const ws = new WebSocket('ws://localhost:3010');`}
                   </pre>
                 </div>
 
                 <div>
-                  <p className="font-medium text-slate-200 mb-1">2. Send JSON-RPC Request</p>
-                  <pre className="bg-slate-900 p-2 rounded text-xs text-blue-300 border border-slate-600 overflow-x-auto">
+                  <p className="font-medium text-gray-800 mb-1">2. Send JSON-RPC Request</p>
+                  <pre className="bg-white p-2 rounded text-xs text-blue-600 border border-gray-300 overflow-x-auto">
 {`ws.send(JSON.stringify({
   jsonrpc: "2.0",
   method: "tools/invoke",
@@ -946,8 +946,8 @@ function DeveloperPanel() {
                 </div>
 
                 <div>
-                  <p className="font-medium text-slate-200 mb-1">3. Listen for Response</p>
-                  <pre className="bg-slate-900 p-2 rounded text-xs text-blue-300 border border-slate-600 overflow-x-auto">
+                  <p className="font-medium text-gray-800 mb-1">3. Listen for Response</p>
+                  <pre className="bg-white p-2 rounded text-xs text-blue-600 border border-gray-300 overflow-x-auto">
 {`ws.onmessage = (event) => {
   const response = JSON.parse(event.data);
   console.log(response.result);
@@ -962,16 +962,16 @@ function DeveloperPanel() {
               <h3 className="text-md font-semibold text-white mb-3">
                 Schema: <span className="font-mono text-blue-300">{selectedTool}</span>
               </h3>
-              <div className="text-xs space-y-3 text-slate-300 max-h-96 overflow-y-auto">
+              <div className="text-xs space-y-3 text-gray-700 max-h-96 overflow-y-auto">
                 {currentTool?.schemaFields?.length ? (
                   <div>
-                    <p className="font-medium text-slate-200 mb-2">Input Parameters:</p>
-                    <div className="text-slate-400 space-y-2">
+                    <p className="font-medium text-gray-800 mb-2">Input Parameters:</p>
+                    <div className="text-gray-600 space-y-2">
                       {currentTool.schemaFields.map((field) => (
-                        <div key={field.name} className="bg-slate-900 border border-slate-700 rounded p-2">
+                        <div key={field.name} className="bg-gray-100 border border-gray-300 rounded p-2">
                           <div className="flex items-center gap-2">
-                            <code className="text-blue-300 font-mono">{field.name}</code>
-                            <span className="text-slate-500">: {field.type}</span>
+                            <code className="text-blue-600 font-mono">{field.name}</code>
+                            <span className="text-gray-500">: {field.type}</span>
                             {field.required ? (
                               <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-900 text-red-200">required</span>
                             ) : (

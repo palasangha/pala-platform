@@ -919,9 +919,9 @@ export function ContentBrowser() {
       </div>
 
       {/* Filters */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-4 bg-slate-700 rounded-lg">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-4 bg-blue-50 rounded-lg">
         <div>
-          <label className="block text-sm font-medium text-slate-300 mb-1">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
             Created By
           </label>
           <select
@@ -929,7 +929,7 @@ export function ContentBrowser() {
             onChange={(e) =>
               setFilters({ ...filters, createdBy: e.target.value })
             }
-            className="w-full px-3 py-2 border border-slate-600 bg-slate-800 rounded-md text-sm text-slate-100"
+            className="w-full px-3 py-2 border border-gray-300 bg-white rounded-md text-sm text-gray-900"
           >
             <option value="">All Users</option>
             <option value="ocr-agent">OCR Agent</option>
@@ -940,7 +940,7 @@ export function ContentBrowser() {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-slate-300 mb-1">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
             Document Type
           </label>
           <select
@@ -948,7 +948,7 @@ export function ContentBrowser() {
             onChange={(e) =>
               setFilters({ ...filters, type: e.target.value })
             }
-            className="w-full px-3 py-2 border border-slate-600 bg-slate-800 rounded-md text-sm text-slate-100"
+            className="w-full px-3 py-2 border border-gray-300 bg-white rounded-md text-sm text-gray-900"
           >
             <option value="">All Types</option>
             <option value="text">Text</option>
@@ -970,12 +970,12 @@ export function ContentBrowser() {
               setFilters({ ...filters, search: e.target.value })
             }
             placeholder="Search filename..."
-            className="w-full px-3 py-2 border border-slate-600 bg-slate-800 rounded-md text-sm text-slate-100"
+            className="w-full px-3 py-2 border border-gray-300 bg-white rounded-md text-sm text-gray-900"
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-slate-300 mb-1">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
             Sort By
           </label>
           <select
@@ -984,7 +984,7 @@ export function ContentBrowser() {
               setSortBy(e.target.value as typeof sortBy);
               setPagination((p) => ({ ...p, page: 1 }));
             }}
-            className="w-full px-3 py-2 border border-slate-600 bg-slate-800 rounded-md text-sm text-slate-100"
+            className="w-full px-3 py-2 border border-gray-300 bg-white rounded-md text-sm text-gray-900"
           >
             <option value="metadata_score">Metadata score</option>
             <option value="created_at">Created date</option>
@@ -999,30 +999,30 @@ export function ContentBrowser() {
       )}
 
       {/* Content Table */}
-      <div className="border border-slate-600 rounded-lg overflow-hidden bg-slate-700">
+      <div className="border border-gray-300 rounded-lg overflow-hidden bg-white">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-slate-800 border-b border-slate-600">
+            <thead className="bg-gray-100 border-b border-gray-300">
               <tr>
-                <th className="px-4 py-2 text-left font-medium text-slate-300">
+                <th className="px-4 py-2 text-left font-medium text-gray-900">
                   Document ID
                 </th>
-                <th className="px-4 py-2 text-left font-medium text-slate-300">
+                <th className="px-4 py-2 text-left font-medium text-gray-900">
                   Metadata available
                 </th>
-                <th className="px-4 py-2 text-left font-medium text-slate-300">
+                <th className="px-4 py-2 text-left font-medium text-gray-900">
                   Type
                 </th>
-                <th className="px-4 py-2 text-left font-medium text-slate-300">
+                <th className="px-4 py-2 text-left font-medium text-gray-900">
                   Original File
                 </th>
-                <th className="px-4 py-2 text-left font-medium text-slate-300">
+                <th className="px-4 py-2 text-left font-medium text-gray-900">
                   Created By
                 </th>
-                <th className="px-4 py-2 text-left font-medium text-slate-300">
+                <th className="px-4 py-2 text-left font-medium text-gray-900">
                   Created
                 </th>
-                <th className="px-4 py-2 text-left font-medium text-slate-300">
+                <th className="px-4 py-2 text-left font-medium text-gray-900">
                   Actions
                 </th>
               </tr>
@@ -1038,7 +1038,7 @@ export function ContentBrowser() {
                 </tr>
               ) : visibleContents.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
+                  <td colSpan={7} className="px-4 py-6 text-center text-gray-500">
                     No documents found
                   </td>
                 </tr>
@@ -1046,12 +1046,12 @@ export function ContentBrowser() {
                 visibleContents.map((content) => (
                   <tr
                     key={content.document_id}
-                    className="border-b border-slate-600 hover:bg-slate-600"
+                    className="border-b border-gray-200 hover:bg-gray-50"
                   >
-                    <td className="px-4 py-2 font-mono text-xs text-slate-400">
+                    <td className="px-4 py-2 font-mono text-xs text-gray-600">
                       {content.document_id.substring(0, 12)}...
                     </td>
-                    <td className="px-4 py-2 text-slate-100">
+                    <td className="px-4 py-2 text-gray-900">
                       <span
                         className={`inline-flex items-center px-2 py-1 text-xs rounded-full ${
                           (content.metadata_score || 0) >= 80
@@ -1253,7 +1253,7 @@ export function ContentBrowser() {
                   alert('Export failed - see console');
                 }
               }}
-              className="px-3 py-2 bg-slate-900 text-white rounded-lg text-xs font-medium hover:bg-slate-800"
+              className="px-3 py-2 bg-gray-800 text-white rounded-lg text-xs font-medium hover:bg-gray-900"
             >
               Export visible Q&A
             </button>
@@ -1293,7 +1293,7 @@ export function ContentBrowser() {
                         `doc-questions-${doc.document_id}-${Date.now()}`
                       );
                     }}
-                    className="px-3 py-1 rounded text-xs font-medium bg-slate-900 text-white hover:bg-slate-700"
+                    className="px-3 py-1 rounded text-xs font-medium bg-gray-800 text-white hover:bg-gray-900"
                   >
                     Refresh questions
                   </button>
@@ -1357,7 +1357,7 @@ export function ContentBrowser() {
                                   const w = window.open(); if (w) w.document.write('<pre>' + payload.replace(/</g, '&lt;') + '</pre>');
                                 }
                               }}
-                              className="px-2 py-1 rounded text-xs font-medium bg-slate-900 text-white hover:bg-slate-800"
+                              className="px-2 py-1 rounded text-xs font-medium bg-gray-800 text-white hover:bg-gray-900"
                             >
                               Copy row
                             </button>
@@ -1366,7 +1366,7 @@ export function ContentBrowser() {
                       );
                     })
                   ) : (
-                    <div className="text-xs text-slate-500">No questions loaded yet.</div>
+                    <div className="text-xs text-gray-500">No questions loaded yet.</div>
                   )}
                 </div>
               </div>
@@ -1560,7 +1560,7 @@ export function ContentBrowser() {
                   </button>
                   <button
                     onClick={() => setMetadataForm(buildMetadataFormState(selectedContent.metadata, selectedContent.processed_data))}
-                    className="px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-900 hover:bg-slate-50"
+                    className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-900 hover:bg-gray-50"
                   >
                     Reset
                   </button>
@@ -1568,11 +1568,11 @@ export function ContentBrowser() {
               </div>
 
               {selectedContent.processed_data !== undefined && selectedContent.processed_data !== null && (
-                <div className="bg-slate-50 p-3 rounded text-sm space-y-2">
-                  <label className="text-xs font-medium text-slate-600">
+                <div className="bg-white p-3 rounded text-sm space-y-2 border border-gray-200">
+                  <label className="text-xs font-medium text-gray-700">
                     Pre-Generated Questions
                   </label>
-                  <div className="text-xs text-slate-600 space-y-2">
+                  <div className="text-xs text-gray-600 space-y-2">
                     <p>Load pre-generated questions for this document or regenerate them after metadata changes.</p>
                     <div className="flex gap-2">
                       <button
@@ -1634,11 +1634,11 @@ export function ContentBrowser() {
               )}
 
               {selectedContent.processed_data !== undefined && selectedContent.processed_data !== null && (
-                <div className="bg-slate-50 p-3 rounded text-sm space-y-2">
-                  <label className="text-xs font-medium text-slate-600">
+                <div className="bg-white p-3 rounded text-sm space-y-2 border border-gray-200">
+                  <label className="text-xs font-medium text-gray-700">
                     Processed Data (content)
                   </label>
-                  <pre className="text-xs text-slate-700 overflow-auto max-h-56 bg-white p-2 rounded border border-slate-200">
+                  <pre className="text-xs text-gray-800 overflow-auto max-h-56 bg-gray-50 p-2 rounded border border-gray-300">
                     {typeof selectedContent.processed_data === 'string'
                       ? selectedContent.processed_data
                       : JSON.stringify(selectedContent.processed_data, null, 2)}
@@ -1647,7 +1647,7 @@ export function ContentBrowser() {
               )}
 
               {selectedContent.app_data && Object.keys(selectedContent.app_data).length > 0 && (
-                <div className="bg-slate-50 p-3 rounded text-sm space-y-2">
+                <div className="bg-white p-3 rounded text-sm space-y-2 border border-gray-200">
                   <label className="text-xs font-medium text-slate-600">
                     App Data
                   </label>
@@ -1706,11 +1706,11 @@ export function ContentBrowser() {
                 </div>
               )}
 
-              <div className="bg-slate-50 p-3 rounded text-sm space-y-2">
-                <label className="text-xs font-medium text-slate-600">
+              <div className="bg-white p-3 rounded text-sm space-y-2 border border-gray-200">
+                <label className="text-xs font-medium text-gray-700">
                   Full Record JSON
                 </label>
-                <pre className="text-xs text-slate-700 overflow-auto max-h-64 bg-white p-2 rounded border border-slate-200">
+                <pre className="text-xs text-gray-800 overflow-auto max-h-64 bg-gray-50 p-2 rounded border border-gray-300">
                   {JSON.stringify(selectedContent, null, 2)}
                 </pre>
               </div>
@@ -1718,7 +1718,7 @@ export function ContentBrowser() {
               <div className="flex gap-2 pt-4">
                 <button
                   onClick={() => setSelectedContent(null)}
-                  className="flex-1 px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-900 hover:bg-slate-50"
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-900 hover:bg-gray-50"
                 >
                   Close
                 </button>
