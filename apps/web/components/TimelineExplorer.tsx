@@ -246,7 +246,7 @@ function renderInlinePreview(doc: TimelineDocument) {
   if (isDocx) {
     const extractedText = toText(doc.processed_data?.result?.content || doc.processed_data?.content || doc.processed_data?.text || summary);
     return (
-      <pre className="whitespace-pre-wrap break-words bg-slate-950 border border-slate-700 rounded p-4 text-sm text-slate-200 max-h-[24rem] overflow-auto">
+      <pre className="whitespace-pre-wrap break-words bg-white border border-gray-200 rounded p-4 text-sm text-gray-800 max-h-[24rem] overflow-auto shadow-sm">
         {extractedText || summary || 'No DOCX text preview available.'}
       </pre>
     );
@@ -257,7 +257,7 @@ function renderInlinePreview(doc: TimelineDocument) {
       <iframe
         title={`Preview ${doc.original_file || doc.document_id || 'document'}`}
         src={`data:application/pdf;base64,${base64Value}`}
-        className="w-full h-[24rem] rounded border border-slate-700 bg-slate-950"
+        className="w-full h-[24rem] rounded border border-gray-200 bg-white shadow-sm"
       />
     );
   }
@@ -265,7 +265,7 @@ function renderInlinePreview(doc: TimelineDocument) {
   if (base64Value && (mimeType.startsWith('text/') || mimeType === 'application/json' || doc.file_format === 'json')) {
     const textContent = decodeBase64(base64Value);
     return (
-      <pre className="whitespace-pre-wrap break-words bg-slate-950 border border-slate-700 rounded p-4 text-sm text-slate-200 max-h-[24rem] overflow-auto">
+      <pre className="whitespace-pre-wrap break-words bg-white border border-gray-200 rounded p-4 text-sm text-gray-800 max-h-[24rem] overflow-auto shadow-sm">
         {textContent || summary || 'No text preview available.'}
       </pre>
     );
@@ -276,13 +276,13 @@ function renderInlinePreview(doc: TimelineDocument) {
       <img
         src={`data:${mimeType || 'image/*'};base64,${base64Value}`}
         alt={doc.original_file || doc.document_id || 'document preview'}
-        className="max-w-full max-h-[24rem] rounded border border-slate-700 bg-slate-950 object-contain"
+        className="max-w-full max-h-[24rem] rounded border border-gray-200 bg-white object-contain shadow-sm"
       />
     );
   }
 
   return (
-    <div className="rounded border border-slate-700 bg-slate-950 p-4 text-sm text-slate-300">
+    <div className="rounded border border-gray-200 bg-white p-4 text-sm text-gray-700 shadow-sm">
       {summary ? <p className="whitespace-pre-wrap">{summary}</p> : <p>No inline preview available for this file type.</p>}
     </div>
   );
@@ -300,12 +300,19 @@ function highlightText(text: string, query: string) {
   if (escapedTerms.length === 0) return escapeHtml(text);
 
   const re = new RegExp(escapedTerms.join('|'), 'gi');
-  return escapeHtml(text).replace(re, (match) => `<mark class="rounded bg-blue-400/30 text-blue-100 px-1">${match}</mark>`);
+  return escapeHtml(text).replace(re, (match) => `<mark class="rounded bg-slate-200 text-slate-900 px-1 font-medium">${match}</mark>`);
 }
 
 function getQuestionSnippet(question: any) {
   const evidence = Array.isArray(question?.evidence) ? question.evidence : [];
   return toText(question?.answer_preview).trim() || toText(evidence[0]?.snippet).trim() || '';
+}
+
+function getQuestionSnippetSource(question: any) {
+  const evidence = Array.isArray(question?.evidence) ? question.evidence : [];
+  if (toText(question?.answer_preview).trim()) return 'answer_preview';
+  if (toText(evidence[0]?.snippet).trim()) return 'evidence[0].snippet';
+  return 'none';
 }
 
 function dedupeQuestions(questions: any[]) {
@@ -434,8 +441,64 @@ export function TimelineExplorer() {
   const [pinnedQuestionContext, setPinnedQuestionContext] = useState<{ text: string; snippet: string } | null>(null);
   const [showFullFile, setShowFullFile] = useState(false);
   const [openingDocumentId, setOpeningDocumentId] = useState<string | null>(null);
+  const pinnedQuestionRef = useRef<{ sourceDocumentId: string | null; context: { text: string; snippet: string } | null }>({
+    sourceDocumentId: null,
+    context: null,
+  });
 
-  console.log('[TimelineExplorer] component rendered', { connected, documentsLength: documents.length });
+  useEffect(() => {
+    pinnedQuestionRef.current = {
+      sourceDocumentId: pinnedQuestionSourceDocumentId,
+      context: pinnedQuestionContext,
+    };
+    console.debug('[TimelineExplorer] pinned question state updated', {
+      sourceDocumentId: pinnedQuestionSourceDocumentId,
+      questionText: pinnedQuestionContext?.text || null,
+      snippetSourceLength: pinnedQuestionContext?.snippet?.length || 0,
+    });
+  }, [pinnedQuestionContext, pinnedQuestionSourceDocumentId]);
+
+  console.debug('[TimelineExplorer] component rendered', { connected, documentsLength: documents.length });
+
+  const handleQuestionSelection = useCallback((question: any, origin: string) => {
+    const sourceDocumentId = getQuestionSourceDocumentId(question);
+    const snippet = getQuestionSnippet(question);
+    const snippetSource = getQuestionSnippetSource(question);
+
+    pinnedQuestionRef.current = {
+      sourceDocumentId: sourceDocumentId || null,
+      context: sourceDocumentId
+        ? {
+            text: toText(question?.text),
+            snippet,
+          }
+        : null,
+    };
+
+    console.debug('[TimelineExplorer] question selected', {
+      origin,
+      questionId: getQuestionKey(question),
+      text: toText(question?.text),
+      sourceDocumentId: sourceDocumentId || null,
+      snippetSource,
+      snippetLength: snippet.length,
+      snippetPreview: snippet.slice(0, 180),
+    });
+
+    if (sourceDocumentId) {
+      setPinnedQuestionSourceDocumentId(sourceDocumentId);
+      setPinnedQuestionContext({
+        text: toText(question?.text),
+        snippet,
+      });
+    } else {
+      setPinnedQuestionSourceDocumentId(null);
+      setPinnedQuestionContext(null);
+    }
+
+    setShowQuestionDropdown(false);
+    setQuery(toText(question?.text));
+  }, []);
 
   const loadDocuments = useCallback(async () => {
     if (!connected) return;
@@ -516,12 +579,15 @@ export function TimelineExplorer() {
 
     try {
       const expandedQuery = buildExpandedTimelineQuery(trimmed, selectedFilter, selectedYear);
-      console.log('[TimelineExplorer] searchDocuments start', { 
+      const pinnedState = pinnedQuestionRef.current;
+
+      console.debug('[TimelineExplorer] searchDocuments start', { 
         trimmed, 
         expandedQuery, 
         selectedFilter, 
         selectedYear,
-        pinnedDocId: pinnedQuestionSourceDocumentId,
+        pinnedDocId: pinnedState.sourceDocumentId,
+        pinnedQuestionText: pinnedState.context?.text || null,
       });
 
       const response: any = await send('tools/invoke', {
@@ -537,21 +603,21 @@ export function TimelineExplorer() {
 
       const data = unwrapToolResult(response);
       const docs = Array.isArray(data.documents) ? data.documents : [];
-      console.log('[TimelineExplorer] semantic_search_documents returned', { 
+      console.debug('[TimelineExplorer] semantic_search_documents returned', { 
         documentCount: docs.length, 
         searchMethod: data.search_method,
-        hasPinned: !!pinnedQuestionSourceDocumentId,
+        hasPinned: !!pinnedState.sourceDocumentId,
       });
 
       if (docs.length === 0) {
         // When a question is pinned, skip keyword fallback - only use semantic results
-        if (pinnedQuestionSourceDocumentId) {
-          console.log('[TimelineExplorer] semantic search returned no documents and pinned doc is set; skipping keyword fallback for stricter matching');
+        if (pinnedState.sourceDocumentId) {
+          console.debug('[TimelineExplorer] semantic search returned no documents and pinned doc is set; skipping keyword fallback for stricter matching');
           setQueryResults([]);
           return;
         }
 
-        console.log('[TimelineExplorer] semantic search returned no documents; using local keyword fallback');
+        console.debug('[TimelineExplorer] semantic search returned no documents; using local keyword fallback');
         const queryTerms = extractMeaningfulTerms(trimmed);
         const fallback = documents.filter((doc) => {
           const searchable = [
@@ -583,13 +649,14 @@ export function TimelineExplorer() {
           const summaryText = toText(doc.summary);
           const snippetSource = matchedText || excerptText || summaryText;
 
-          console.log('[TimelineExplorer] search result payload', {
+          console.debug('[TimelineExplorer] search result payload', {
             document_id: doc.document_id || doc.id,
             matched_text_len: matchedText.length,
             excerpt_len: excerptText.length,
             summary_len: summaryText.length,
             matched_path: doc.matched_path || doc.match_method,
             snippet_source: matchedText ? 'matched_text' : excerptText ? 'excerpt' : summaryText ? 'summary' : 'none',
+            pinnedSourceDocumentId: pinnedState.sourceDocumentId,
           });
 
           const source: TimelineDocument = normalizeTimelineDocument({
@@ -635,8 +702,8 @@ export function TimelineExplorer() {
             // Fallback: if buildSnippet returns empty, still return the anchor with proper cleanup
             (anchor ? anchor : toText(fullContentSource || source.summary).slice(0, 500));
           
-          if (typeof window !== 'undefined' && window.__DEBUG_SNIPPET && (!passage || passage.split('\n').length < 4)) {
-            console.log('[TimelineExplorer snippet]', {
+          if (typeof window !== 'undefined' && (window as any).__DEBUG_SNIPPET && (!passage || passage.split('\n').length < 4)) {
+            console.debug('[TimelineExplorer snippet]', {
               file: source.original_file,
               anchor: anchor?.slice(0, 100),
               fullContentSourceLength: fullContentSource.length,
@@ -655,7 +722,7 @@ export function TimelineExplorer() {
 
       setQueryResults(mapped);
     } catch (err) {
-      console.log('[TimelineExplorer] searchDocuments error', { error: err instanceof Error ? err.message : String(err) });
+      console.debug('[TimelineExplorer] searchDocuments error', { error: err instanceof Error ? err.message : String(err) });
       setQueryResults([]);
     } finally {
       setLoading(false);
@@ -669,7 +736,7 @@ export function TimelineExplorer() {
     setError(null);
 
     try {
-      console.log('[TimelineExplorer] loadDocumentDetails start', { documentId });
+      console.debug('[TimelineExplorer] loadDocumentDetails start', { documentId });
       const response: any = await send('tools/invoke', {
         agentId: 'storage-agent',
         name: 'retrieve_document',
@@ -679,19 +746,19 @@ export function TimelineExplorer() {
         },
       });
 
-      console.log('[TimelineExplorer] invoking retrieve_document for detail panel', { documentId });
+      console.debug('[TimelineExplorer] invoking retrieve_document for detail panel', { documentId });
       const data = unwrapToolResult(response);
       const payload = data?.document_id ? data : data?.result || data || {};
       if (payload?.document_id) {
-        console.log('[TimelineExplorer] detail panel loaded', { documentId, keys: Object.keys(payload || {}) });
+        console.debug('[TimelineExplorer] detail panel loaded', { documentId, keys: Object.keys(payload || {}) });
         setSelectedDetails(payload);
       } else {
-        console.log('[TimelineExplorer] detail panel load failed: no document_id', { documentId, keys: Object.keys(payload || {}) });
+        console.debug('[TimelineExplorer] detail panel load failed: no document_id', { documentId, keys: Object.keys(payload || {}) });
         setSelectedDetails(null);
         setError('Could not load the selected document.');
       }
     } catch (err) {
-      console.log('[TimelineExplorer] loadDocumentDetails error', { documentId, error: err instanceof Error ? err.message : String(err) });
+      console.debug('[TimelineExplorer] loadDocumentDetails error', { documentId, error: err instanceof Error ? err.message : String(err) });
       setError(err instanceof Error ? err.message : 'Failed to load document details');
     } finally {
       setDetailsLoading(false);
@@ -1021,12 +1088,12 @@ export function TimelineExplorer() {
   }, [filteredItems, openItem, selectedDocument?.document_id]);
 
   return (
-    <div className="min-h-screen bg-black text-slate-100">
+    <div className="min-h-screen bg-white text-gray-900">
       <main className="max-w-7xl mx-auto px-6 py-8">
         <div className="space-y-4">
           {/* Search Bar Section */}
           <div className="relative">
-            <svg className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 z-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 z-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
             <input
@@ -1054,13 +1121,13 @@ export function TimelineExplorer() {
                       const unique = dedupeQuestions(data.questions || []);
                       setSuggestedQuestions(unique.slice(0, 5));
                       setShowQuestionDropdown(true);
-                      console.log('[TimelineExplorer] Loaded', unique.length, 'suggested questions (deduped)');
+                      console.debug('[TimelineExplorer] Loaded', unique.length, 'suggested questions (deduped)');
                     } else {
                       setSuggestedQuestions([]);
                     }
                     setLoadingQuestions(false);
                   }).catch((err: any) => {
-                    console.error('[TimelineExplorer] Error loading questions:', err);
+                    console.debug('[TimelineExplorer] Error loading questions:', err);
                     setSuggestedQuestions([]);
                     setLoadingQuestions(false);
                   });
@@ -1080,7 +1147,7 @@ export function TimelineExplorer() {
                 }
               }}
               placeholder="Search titles, summaries, people, places, and metadata..."
-              className="w-full rounded-lg bg-slate-950 border border-slate-700 px-4 py-3 pl-10 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full rounded-lg bg-white border border-gray-300 px-4 py-3 pl-10 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
             {query && (
               <button
@@ -1090,7 +1157,7 @@ export function TimelineExplorer() {
                   setPinnedQuestionSourceDocumentId(null);
                   setPinnedQuestionContext(null);
                 }}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 text-sm font-medium"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-900 text-sm font-medium"
               >
                 Clear
               </button>
@@ -1098,38 +1165,17 @@ export function TimelineExplorer() {
             
             {/* Question suggestions dropdown */}
             {showQuestionDropdown && suggestedQuestions.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-slate-900 border border-slate-700 rounded-lg shadow-lg max-h-64 overflow-y-auto">
+              <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-white border border-gray-200 rounded-lg shadow-lg max-h-64 overflow-y-auto">
                 <div className="p-2">
-                  <p className="text-xs text-slate-400 px-2 py-1">Similar pre-generated questions:</p>
+                  <p className="text-xs text-gray-500 px-2 py-1">Similar pre-generated questions:</p>
                   {suggestedQuestions.map((q: any, idx: number) => (
                     <button
                       key={idx}
-                      onClick={() => {
-                        // Keep the selected question as the search input and pin its source document first.
-                        const sourceDocumentId = q.document_id || q.provenance || q.source_document_id;
-                        if (sourceDocumentId) {
-                          console.log('[TimelineExplorer] Pinning provenance document for selected question:', {
-                            question: q.text,
-                            sourceDocumentId,
-                            similarity: q.similarity,
-                          });
-                          setPinnedQuestionSourceDocumentId(sourceDocumentId);
-                          setPinnedQuestionContext({
-                            text: q.text,
-                            snippet: getQuestionSnippet(q),
-                          });
-                        } else {
-                          console.log('[TimelineExplorer] No source document id on selected question; leaving current view unchanged', q);
-                          setPinnedQuestionSourceDocumentId(null);
-                          setPinnedQuestionContext(null);
-                        }
-                        setShowQuestionDropdown(false);
-                        setQuery(q.text);
-                      }}
-                      className="w-full text-left px-2 py-2 hover:bg-slate-800 rounded text-sm text-slate-200 transition"
+                      onClick={() => handleQuestionSelection(q, 'suggestions-dropdown')}
+                      className="w-full text-left px-2 py-2 hover:bg-gray-100 rounded text-sm text-gray-800 transition"
                     >
                       <div className="font-medium truncate">{q.text}</div>
-                      <div className="text-xs text-slate-400">
+                      <div className="text-xs text-gray-500">
                         Similarity: {(q.similarity * 100).toFixed(0)}%
                       </div>
                     </button>
@@ -1137,36 +1183,36 @@ export function TimelineExplorer() {
                 </div>
               </div>
             )}
-            {loadingQuestions && <p className="mt-2 text-xs text-slate-400">Loading question suggestions...</p>}
+            {loadingQuestions && <p className="mt-2 text-xs text-gray-500">Loading question suggestions...</p>}
           </div>
 
           {/* Filter Tabs */}
-          <div className="flex items-center gap-2 border-b border-slate-800">
+          <div className="flex items-center gap-2 border-b border-gray-200">
             <button
               type="button"
               onClick={() => setSelectedFilter('dated')}
-              className={`px-3 py-2 text-sm transition flex items-center gap-2 ${selectedFilter === 'dated' ? 'text-slate-100 border-b-2 border-blue-500' : 'text-slate-300 hover:text-slate-100'}`}
+              className={`px-3 py-2 text-sm transition flex items-center gap-2 ${selectedFilter === 'dated' ? 'text-blue-700 border-b-2 border-blue-500' : 'text-gray-600 hover:text-gray-900'}`}
             >
               📅 Date
             </button>
             <button
               type="button"
               onClick={() => setSelectedFilter('topics')}
-              className={`px-3 py-2 text-sm transition flex items-center gap-2 ${selectedFilter === 'topics' ? 'text-slate-100 border-b-2 border-blue-500' : 'text-slate-300 hover:text-slate-100'}`}
+              className={`px-3 py-2 text-sm transition flex items-center gap-2 ${selectedFilter === 'topics' ? 'text-blue-700 border-b-2 border-blue-500' : 'text-gray-600 hover:text-gray-900'}`}
             >
               🏷️ Tags
             </button>
             <button
               type="button"
               onClick={() => setSelectedFilter('people')}
-              className={`px-3 py-2 text-sm transition flex items-center gap-2 ${selectedFilter === 'people' ? 'text-slate-100 border-b-2 border-blue-500' : 'text-slate-300 hover:text-slate-100'}`}
+              className={`px-3 py-2 text-sm transition flex items-center gap-2 ${selectedFilter === 'people' ? 'text-blue-700 border-b-2 border-blue-500' : 'text-gray-600 hover:text-gray-900'}`}
             >
               👤 Entities
             </button>
             <button
               type="button"
               onClick={() => setSelectedFilter('all')}
-              className={`ml-auto px-3 py-2 text-sm transition flex items-center gap-2 ${selectedFilter === 'all' ? 'text-slate-100 border-b-2 border-blue-500' : 'text-slate-300 hover:text-slate-100'}`}
+              className={`ml-auto px-3 py-2 text-sm transition flex items-center gap-2 ${selectedFilter === 'all' ? 'text-blue-700 border-b-2 border-blue-500' : 'text-gray-600 hover:text-gray-900'}`}
             >
               All
             </button>
@@ -1176,18 +1222,18 @@ export function TimelineExplorer() {
             {/* Results Section */}
             <section className="space-y-4">
               <div className="flex items-center justify-between">
-                <p className="text-sm text-slate-400">{filteredItems.length} results</p>
-                {loading && <p className="text-xs text-slate-400">Loading...</p>}
+                <p className="text-sm text-gray-500">{filteredItems.length} results</p>
+                {loading && <p className="text-xs text-gray-500">Loading...</p>}
               </div>
 
               {error && (
-                <div className="rounded-lg border border-red-700 bg-red-950 p-4 text-sm text-red-200">
+                <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
                   {error}
                 </div>
               )}
 
               {!loading && filteredItems.length === 0 && (
-                <div className="rounded-lg border border-slate-800 bg-slate-800/50 p-10 text-center text-slate-400">
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-10 text-center text-gray-500">
                   No documents match your search.
                 </div>
               )}
@@ -1205,7 +1251,7 @@ export function TimelineExplorer() {
                         openFileInNewWindow(item.documentId, item.passage || item.summary || '');
                       }
                     }}
-                    className="cursor-pointer space-y-2 pb-4 border-b border-slate-800 last:border-b-0 last:pb-0 hover:opacity-80 transition"
+                    className="cursor-pointer space-y-2 pb-4 border-b border-gray-200 last:border-b-0 last:pb-0 hover:opacity-80 transition"
                   >
                     {/* File name and relevance score */}
                     <div className="flex items-start justify-between gap-4">
@@ -1215,7 +1261,7 @@ export function TimelineExplorer() {
                           event.stopPropagation();
                           void openFileInNewWindow(item.documentId, item.passage || item.summary || '');
                         }}
-                        className="text-base font-medium text-blue-400 hover:text-blue-300 truncate text-left"
+                        className="text-base font-medium text-blue-600 hover:text-blue-700 truncate text-left"
                       >
                         📄 {item.title}
                       </button>
@@ -1227,13 +1273,13 @@ export function TimelineExplorer() {
                                 key={i}
                                 className={`w-2 h-2 rounded-full ${
                                   i < Math.round(item.relevanceScore * 5)
-                                    ? 'bg-slate-400'
-                                    : 'bg-slate-700'
+                                    ? 'bg-gray-400'
+                                    : 'bg-gray-200'
                                 }`}
                               />
                             ))}
                           </div>
-                          <span className="text-sm text-slate-400 whitespace-nowrap">
+                          <span className="text-sm text-gray-500 whitespace-nowrap">
                             {Math.round(Math.max(0, Math.min(1, item.relevanceScore)) * 100)}%
                           </span>
                         </div>
@@ -1243,18 +1289,18 @@ export function TimelineExplorer() {
                     {/* Snippet text */}
                     {(item.passage || item.summary) && (
                       <p
-                        className="text-sm leading-relaxed text-slate-300 whitespace-pre-wrap"
+                        className="text-sm leading-relaxed text-gray-700 whitespace-pre-wrap"
                         dangerouslySetInnerHTML={{ __html: highlightText(item.passage || item.summary, query) }}
                       />
                     )}
 
                     {/* Metadata footer */}
-                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                    <div className="flex items-center gap-2 text-xs text-gray-500">
                       {item.createdBy === 'ocr-agent' && <span>✓ OCR</span>}
                       <span>{item.dateLabel}</span>
                       {item.matchReason && <span>•</span>}
                       {item.matchReason && (
-                        <span className="text-slate-600">
+                        <span className="text-gray-600">
                           {item.matchReason}
                         </span>
                       )}
@@ -1266,15 +1312,15 @@ export function TimelineExplorer() {
 
             {/* Suggested Questions Sidebar */}
             <aside className="sticky top-8 space-y-4">
-              <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-4">
-                <h3 className="text-sm font-semibold text-slate-100 mb-4 uppercase tracking-wider">Suggested</h3>
+              <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+                <h3 className="text-sm font-semibold text-gray-900 mb-4 uppercase tracking-wider">Suggested</h3>
 
                 {!query.trim() ? (
-                  <p className="text-xs text-slate-400">Search to load suggestions.</p>
+                  <p className="text-xs text-gray-500">Search to load suggestions.</p>
                 ) : topQuestionsLoading ? (
-                  <p className="text-xs text-slate-400">Loading suggestions...</p>
+                  <p className="text-xs text-gray-500">Loading suggestions...</p>
                 ) : visibleExploreNextQuestions.length === 0 ? (
-                  <p className="text-xs text-slate-400">No suggestions found.</p>
+                  <p className="text-xs text-gray-500">No suggestions found.</p>
                 ) : (
                   <div className="space-y-2 max-h-96 overflow-y-auto">
                     {visibleExploreNextQuestions && visibleExploreNextQuestions.length > 0 ? (
@@ -1285,22 +1331,11 @@ export function TimelineExplorer() {
                             <button
                               key={question.question_id || `top-question-${index}`}
                               type="button"
-                              onClick={() => {
-                                const sourceDocumentId = getQuestionSourceDocumentId(question);
-                                if (sourceDocumentId) {
-                                  setPinnedQuestionSourceDocumentId(sourceDocumentId);
-                                  setPinnedQuestionContext({
-                                    text: question.text,
-                                    snippet: getQuestionSnippet(question),
-                                  });
-                                }
-                                setShowQuestionDropdown(false);
-                                setQuery(question.text);
-                              }}
-                              className="w-full flex items-start gap-3 p-3 text-left hover:bg-slate-800/50 rounded-lg transition group"
+                              onClick={() => handleQuestionSelection(question, 'suggested-questions-sidebar')}
+                              className="w-full flex items-start gap-3 p-3 text-left hover:bg-gray-100 rounded-lg transition group"
                             >
-                              <span className="text-slate-500 group-hover:text-slate-400 mt-0.5">→</span>
-                              <span className="text-sm text-slate-300 group-hover:text-slate-100">{question.text}</span>
+                              <span className="text-gray-400 group-hover:text-gray-600 mt-0.5">→</span>
+                              <span className="text-sm text-gray-700 group-hover:text-gray-900">{question.text}</span>
                             </button>
                           );
                         })}
@@ -1310,7 +1345,7 @@ export function TimelineExplorer() {
                             onClick={() => {
                               setTopQuestionsMoreVisibleCount((current) => Math.min(current + 5, topQuestionsMore.length));
                             }}
-                            className="w-full py-3 text-center text-sm font-medium text-slate-400 hover:text-slate-300 transition border-t border-slate-700 mt-2"
+                            className="w-full py-3 text-center text-sm font-medium text-gray-500 hover:text-gray-700 transition border-t border-gray-200 mt-2"
                           >
                             {topQuestionsMore.length - topQuestionsMoreVisibleCount} more suggestions ↓
                           </button>
@@ -1326,55 +1361,55 @@ export function TimelineExplorer() {
       </main>
 
       {showFullFile && selectedTimelineItem && (
-        <div className="fixed inset-0 z-50 bg-black flex flex-col">
-          <div className="flex items-center justify-between gap-4 border-b border-slate-800 px-6 py-4 bg-slate-950">
+        <div className="fixed inset-0 z-50 bg-white flex flex-col">
+          <div className="flex items-center justify-between gap-4 border-b border-gray-200 px-6 py-4 bg-white shadow-sm">
             <div className="flex-1 min-w-0">
-              <p className="text-xs uppercase tracking-wide text-slate-400">Full file view</p>
-              <h3 className="text-xl font-semibold text-white break-words">{selectedTimelineItem.title}</h3>
-              <p className="text-sm text-slate-400 mt-1">{selectedTimelineItem.dateLabel}</p>
+              <p className="text-xs uppercase tracking-wide text-gray-500">Full file view</p>
+              <h3 className="text-xl font-semibold text-gray-900 break-words">{selectedTimelineItem.title}</h3>
+              <p className="text-sm text-gray-500 mt-1">{selectedTimelineItem.dateLabel}</p>
             </div>
             <button
               type="button"
               onClick={() => setShowFullFile(false)}
-              className="shrink-0 rounded border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-200 hover:bg-slate-800"
+              className="shrink-0 rounded border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
             >
               Close
             </button>
           </div>
 
-          <div className="flex-1 overflow-auto bg-slate-900">
-            {detailsLoading && <p className="p-6 text-sm text-slate-400">Loading document details...</p>}
+          <div className="flex-1 overflow-auto bg-gray-50">
+            {detailsLoading && <p className="p-6 text-sm text-gray-500">Loading document details...</p>}
             {selectedDetails ? (
               <div className="p-6 space-y-6">
-                <div className="rounded border border-slate-700 bg-slate-950 p-4 text-sm text-slate-300">
-                  <p><span className="text-slate-400">File:</span> {selectedDetails.original_file || selectedDetails.document_id}</p>
-                  <p><span className="text-slate-400">Type:</span> {selectedDetails.type || 'unknown'}</p>
-                  <p><span className="text-slate-400">Created by:</span> {selectedDetails.created_by || 'unknown'}</p>
-                  <p><span className="text-slate-400">Format:</span> {selectedDetails.file_format || 'unknown'}</p>
+                <div className="rounded border border-gray-200 bg-white p-4 text-sm text-gray-700 shadow-sm">
+                  <p><span className="text-gray-500">File:</span> {selectedDetails.original_file || selectedDetails.document_id}</p>
+                  <p><span className="text-gray-500">Type:</span> {selectedDetails.type || 'unknown'}</p>
+                  <p><span className="text-gray-500">Created by:</span> {selectedDetails.created_by || 'unknown'}</p>
+                  <p><span className="text-gray-500">Format:</span> {selectedDetails.file_format || 'unknown'}</p>
                 </div>
 
                 <div className="max-w-4xl">
                   {renderInlinePreview(selectedDetails)}
                 </div>
 
-                <div className="rounded border border-slate-700 bg-slate-950 p-4">
+                <div className="rounded border border-gray-200 bg-white p-4 shadow-sm">
                   <button
                     type="button"
                     onClick={() => setShowRawJson((current) => !current)}
-                    className="w-full flex items-center justify-between text-sm text-slate-200 font-medium"
+                    className="w-full flex items-center justify-between text-sm text-gray-800 font-medium"
                   >
                     <span>Raw JSON</span>
                     <span>{showRawJson ? '▼' : '▶'}</span>
                   </button>
                   {showRawJson && (
-                    <pre className="mt-4 max-h-96 overflow-auto text-xs text-slate-300 whitespace-pre-wrap font-mono">
+                    <pre className="mt-4 max-h-96 overflow-auto text-xs text-gray-700 whitespace-pre-wrap font-mono">
                       {JSON.stringify(selectedDetails, null, 2)}
                     </pre>
                   )}
                 </div>
               </div>
             ) : (
-              !detailsLoading && <p className="p-6 text-sm text-slate-400">No file details available yet.</p>
+              !detailsLoading && <p className="p-6 text-sm text-gray-500">No file details available yet.</p>
             )}
           </div>
         </div>

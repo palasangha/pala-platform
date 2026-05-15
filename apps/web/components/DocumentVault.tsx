@@ -76,14 +76,14 @@ function normalizeDocument(doc: Document): Document {
  */
 function DocumentModal({ doc, onClose }: { doc: Document; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-800 rounded-xl border border-slate-700 w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl">
+    <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl border border-gray-200 w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-xl">
         {/* Modal Header */}
-        <div className="sticky top-0 bg-slate-800 border-b border-slate-700 p-6 flex items-start justify-between gap-4">
+        <div className="sticky top-0 bg-white border-b border-gray-200 p-6 flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
-            <h2 className="text-2xl font-bold text-white mb-2">{doc.title}</h2>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">{doc.title}</h2>
             {doc.document_date && (
-              <p className="text-slate-400 text-sm">
+              <p className="text-gray-500 text-sm">
                 {new Date(doc.document_date).toLocaleDateString('en-US', {
                   year: 'numeric',
                   month: 'long',
@@ -94,7 +94,7 @@ function DocumentModal({ doc, onClose }: { doc: Document; onClose: () => void })
           </div>
           <button
             onClick={onClose}
-            className="flex-shrink-0 text-slate-400 hover:text-white transition text-2xl"
+            className="flex-shrink-0 text-gray-500 hover:text-gray-900 transition text-2xl"
           >
             ✕
           </button>
@@ -105,8 +105,8 @@ function DocumentModal({ doc, onClose }: { doc: Document; onClose: () => void })
           {/* Summary */}
           {doc.summary && (
             <div>
-              <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-3">Summary</h3>
-              <p className="text-slate-200 leading-relaxed">{doc.summary}</p>
+              <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-3">Summary</h3>
+              <p className="text-gray-800 leading-relaxed">{doc.summary}</p>
             </div>
           )}
 
@@ -114,10 +114,10 @@ function DocumentModal({ doc, onClose }: { doc: Document; onClose: () => void })
             {/* People */}
             {doc.people && doc.people.length > 0 && (
               <div>
-                <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-3">People</h3>
+                <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-3">People</h3>
                 <div className="space-y-2">
                   {doc.people.map((p) => (
-                    <div key={p} className="px-3 py-2 bg-purple-900/20 text-purple-300 rounded text-sm">
+                    <div key={p} className="px-3 py-2 bg-purple-50 text-purple-700 rounded text-sm">
                       {p}
                     </div>
                   ))}
@@ -128,10 +128,10 @@ function DocumentModal({ doc, onClose }: { doc: Document; onClose: () => void })
             {/* Places */}
             {doc.places && doc.places.length > 0 && (
               <div>
-                <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-3">Locations</h3>
+                <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-3">Locations</h3>
                 <div className="space-y-2">
                   {doc.places.map((p) => (
-                    <div key={p} className="px-3 py-2 bg-orange-900/20 text-orange-300 rounded text-sm">
+                    <div key={p} className="px-3 py-2 bg-orange-50 text-orange-700 rounded text-sm">
                       {p}
                     </div>
                   ))}
@@ -142,10 +142,10 @@ function DocumentModal({ doc, onClose }: { doc: Document; onClose: () => void })
             {/* Topics */}
             {doc.topics && doc.topics.length > 0 && (
               <div>
-                <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-3">Topics</h3>
+                <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-3">Topics</h3>
                 <div className="space-y-2">
                   {doc.topics.map((t) => (
-                    <div key={t} className="px-3 py-2 bg-green-900/20 text-green-300 rounded text-sm">
+                    <div key={t} className="px-3 py-2 bg-green-50 text-green-700 rounded text-sm">
                       {t}
                     </div>
                   ))}
@@ -155,17 +155,17 @@ function DocumentModal({ doc, onClose }: { doc: Document; onClose: () => void })
           </div>
 
           {/* File Info */}
-          <div className="border-t border-slate-700 pt-6">
-            <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-3">File Information</h3>
+          <div className="border-t border-gray-200 pt-6">
+            <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-3">File Information</h3>
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
-                <p className="text-slate-500">Format</p>
-                <p className="text-slate-200 font-mono">{doc.file_format}</p>
+                <p className="text-gray-500">Format</p>
+                <p className="text-gray-800 font-mono">{doc.file_format}</p>
               </div>
               {doc.created_at && (
                 <div>
-                  <p className="text-slate-500">Added</p>
-                  <p className="text-slate-200">{new Date(doc.created_at).toLocaleDateString()}</p>
+                  <p className="text-gray-500">Added</p>
+                  <p className="text-gray-800">{new Date(doc.created_at).toLocaleDateString()}</p>
                 </div>
               )}
             </div>
@@ -311,32 +311,32 @@ export function Explore() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex flex-col">
-      <div className="border-b border-slate-800 bg-slate-950 px-4 py-3 sticky top-0 z-40">
+    <div className="min-h-screen bg-white flex flex-col">
+      <div className="border-b border-gray-200 bg-white px-4 py-3 sticky top-0 z-40">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
-          <Link href="/" className="text-blue-400 hover:text-blue-300 transition text-sm font-medium">
+          <Link href="/" className="text-blue-600 hover:text-blue-700 transition text-sm font-medium">
             ← Back to Dashboard
           </Link>
           <div className="flex items-center gap-2">
             <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span className="text-xs text-slate-400">{connected ? 'Connected' : 'Disconnected'}</span>
+            <span className="text-xs text-gray-500">{connected ? 'Connected' : 'Disconnected'}</span>
           </div>
         </div>
       </div>
 
       <main className="flex-1 overflow-hidden">
         <div className="flex h-full">
-          <aside className="hidden lg:block w-80 border-r border-slate-800 bg-slate-900 overflow-y-auto p-6">
+          <aside className="hidden lg:block w-80 border-r border-gray-200 bg-gray-50 overflow-y-auto p-6">
             <div className="space-y-6">
               <div>
-                <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Document discovery</p>
-                <h1 className="text-4xl font-bold text-white">Explore</h1>
-                <p className="text-slate-400 mt-1">Search and browse documents.</p>
+                <p className="text-xs uppercase tracking-wider text-gray-500 mb-2">Document discovery</p>
+                <h1 className="text-4xl font-bold text-gray-900">Explore</h1>
+                <p className="text-gray-600 mt-1">Search and browse documents.</p>
               </div>
 
               {allPeople.length > 0 && (
                 <div>
-                  <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-4">👥 People</h3>
+                  <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wider mb-4">👥 People</h3>
                   <div className="flex flex-wrap gap-2">
                     {allPeople.slice(0, 12).map(([person, count]) => (
                       <button
@@ -349,7 +349,7 @@ export function Explore() {
                         className={`px-3 py-1.5 rounded-full text-sm transition ${
                           state.selectedPeople.has(person)
                             ? 'bg-purple-600 text-white'
-                            : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                            : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
                         }`}
                       >
                         {person} <span className="text-xs opacity-70">({count})</span>
@@ -361,7 +361,7 @@ export function Explore() {
 
               {allPlaces.length > 0 && (
                 <div>
-                  <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-4">📍 Locations</h3>
+                  <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wider mb-4">📍 Locations</h3>
                   <div className="flex flex-wrap gap-2">
                     {allPlaces.slice(0, 12).map(([place, count]) => (
                       <button
@@ -374,7 +374,7 @@ export function Explore() {
                         className={`px-3 py-1.5 rounded-full text-sm transition ${
                           state.selectedPlaces.has(place)
                             ? 'bg-orange-600 text-white'
-                            : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                            : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
                         }`}
                       >
                         {place} <span className="text-xs opacity-70">({count})</span>
@@ -386,7 +386,7 @@ export function Explore() {
 
               {allYears.length > 0 && (
                 <div>
-                  <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-4">📅 Years</h3>
+                  <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wider mb-4">📅 Years</h3>
                   <div className="flex flex-wrap gap-2">
                     {allYears.map(([year, count]) => (
                       <button
@@ -399,7 +399,7 @@ export function Explore() {
                         className={`px-3 py-1.5 rounded-full text-sm transition ${
                           state.selectedYears.has(year)
                             ? 'bg-blue-600 text-white'
-                            : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                            : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
                         }`}
                       >
                         {year} <span className="text-xs opacity-70">({count})</span>
@@ -411,7 +411,7 @@ export function Explore() {
 
               {allTags.length > 0 && (
                 <div>
-                  <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-4">🏷️ Topics</h3>
+                  <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wider mb-4">🏷️ Topics</h3>
                   <div className="flex flex-wrap gap-2">
                     {allTags.slice(0, 12).map(([tag, count]) => (
                       <button
@@ -420,7 +420,7 @@ export function Explore() {
                         className={`px-3 py-1.5 rounded-full text-sm transition ${
                           state.selectedTags.has(tag)
                             ? 'bg-green-600 text-white'
-                            : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                            : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
                         }`}
                       >
                         {tag} <span className="text-xs opacity-70">({count})</span>
@@ -439,7 +439,7 @@ export function Explore() {
                     selectedYears: new Set(),
                     selectedTags: new Set(),
                   }))}
-                  className="w-full px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition text-sm font-medium"
+                  className="w-full px-4 py-2 rounded-lg bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 hover:text-gray-900 transition text-sm font-medium"
                 >
                   Clear Filters
                 </button>
@@ -450,9 +450,9 @@ export function Explore() {
           <section className="flex-1 overflow-y-auto px-4 py-8">
             <div className="max-w-5xl mx-auto space-y-6">
               <div>
-                <p className="text-xs uppercase tracking-wider text-slate-500 mb-2 lg:hidden">Document discovery</p>
-                <h1 className="text-4xl font-bold text-white lg:hidden">Explore</h1>
-                <p className="text-slate-400 mt-1 lg:hidden">Search and browse documents.</p>
+                <p className="text-xs uppercase tracking-wider text-gray-500 mb-2 lg:hidden">Document discovery</p>
+                <h1 className="text-4xl font-bold text-gray-900 lg:hidden">Explore</h1>
+                <p className="text-gray-600 mt-1 lg:hidden">Search and browse documents.</p>
               </div>
 
               <div className="relative">
@@ -461,12 +461,12 @@ export function Explore() {
                   placeholder="Search documents by title, person, location, topic..."
                   value={state.query}
                   onChange={(e) => setState((prev) => ({ ...prev, query: e.target.value }))}
-                  className="w-full px-6 py-4 rounded-xl bg-slate-800 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-lg"
+                  className="w-full px-6 py-4 rounded-xl bg-white border border-gray-300 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-lg"
                 />
                 {state.query && (
                   <button
                     onClick={() => setState((prev) => ({ ...prev, query: '' }))}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition"
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-900 transition"
                   >
                     ✕
                   </button>
@@ -474,34 +474,34 @@ export function Explore() {
               </div>
 
               {(state.selectedPeople.size > 0 || state.selectedPlaces.size > 0 || state.selectedYears.size > 0 || state.selectedTags.size > 0) && (
-                <div className="p-4 bg-slate-800/50 rounded-lg border border-slate-700 lg:hidden">
+                <div className="p-4 bg-gray-50 rounded-lg border border-gray-200 lg:hidden">
                   <div className="flex flex-wrap gap-2 mb-3">
                     {Array.from(state.selectedPeople).map((p) => (
-                      <span key={p} className="px-3 py-1 bg-purple-600/30 text-purple-300 rounded-full text-xs font-medium">{p} ✕</span>
+                      <span key={p} className="px-3 py-1 bg-purple-50 text-purple-700 rounded-full text-xs font-medium">{p} ✕</span>
                     ))}
                     {Array.from(state.selectedPlaces).map((p) => (
-                      <span key={p} className="px-3 py-1 bg-orange-600/30 text-orange-300 rounded-full text-xs font-medium">{p} ✕</span>
+                      <span key={p} className="px-3 py-1 bg-orange-50 text-orange-700 rounded-full text-xs font-medium">{p} ✕</span>
                     ))}
                     {Array.from(state.selectedYears).map((y) => (
-                      <span key={y} className="px-3 py-1 bg-blue-600/30 text-blue-300 rounded-full text-xs font-medium">{y} ✕</span>
+                      <span key={y} className="px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-xs font-medium">{y} ✕</span>
                     ))}
                     {Array.from(state.selectedTags).map((t) => (
-                      <span key={t} className="px-3 py-1 bg-green-600/30 text-green-300 rounded-full text-xs font-medium">{t} ✕</span>
+                      <span key={t} className="px-3 py-1 bg-green-50 text-green-700 rounded-full text-xs font-medium">{t} ✕</span>
                     ))}
                   </div>
                 </div>
               )}
 
               {loading ? (
-                <div className="text-center py-16 text-slate-400">Loading documents...</div>
+                <div className="text-center py-16 text-gray-500">Loading documents...</div>
               ) : filteredDocs.length === 0 ? (
                 <div className="text-center py-16">
-                  <p className="text-slate-400">No results found.</p>
+                  <p className="text-gray-500">No results found.</p>
                 </div>
               ) : (
                 <>
-                  <div className="text-sm text-slate-400">
-                    Showing <span className="font-semibold text-slate-300">{filteredDocs.length}</span> {filteredDocs.length === 1 ? 'document' : 'documents'}
+                  <div className="text-sm text-gray-500">
+                    Showing <span className="font-semibold text-gray-800">{filteredDocs.length}</span> {filteredDocs.length === 1 ? 'document' : 'documents'}
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-8">
                     {filteredDocs.map((doc) => {
@@ -514,13 +514,13 @@ export function Explore() {
                           onClick={() => setState((prev) => ({ ...prev, selectedDocument: doc }))}
                           className={`p-5 rounded-lg border-2 transition text-left ${
                             isSelected
-                              ? 'border-blue-500 bg-blue-950/30 shadow-lg shadow-blue-500/20'
-                              : 'border-slate-700 bg-slate-800/40 hover:bg-slate-800/60 hover:border-slate-600'
+                              ? 'border-blue-500 bg-blue-50 shadow-sm'
+                              : 'border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-300'
                           }`}
                         >
-                          <h3 className="font-semibold text-white mb-2 line-clamp-2">{doc.title}</h3>
+                          <h3 className="font-semibold text-gray-900 mb-2 line-clamp-2">{doc.title}</h3>
                           {doc.document_date && (
-                            <p className="text-xs text-slate-400 mb-3">
+                            <p className="text-xs text-gray-500 mb-3">
                               {new Date(doc.document_date).toLocaleDateString('en-US', {
                                 year: 'numeric',
                                 month: 'short',
@@ -528,16 +528,16 @@ export function Explore() {
                               })}
                             </p>
                           )}
-                          <p className="text-sm text-slate-300 mb-4 line-clamp-3">{doc.summary}</p>
+                          <p className="text-sm text-gray-600 mb-4 line-clamp-3">{doc.summary}</p>
                           <div className="flex flex-wrap gap-1.5">
                             {(Array.isArray(doc.people) ? doc.people : []).slice(0, 2).map((p) => (
-                              <span key={p} className="px-2 py-0.5 text-xs bg-purple-900/30 text-purple-300 rounded">{p}</span>
+                              <span key={p} className="px-2 py-0.5 text-xs bg-purple-50 text-purple-700 rounded">{p}</span>
                             ))}
                             {(Array.isArray(doc.places) ? doc.places : []).slice(0, 2).map((p) => (
-                              <span key={p} className="px-2 py-0.5 text-xs bg-orange-900/30 text-orange-300 rounded">{p}</span>
+                              <span key={p} className="px-2 py-0.5 text-xs bg-orange-50 text-orange-700 rounded">{p}</span>
                             ))}
                             {(Array.isArray(doc.topics) ? doc.topics : []).slice(0, 2).map((t) => (
-                              <span key={t} className="px-2 py-0.5 text-xs bg-green-900/30 text-green-300 rounded">{t}</span>
+                              <span key={t} className="px-2 py-0.5 text-xs bg-green-50 text-green-700 rounded">{t}</span>
                             ))}
                           </div>
                         </button>

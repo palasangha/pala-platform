@@ -177,22 +177,22 @@ export default function DocumentHitViewer({ documentId, initialQuery = '', initi
   const headerLabel = documentData?.original_file || documentData?.document_id || documentId;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="sticky top-0 z-20 border-b border-slate-800 bg-slate-950/95 backdrop-blur">
+    <div className="min-h-screen bg-white text-gray-900">
+      <div className="sticky top-0 z-20 border-b border-gray-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-4 sm:px-6">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <button
                 type="button"
                 onClick={() => router.push('/explore')}
-                className="mb-2 text-xs font-medium text-slate-400 hover:text-slate-200"
+                className="mb-2 text-xs font-medium text-gray-500 hover:text-gray-900"
               >
                 ← Back
               </button>
-              <h1 className="truncate text-lg font-semibold text-white sm:text-2xl">{headerLabel}</h1>
-              <p className="mt-1 text-xs text-slate-400 break-all">{documentId}</p>
+              <h1 className="truncate text-lg font-semibold text-gray-900 sm:text-2xl">{headerLabel}</h1>
+              <p className="mt-1 text-xs text-gray-500 break-all">{documentId}</p>
             </div>
-            <div className="text-right text-xs text-slate-400">
+            <div className="text-right text-xs text-gray-500">
               {documentData?.type ? <p className="capitalize">{documentData.type}</p> : null}
               {documentData?.created_by ? <p>{documentData.created_by}</p> : null}
             </div>
@@ -206,14 +206,14 @@ export default function DocumentHitViewer({ documentId, initialQuery = '', initi
                 setActiveMatchIndex(0);
               }}
               placeholder="Search within this document"
-              className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => moveMatch(-1)}
                 disabled={matchIndexes.length === 0}
-                className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-200 disabled:opacity-40"
+                className="rounded-lg border border-gray-300 bg-gray-100 px-3 py-2 text-xs font-medium text-gray-700 disabled:opacity-40"
               >
                 Prev
               </button>
@@ -221,11 +221,11 @@ export default function DocumentHitViewer({ documentId, initialQuery = '', initi
                 type="button"
                 onClick={() => moveMatch(1)}
                 disabled={matchIndexes.length === 0}
-                className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-200 disabled:opacity-40"
+                className="rounded-lg border border-gray-300 bg-gray-100 px-3 py-2 text-xs font-medium text-gray-700 disabled:opacity-40"
               >
                 Next
               </button>
-              <span className="text-xs text-slate-500">
+              <span className="text-xs text-gray-500">
                 {matchIndexes.length > 0 ? `${Math.min(activeMatchIndex + 1, matchIndexes.length)} / ${matchIndexes.length} hits` : 'No hits'}
               </span>
             </div>
@@ -235,15 +235,15 @@ export default function DocumentHitViewer({ documentId, initialQuery = '', initi
 
       <main className="mx-auto max-w-7xl px-4 py-4 sm:px-6 sm:py-6">
         {loading ? (
-          <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-sm text-slate-300">Loading document…</div>
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-6 text-sm text-gray-700">Loading document…</div>
         ) : error ? (
           <div className="rounded-xl border border-red-800 bg-red-950/60 p-6 text-sm text-red-200">{error}</div>
         ) : (
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
-            <section className="min-w-0 rounded-xl border border-slate-800 bg-slate-900/80 shadow-2xl shadow-black/20">
-              <div className="border-b border-slate-800 px-4 py-3 text-xs text-slate-400 sm:px-6">
-                <span className="font-medium text-slate-200">{lines.length}</span> lines ·{' '}
-                <span className="font-medium text-slate-200">{matchIndexes.length}</span> matches
+            <section className="min-w-0 rounded-xl border border-gray-200 bg-white shadow-sm">
+              <div className="border-b border-gray-200 px-4 py-3 text-xs text-gray-500 sm:px-6">
+                <span className="font-medium text-gray-800">{lines.length}</span> lines ·{' '}
+                <span className="font-medium text-gray-800">{matchIndexes.length}</span> matches
               </div>
               <div className="max-h-[calc(100vh-14rem)] overflow-auto px-2 py-3 sm:px-4">
                 {lines.length > 0 ? (
@@ -256,39 +256,39 @@ export default function DocumentHitViewer({ documentId, initialQuery = '', initi
                           lineRefs.current[index] = element;
                         }}
                         className={`grid grid-cols-[4rem_minmax(0,1fr)] gap-3 rounded-md px-3 py-1.5 text-sm leading-6 ${
-                          isActive ? 'bg-amber-400/10 ring-1 ring-amber-400/30' : 'hover:bg-slate-800/40'
+                          isActive ? 'bg-amber-50 ring-1 ring-amber-200' : 'hover:bg-gray-50'
                         }`}
                       >
-                        <div className="select-none text-right font-mono text-[11px] text-slate-500">
+                        <div className="select-none text-right font-mono text-[11px] text-gray-500">
                           {index + 1}
                         </div>
                         <div
-                          className="min-w-0 whitespace-pre-wrap break-words text-slate-100"
+                          className="min-w-0 whitespace-pre-wrap break-words text-gray-900"
                           dangerouslySetInnerHTML={{ __html: highlightText(line || ' ', searchText) }}
                         />
                       </div>
                     );
                   })
                 ) : (
-                  <div className="px-4 py-8 text-sm text-slate-400">No extracted text available for this document.</div>
+                  <div className="px-4 py-8 text-sm text-gray-500">No extracted text available for this document.</div>
                 )}
               </div>
             </section>
 
             <aside className="space-y-4 lg:sticky lg:top-24 lg:self-start">
-              <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-4 text-sm text-slate-300">
-                <h2 className="mb-2 text-sm font-semibold text-white">Document Info</h2>
-                <div className="space-y-1 text-xs text-slate-400">
-                  {documentData?.original_file ? <p><span className="text-slate-300">File:</span> {documentData.original_file}</p> : null}
-                  {documentData?.file_format ? <p><span className="text-slate-300">Format:</span> {documentData.file_format}</p> : null}
-                  {documentData?.created_by ? <p><span className="text-slate-300">Created by:</span> {documentData.created_by}</p> : null}
-                  {documentData?.created_at ? <p><span className="text-slate-300">Created:</span> {new Date(documentData.created_at).toLocaleString()}</p> : null}
+              <div className="rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-700">
+                <h2 className="mb-2 text-sm font-semibold text-gray-900">Document Info</h2>
+                <div className="space-y-1 text-xs text-gray-500">
+                  {documentData?.original_file ? <p><span className="text-gray-700">File:</span> {documentData.original_file}</p> : null}
+                  {documentData?.file_format ? <p><span className="text-gray-700">Format:</span> {documentData.file_format}</p> : null}
+                  {documentData?.created_by ? <p><span className="text-gray-700">Created by:</span> {documentData.created_by}</p> : null}
+                  {documentData?.created_at ? <p><span className="text-gray-700">Created:</span> {new Date(documentData.created_at).toLocaleString()}</p> : null}
                 </div>
               </div>
 
-              <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-4 text-sm text-slate-300">
-                <h2 className="mb-2 text-sm font-semibold text-white">Tips</h2>
-                <ul className="space-y-2 text-xs text-slate-400">
+              <div className="rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-700">
+                <h2 className="mb-2 text-sm font-semibold text-gray-900">Tips</h2>
+                <ul className="space-y-2 text-xs text-gray-500">
                   <li>• Use the search box to jump between hits.</li>
                   <li>• The view stays responsive on mobile and can scroll independently.</li>
                   <li>• Search terms are highlighted in the text preview.</li>
