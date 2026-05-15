@@ -95,9 +95,7 @@ function extractNames(value: any): string[] {
     }
     if (typeof item === 'object') {
       const name = toText(item.name || item.title || item.label || item.value);
-      if (name && !result.includes(name)) {
-        result.push(name);
-      }
+      if (name && !result.includes(name)) result.push(name);
     }
   }
 
@@ -437,6 +435,7 @@ export function TimelineExplorer() {
   const [topQuestionsMore, setTopQuestionsMore] = useState<any[]>([]);
   const [topQuestionsMoreVisibleCount, setTopQuestionsMoreVisibleCount] = useState(0);
   const [topQuestionsLoading, setTopQuestionsLoading] = useState(false);
+  const [expandedSnippets, setExpandedSnippets] = useState<Record<string, boolean>>({});
   const [pinnedQuestionSourceDocumentId, setPinnedQuestionSourceDocumentId] = useState<string | null>(null);
   const [pinnedQuestionContext, setPinnedQuestionContext] = useState<{ text: string; snippet: string } | null>(null);
   const [showFullFile, setShowFullFile] = useState(false);
@@ -780,6 +779,13 @@ export function TimelineExplorer() {
       ...topQuestionsMore.slice(0, topQuestionsMoreVisibleCount),
     ];
   }, [topQuestions, topQuestionsMore, topQuestionsMoreVisibleCount]);
+
+  const toggleSnippetExpansion = useCallback((documentId: string) => {
+    setExpandedSnippets((current) => ({
+      ...current,
+      [documentId]: !current[documentId],
+    }));
+  }, []);
 
   useEffect(() => {
     if (connected) {
@@ -1239,74 +1245,102 @@ export function TimelineExplorer() {
               )}
 
               <div className="space-y-4">
-                {filteredItems.map((item) => (
-                  <div
-                    key={item.documentId}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => openFileInNewWindow(item.documentId, item.passage || item.summary || '')}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        openFileInNewWindow(item.documentId, item.passage || item.summary || '');
-                      }
-                    }}
-                    className="cursor-pointer space-y-2 pb-4 border-b border-gray-200 last:border-b-0 last:pb-0 hover:opacity-80 transition"
-                  >
-                    {/* File name and relevance score */}
-                    <div className="flex items-start justify-between gap-4">
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void openFileInNewWindow(item.documentId, item.passage || item.summary || '');
-                        }}
-                        className="text-base font-medium text-blue-600 hover:text-blue-700 truncate text-left"
-                      >
-                        📄 {item.title}
-                      </button>
-                      {typeof item.relevanceScore === 'number' && (
-                        <div className="shrink-0 flex items-center gap-2">
-                          <div className="flex gap-1">
-                            {[...Array(5)].map((_, i) => (
-                              <div
-                                key={i}
-                                className={`w-2 h-2 rounded-full ${
-                                  i < Math.round(item.relevanceScore * 5)
-                                    ? 'bg-gray-400'
-                                    : 'bg-gray-200'
-                                }`}
-                              />
-                            ))}
+                {filteredItems.map((item) => {
+                  const snippetText = item.passage || item.summary || '';
+                  const snippetLines = snippetText
+                    .split(/\r?\n/)
+                    .map((line) => line.trimEnd())
+                    .filter((line) => line.trim().length > 0);
+                  const isExpanded = !!expandedSnippets[item.documentId];
+                  const visibleSnippetLines = isExpanded ? snippetLines : snippetLines.slice(0, 6);
+                  const hasMoreLines = snippetLines.length > 6;
+
+                  return (
+                    <div
+                      key={item.documentId}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => openFileInNewWindow(item.documentId, item.passage || item.summary || '')}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          openFileInNewWindow(item.documentId, item.passage || item.summary || '');
+                        }
+                      }}
+                      className="cursor-pointer space-y-2 pb-4 border-b border-gray-200 last:border-b-0 last:pb-0 hover:opacity-80 transition"
+                    >
+                      {/* File name and relevance score */}
+                      <div className="flex items-start justify-between gap-4">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void openFileInNewWindow(item.documentId, item.passage || item.summary || '');
+                          }}
+                          className="text-base font-medium text-blue-600 hover:text-blue-700 truncate text-left"
+                        >
+                          📄 {item.title}
+                        </button>
+                        {typeof item.relevanceScore === 'number' && (
+                          <div className="shrink-0 flex items-center gap-2">
+                            <div className="flex gap-1">
+                              {[...Array(5)].map((_, i) => (
+                                <div
+                                  key={i}
+                                  className={`w-2 h-2 rounded-full ${
+                                    i < Math.round(item.relevanceScore * 5)
+                                      ? 'bg-gray-400'
+                                      : 'bg-gray-200'
+                                  }`}
+                                />
+                              ))}
+                            </div>
+                            <span className="text-sm text-gray-500 whitespace-nowrap">
+                              {Math.round(Math.max(0, Math.min(1, item.relevanceScore)) * 100)}%
+                            </span>
                           </div>
-                          <span className="text-sm text-gray-500 whitespace-nowrap">
-                            {Math.round(Math.max(0, Math.min(1, item.relevanceScore)) * 100)}%
-                          </span>
+                        )}
+                      </div>
+
+                      {/* Snippet text */}
+                      {snippetLines.length > 0 && (
+                        <div className="space-y-1 text-sm leading-relaxed text-gray-700">
+                          {visibleSnippetLines.map((line, index) => (
+                            <div
+                              key={`${item.documentId}-snippet-${index}`}
+                              className="whitespace-pre-wrap break-words"
+                              dangerouslySetInnerHTML={{ __html: highlightText(line, query) }}
+                            />
+                          ))}
+                          {hasMoreLines && (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                toggleSnippetExpansion(item.documentId);
+                              }}
+                              className="pt-1 text-xs font-medium text-blue-600 hover:text-blue-700"
+                            >
+                              {isExpanded ? 'Show less' : `Show more (+${snippetLines.length - 6} lines)`}
+                            </button>
+                          )}
                         </div>
                       )}
-                    </div>
 
-                    {/* Snippet text */}
-                    {(item.passage || item.summary) && (
-                      <p
-                        className="text-sm leading-relaxed text-gray-700 whitespace-pre-wrap"
-                        dangerouslySetInnerHTML={{ __html: highlightText(item.passage || item.summary, query) }}
-                      />
-                    )}
-
-                    {/* Metadata footer */}
-                    <div className="flex items-center gap-2 text-xs text-gray-500">
-                      {item.createdBy === 'ocr-agent' && <span>✓ OCR</span>}
-                      <span>{item.dateLabel}</span>
-                      {item.matchReason && <span>•</span>}
-                      {item.matchReason && (
-                        <span className="text-gray-600">
-                          {item.matchReason}
-                        </span>
-                      )}
+                      {/* Metadata footer */}
+                      <div className="flex items-center gap-2 text-xs text-gray-500">
+                        {item.createdBy === 'ocr-agent' && <span>✓ OCR</span>}
+                        <span>{item.dateLabel}</span>
+                        {item.matchReason && <span>•</span>}
+                        {item.matchReason && (
+                          <span className="text-gray-600">
+                            {item.matchReason}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </section>
 

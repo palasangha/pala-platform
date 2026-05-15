@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import re
+import textwrap
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional, Tuple
@@ -259,24 +260,25 @@ Generate the questions now:"""
         if not lines:
             lines = [content_text.strip()]
 
-        def format_snippet_lines(snippet_lines: List[str], max_chars_per_line: int = 220) -> List[str]:
+        def format_snippet_lines(snippet_lines: List[str], max_chars_per_line: int = 130) -> List[str]:
             formatted_lines: List[str] = []
             for snippet_line in snippet_lines:
                 compact_line = re.sub(r"\s+", " ", snippet_line).strip()
-                formatted_lines.append(compact_line)
+                if not compact_line:
+                    continue
+
+                wrapped_lines = textwrap.wrap(
+                    compact_line,
+                    width=max_chars_per_line,
+                    break_long_words=False,
+                    break_on_hyphens=False,
+                )
+                formatted_lines.extend(wrapped_lines if wrapped_lines else [compact_line])
             return formatted_lines
 
-        def center_snippet_by_words(snippet_text: str, max_words: int = 180) -> str:
-            words = re.findall(r"\S+", snippet_text)
-            if len(words) <= max_words:
-                return snippet_text
-
-            start = max(0, (len(words) - max_words) // 2)
-            end = start + max_words
-            if end > len(words):
-                end = len(words)
-                start = max(0, end - max_words)
-            return " ".join(words[start:end])
+        def build_snippet_text(snippet_lines: List[str]) -> str:
+            formatted_lines = format_snippet_lines(snippet_lines)
+            return "\n".join(formatted_lines).strip()
 
         # Extract meaningful keywords from question, allowing some short but important words
         stop_words = {"what", "when", "where", "which", "how", "why", "was", "were", "the", "and", "or", "in", "of", "to", "a", "an", "is", "be", "by", "for", "on", "at", "as", "about", "their", "there", "these", "those", "would", "could", "should", "document", "context", "from", "during", "that"}
@@ -289,7 +291,7 @@ Generate the questions now:"""
         if not question_terms:
             # Return a compact 6-line preview when no strong question terms
             snippet_lines = format_snippet_lines(lines[0:6])
-            snippet = center_snippet_by_words("\n".join(snippet_lines))
+            snippet = build_snippet_text(snippet_lines)
             return [
                 {
                     "source_path": source_path,
@@ -352,13 +354,13 @@ Generate the questions now:"""
                     else:
                         start_idx = max(0, end_idx - 9)
                 snippet_lines = format_snippet_lines(lines[start_idx:end_idx])
-                snippet = center_snippet_by_words("\n".join(snippet_lines))
+                snippet = build_snippet_text(snippet_lines)
                 confidence = round(min(score / max(len(question_terms), 1), 1.0), 3)
                 confidence = max(confidence, 0.4)
             else:
                 # Still no match - return first 6-9 lines as last resort
                 snippet_lines = format_snippet_lines(lines[0:9])
-                snippet = center_snippet_by_words("\n".join(snippet_lines))
+                snippet = build_snippet_text(snippet_lines)
                 start_idx = 0
                 end_idx = len(snippet_lines)
                 idx = 0
@@ -429,7 +431,7 @@ Generate the questions now:"""
                 start_idx = max(0, end_idx - 9)
         
         preview_lines = format_snippet_lines(lines[start_idx:end_idx])
-        snippet_text = center_snippet_by_words("\n".join(preview_lines))
+        snippet_text = build_snippet_text(preview_lines)
         evidence = [
             {
                 "source_path": source_path,

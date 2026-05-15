@@ -16,6 +16,9 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock, patch
 
+# Ensure local imports resolve when the test is run directly.
+sys.path.append(str(Path(__file__).resolve().parent))
+
 # Setup logging for tests
 logging.basicConfig(
     level=logging.DEBUG,
@@ -70,6 +73,46 @@ What practical insights can be gained?
 How does this document reflect the time period?
 What questions would a researcher ask about this?"""
         return ""
+
+
+async def test_evidence_snippet_preserves_line_window():
+    """Test that extracted evidence keeps a readable 6-12 line window."""
+    logger.info("\n" + "=" * 80)
+    logger.info("TEST 0: Evidence Snippet Line Window")
+    logger.info("=" * 80)
+
+    from question_generator import QuestionGenerator
+
+    gen = QuestionGenerator(MockOllamaProvider())
+    question_text = "Why is right livelihood (sammā-ājīva) important in Buddhism?"
+
+    processed_data = {
+        "content": "\n".join([
+            "Intro line 1 about the discourse.",
+            "Intro line 2 about the discourse.",
+            "Intro line 3 about the discourse.",
+            "Intro line 4 about the discourse.",
+            "Right livelihood helps one earn without harming others.",
+            "This is part of moral conduct and daily practice.",
+            "The teaching continues with practical examples.",
+            "Additional explanation about avoiding harm.",
+            "More context about the Eightfold Noble Path.",
+            "Final line that closes the context window.",
+        ])
+    }
+
+    evidence, answer_preview = gen._extract_evidence_for_question(question_text, processed_data)
+
+    assert evidence, "Expected evidence to be returned"
+    lines = answer_preview.splitlines()
+    assert 6 <= len(lines) <= 12, f"Expected 6-12 lines, got {len(lines)}: {lines}"
+    assert any("right livelihood" in line.lower() for line in lines), "Expected the matched line in the snippet"
+
+    logger.info(f"✓ Evidence snippet returned {len(lines)} lines")
+    for line in lines:
+        logger.info(f"  {line}")
+
+    return True
 
 
 async def test_question_generation():
