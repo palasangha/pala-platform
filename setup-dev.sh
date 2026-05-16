@@ -25,7 +25,7 @@ select_python_cmd() {
     if [[ -n "${PALA_PYTHON:-}" ]]; then
         candidates+=("$PALA_PYTHON")
     fi
-    candidates+=("python3.12" "python3.11" "python3.10" "python3" "/usr/bin/python3")
+    candidates+=("python3.12" "python3.11" "python3.10" "python" "python3" "/usr/bin/python3")
 
     local candidate
     local resolved
@@ -47,6 +47,19 @@ select_python_cmd() {
     return 1
 }
 
+venv_python() {
+    local venv_dir="$1"
+    if [[ -x "$venv_dir/bin/python" ]]; then
+        printf '%s' "$venv_dir/bin/python"
+        return 0
+    fi
+    if [[ -x "$venv_dir/Scripts/python.exe" ]]; then
+        printf '%s' "$venv_dir/Scripts/python.exe"
+        return 0
+    fi
+    return 1
+}
+
 setup_shared_agent_venv() {
     AGENT_VENV_DIR="$ROOT_DIR/agent-venv"
     echo "[setup-dev] Setting up Python venv for agent at $AGENT_VENV_DIR..."
@@ -56,23 +69,27 @@ setup_shared_agent_venv() {
         echo "[setup-dev] Created venv at $AGENT_VENV_DIR"
     fi
 
-    if [[ -x "$AGENT_VENV_DIR/bin/python" ]] && ! "$AGENT_VENV_DIR/bin/python" -c "import xml.parsers.expat" >/dev/null 2>&1; then
-        echo "[setup-dev] WARNING: shared venv uses broken Python; recreating..."
-        rm -rf "$AGENT_VENV_DIR"
-        "$BOOTSTRAP_PYTHON" -m venv "$AGENT_VENV_DIR" || true
+    local AGENT_PYTHON=""
+    if AGENT_PYTHON="$(venv_python "$AGENT_VENV_DIR")"; then
+        if ! "$AGENT_PYTHON" -c "import xml.parsers.expat" >/dev/null 2>&1; then
+            echo "[setup-dev] WARNING: shared venv uses broken Python; recreating..."
+            rm -rf "$AGENT_VENV_DIR"
+            "$BOOTSTRAP_PYTHON" -m venv "$AGENT_VENV_DIR" || true
+            AGENT_PYTHON="$(venv_python "$AGENT_VENV_DIR")" || true
+        fi
     fi
 
-    if [[ -x "$AGENT_VENV_DIR/bin/python" ]]; then
-        "$AGENT_VENV_DIR/bin/python" -m ensurepip --upgrade || true
-        "$AGENT_VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel || true
+    if [[ -n "${AGENT_PYTHON:-}" && -x "$AGENT_PYTHON" ]]; then
+        "$AGENT_PYTHON" -m ensurepip --upgrade || true
+        "$AGENT_PYTHON" -m pip install --upgrade pip setuptools wheel || true
     fi
 
     echo "[setup-dev] Installing agent Python dependencies (python-dotenv, boto3, websockets, sentence-transformers)..."
-    if [[ -x "$AGENT_VENV_DIR/bin/python" ]]; then
-        if "$AGENT_VENV_DIR/bin/python" -m pip install python-dotenv boto3 websockets sentence-transformers; then
+    if [[ -n "${AGENT_PYTHON:-}" && -x "$AGENT_PYTHON" ]]; then
+        if "$AGENT_PYTHON" -m pip install python-dotenv boto3 websockets sentence-transformers; then
             echo "[setup-dev] ✓ Python dependencies installed in shared venv."
             # Verify sentence-transformers was actually installed (CRITICAL for quality gate)
-            if "$AGENT_VENV_DIR/bin/python" -c "import sentence_transformers; print('[setup-dev] ✓ sentence-transformers verified')" 2>/dev/null; then
+            if "$AGENT_PYTHON" -c "import sentence_transformers; print('[setup-dev] ✓ sentence-transformers verified')" 2>/dev/null; then
                 echo "[setup-dev] SUCCESS: sentence-transformers is ready"
             else
                 echo "[setup-dev] FATAL: sentence-transformers import failed even after pip install"
@@ -125,7 +142,7 @@ lmstudio_installed() {
             [[ -x "$HOME/.local/bin/lm-studio" || -d "$HOME/.cache/lm-studio" ]] || command_exists lm-studio
             ;;
         windows)
-            [[ -d "$HOME/AppData/Local/LM Studio" ]] || command_exists lm-studio
+            [[ -d "C:/Program Files/LM Studio" ]] || command_exists lm-studio
             ;;
         *)
             return 1
@@ -279,19 +296,18 @@ prepare_workspace() {
                 if [[ ! -d "$agent_dir/venv" ]]; then
                     "$BOOTSTRAP_PYTHON" -m venv "$agent_dir/venv" >/dev/null 2>&1 || true
                 fi
-                if [[ -x "$agent_dir/venv/bin/python" ]] && ! "$agent_dir/venv/bin/python" -c "import xml.parsers.expat" >/dev/null 2>&1; then
+                local AGENT_PYTHON=""
+                if AGENT_PYTHON="$(venv_python "$agent_dir/venv")" && [[ -x "$AGENT_PYTHON" ]] && ! "$AGENT_PYTHON" -c "import xml.parsers.expat" >/dev/null 2>&1; then
                     echo "[setup-dev] WARNING: Recreating broken venv for $agent_dir"
                     rm -rf "$agent_dir/venv"
                     "$BOOTSTRAP_PYTHON" -m venv "$agent_dir/venv" >/dev/null 2>&1 || true
+                    AGENT_PYTHON="$(venv_python "$agent_dir/venv")" || true
                 fi
-                if [[ -d "$agent_dir/venv" ]]; then
-                    # Use venv python directly instead of sourcing activate
-                    if [[ -x "$agent_dir/venv/bin/python" ]]; then
-                        "$agent_dir/venv/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 || true
-                        "$agent_dir/venv/bin/python" -m pip install --upgrade pip setuptools wheel >/dev/null 2>&1 || true
-                        if ! "$agent_dir/venv/bin/python" -m pip install -r "$agent_dir/requirements.txt"; then
-                            echo "[setup-dev] WARNING: Failed to install requirements for $agent_dir. See pip output above."
-                        fi
+                if [[ -n "${AGENT_PYTHON:-}" && -x "$AGENT_PYTHON" ]]; then
+                    "$AGENT_PYTHON" -m ensurepip --upgrade >/dev/null 2>&1 || true
+                    "$AGENT_PYTHON" -m pip install --upgrade pip setuptools wheel >/dev/null 2>&1 || true
+                    if ! "$AGENT_PYTHON" -m pip install -r "$agent_dir/requirements.txt"; then
+                        echo "[setup-dev] WARNING: Failed to install requirements for $agent_dir. See pip output above."
                     fi
                 fi
             fi
@@ -306,19 +322,18 @@ prepare_workspace() {
                 if [[ ! -d "$agent_dir/venv" ]]; then
                     "$BOOTSTRAP_PYTHON" -m venv "$agent_dir/venv" >/dev/null 2>&1 || true
                 fi
-                if [[ -x "$agent_dir/venv/bin/python" ]] && ! "$agent_dir/venv/bin/python" -c "import xml.parsers.expat" >/dev/null 2>&1; then
+                local AGENT_PYTHON=""
+                if AGENT_PYTHON="$(venv_python "$agent_dir/venv")" && [[ -x "$AGENT_PYTHON" ]] && ! "$AGENT_PYTHON" -c "import xml.parsers.expat" >/dev/null 2>&1; then
                     echo "[setup-dev] WARNING: Recreating broken venv for $agent_dir"
                     rm -rf "$agent_dir/venv"
                     "$BOOTSTRAP_PYTHON" -m venv "$agent_dir/venv" >/dev/null 2>&1 || true
+                    AGENT_PYTHON="$(venv_python "$agent_dir/venv")" || true
                 fi
-                if [[ -d "$agent_dir/venv" ]]; then
-                    # Use venv python directly instead of sourcing activate
-                    if [[ -x "$agent_dir/venv/bin/python" ]]; then
-                        "$agent_dir/venv/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 || true
-                        "$agent_dir/venv/bin/python" -m pip install --upgrade pip setuptools wheel >/dev/null 2>&1 || true
-                        if ! "$agent_dir/venv/bin/python" -m pip install -r "$agent_dir/requirements.txt"; then
-                            echo "[setup-dev] WARNING: Failed to install requirements for $agent_dir. See pip output above."
-                        fi
+                if [[ -n "${AGENT_PYTHON:-}" && -x "$AGENT_PYTHON" ]]; then
+                    "$AGENT_PYTHON" -m ensurepip --upgrade >/dev/null 2>&1 || true
+                    "$AGENT_PYTHON" -m pip install --upgrade pip setuptools wheel >/dev/null 2>&1 || true
+                    if ! "$AGENT_PYTHON" -m pip install -r "$agent_dir/requirements.txt"; then
+                        echo "[setup-dev] WARNING: Failed to install requirements for $agent_dir. See pip output above."
                     fi
                 fi
             fi
@@ -393,8 +408,8 @@ grep -E '^(S3_|FILE_STORAGE_PROVIDER|STORAGE_PROVIDER)' "$ROOT_DIR/.env" | grep 
 STORAGE_AGENT_DIR="$ROOT_DIR/packages/PalaAgents/storage-agent"
 if [[ -d "$STORAGE_AGENT_DIR/venv" ]]; then
     # Use venv python directly instead of sourcing activate
-    if [[ -f "$STORAGE_AGENT_DIR/venv/bin/python" ]]; then
-        "$STORAGE_AGENT_DIR/venv/bin/python" -m pip install -q boto3 >/dev/null 2>&1 || true
+    if AGENT_PYTHON="$(venv_python "$STORAGE_AGENT_DIR/venv")" && [[ -x "$AGENT_PYTHON" ]]; then
+        "$AGENT_PYTHON" -m pip install -q boto3 >/dev/null 2>&1 || true
         echo -e "${GREEN}✓ boto3 installed in storage-agent venv${NC}"
     fi
 fi

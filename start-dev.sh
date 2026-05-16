@@ -24,7 +24,7 @@ cd "$ROOT_DIR"
 
 is_python_healthy() {
     local py="$1"
-    "$py" -c "import xml.parsers.expat, ensurepip" >/dev/null 2>&1
+    "$py" -c "import xml.parsers.expat" >/dev/null 2>&1
 }
 
 select_python_cmd() {
@@ -32,7 +32,7 @@ select_python_cmd() {
     if [ -n "${PALA_PYTHON:-}" ]; then
         candidates+=("$PALA_PYTHON")
     fi
-    candidates+=("python3.12" "python3.11" "python3.10" "python3" "/usr/bin/python3")
+    candidates+=("python3.12" "python3.11" "python3.10" "python" "python3" "/usr/bin/python3")
 
     local candidate
     local resolved
@@ -54,6 +54,19 @@ select_python_cmd() {
     return 1
 }
 
+venv_python() {
+    local venv_dir="$1"
+    if [ -x "$venv_dir/bin/python" ]; then
+        printf '%s' "$venv_dir/bin/python"
+        return 0
+    fi
+    if [ -x "$venv_dir/Scripts/python.exe" ]; then
+        printf '%s' "$venv_dir/Scripts/python.exe"
+        return 0
+    fi
+    return 1
+}
+
 ensure_agent_venv() {
     local agent_dir="$1"
     local label="$2"
@@ -63,8 +76,9 @@ ensure_agent_venv() {
         "$BOOTSTRAP_PYTHON" -m venv "$agent_dir/venv" || return 1
     fi
 
-    if [ -x "$agent_dir/venv/bin/python" ]; then
-        if ! "$agent_dir/venv/bin/python" -c "import xml.parsers.expat" >/dev/null 2>&1; then
+    local venv_python=""
+    if venv_python="$(venv_python "$agent_dir/venv")"; then
+        if ! "$venv_python" -c "import xml.parsers.expat" >/dev/null 2>&1; then
             echo -e "${YELLOW}[$label] Existing venv uses broken Python; recreating...${NC}"
             rm -rf "$agent_dir/venv"
             "$BOOTSTRAP_PYTHON" -m venv "$agent_dir/venv" || return 1
@@ -81,6 +95,8 @@ get_python_for_agent() {
         agent_python="$AGENT_VENV_DIR/bin/python"
     elif [ -f "$AGENT_VENV_DIR/bin/python3" ] && [ -x "$AGENT_VENV_DIR/bin/pip" ] && "$AGENT_VENV_DIR/bin/python3" -c "import xml.parsers.expat" >/dev/null 2>&1; then
         agent_python="$AGENT_VENV_DIR/bin/python3"
+    elif [ -f "$AGENT_VENV_DIR/Scripts/python.exe" ] && [ -x "$AGENT_VENV_DIR/Scripts/pip.exe" ] && "$AGENT_VENV_DIR/Scripts/python.exe" -c "import xml.parsers.expat" >/dev/null 2>&1; then
+        agent_python="$AGENT_VENV_DIR/Scripts/python.exe"
     elif [ -f "$agent_dir/venv/bin/python" ]; then
         agent_python="$agent_dir/venv/bin/python"
     elif [ -f "$agent_dir/venv/bin/python3" ]; then
@@ -170,6 +186,23 @@ clear_port() {
     fi
 }
 
+npm_cmd() {
+    if command -v npm.cmd >/dev/null 2>&1; then
+        printf '%s' "$(command -v npm.cmd)"
+    elif command -v npm >/dev/null 2>&1; then
+        printf '%s' "$(command -v npm)"
+    else
+        return 1
+    fi
+}
+
+NPM_CMD="$(npm_cmd || true)"
+if [ -z "$NPM_CMD" ]; then
+    echo -e "${RED}npm is not available in PATH.${NC}"
+    echo -e "${YELLOW}Install Node.js and ensure npm or npm.cmd is available, then rerun:${NC} ./start-dev.sh"
+    exit 1
+fi
+
 echo -e "${GREEN}[Preflight] Clearing conflicting ports and stopping old agents...${NC}"
 clear_port 3010 "MCP Server"
 clear_port 3020 "Web Dashboard"
@@ -193,10 +226,8 @@ fi
 # Critical: Verify sentence-transformers for question generation quality
 echo -e "${GREEN}Verifying sentence-transformers installation...${NC}"
 AGENT_PYTHON=""
-if [ -f "$AGENT_VENV_DIR/bin/python" ] && [ -x "$AGENT_VENV_DIR/bin/python" ]; then
-    AGENT_PYTHON="$AGENT_VENV_DIR/bin/python"
-elif [ -f "$AGENT_VENV_DIR/bin/python3" ] && [ -x "$AGENT_VENV_DIR/bin/python3" ]; then
-    AGENT_PYTHON="$AGENT_VENV_DIR/bin/python3"
+if [ -d "$AGENT_VENV_DIR" ]; then
+    AGENT_PYTHON="$(venv_python "$AGENT_VENV_DIR")" || true
 fi
 
 if [ -n "$AGENT_PYTHON" ]; then
@@ -214,6 +245,9 @@ else
 fi
 echo ""
 
+if [ ! -d $ROOT_DIR/logs ]; then
+    mkdir -p $ROOT_DIR/logs
+fi
 # Start Ollama server in background if not already running
 echo -e "${GREEN}[0.5/6] Starting Ollama Server...${NC}"
 if command -v ollama >/dev/null 2>&1; then
@@ -249,9 +283,12 @@ echo -e "${GREEN}[1/6] Starting MCP Server...${NC}"
 cd "$ROOT_DIR/packages/mcp-server"
 if [ ! -d "node_modules" ]; then
     echo -e "${YELLOW}Installing MCP Server dependencies...${NC}"
-    npm install
+    "$NPM_CMD" install
 fi
-npm run dev > "$ROOT_DIR/logs/mcp-server.log" 2>&1 &
+
+
+
+"$NPM_CMD" run dev > "$ROOT_DIR/logs/mcp-server.log" 2>&1 &
 MCP_PID=$!
 echo -e "${GREEN}✓ MCP Server started (PID: $MCP_PID)${NC}"
 echo -e "  Logs: logs/mcp-server.log\n"
@@ -368,9 +405,9 @@ echo -e "${GREEN}[6/6] Starting Web Dashboard...${NC}"
 cd "$ROOT_DIR/apps/web"
 if [ ! -d "node_modules" ]; then
     echo -e "${YELLOW}Installing Web Dashboard dependencies...${NC}"
-    npm install
+    "$NPM_CMD" install
 fi
-npm run dev > "$ROOT_DIR/logs/web-dashboard.log" 2>&1 &
+"$NPM_CMD" run dev > "$ROOT_DIR/logs/cd logs" 2>&1 &
 WEB_PID=$!
 echo -e "${GREEN}✓ Web Dashboard started (PID: $WEB_PID)${NC}"
 echo -e "  Logs: logs/web-dashboard.log\n"
