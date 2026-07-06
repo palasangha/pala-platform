@@ -53,7 +53,7 @@ describe('ToolInvoker', () => {
         const calls = (mockConnection.sendMessage as any).mock.calls;
         const lastCall = calls[calls.length - 1][0];
         invoker.handleInvocationResponse(lastCall.id, {
-          data: { output: 'success' },
+          result: { output: 'success' },
         });
       }, 50);
 
@@ -152,7 +152,7 @@ describe('ToolInvoker', () => {
         const calls = (mockConnection.sendMessage as any).mock.calls;
         const lastCall = calls[calls.length - 1][0];
         invoker.handleInvocationResponse(lastCall.id, {
-          data: { output: 'success' },
+          result: { output: 'success' },
         });
       }, 50);
 
@@ -177,7 +177,7 @@ describe('ToolInvoker', () => {
         const calls = (mockConnection.sendMessage as any).mock.calls;
         const lastCall = calls[calls.length - 1][0];
         invoker.handleInvocationResponse(lastCall.id, {
-          data: { output: 'success' },
+          result: { output: 'success' },
         });
       }, 20);
 
@@ -209,7 +209,7 @@ describe('ToolInvoker', () => {
       // Simulate agent response
       setTimeout(() => {
         invoker.handleInvocationResponse(customId, {
-          data: { output: 'success' },
+          result: { output: 'success' },
         });
       }, 50);
 
@@ -251,7 +251,7 @@ describe('ToolInvoker', () => {
       const calls = (mockConnection.sendMessage as any).mock.calls;
       const lastCall = calls[calls.length - 1][0];
       invoker.handleInvocationResponse(lastCall.id, {
-        data: { output: 'success' },
+        result: { output: 'success' },
       });
 
       await promise;
@@ -280,7 +280,7 @@ describe('ToolInvoker', () => {
     it('should ignore responses for unknown invocations', () => {
       // Should not throw
       expect(() => {
-        invoker.handleInvocationResponse('unknown-id', { data: 'test' });
+        invoker.handleInvocationResponse('unknown-id', { result: 'test' });
       }).not.toThrow();
     });
   });
@@ -296,7 +296,7 @@ describe('ToolInvoker', () => {
         const calls = (mockConnection.sendMessage as any).mock.calls;
         const lastCall = calls[calls.length - 1][0];
         invoker.handleInvocationResponse(lastCall.id, {
-          data: { output: 'success' },
+          result: { output: 'success' },
         });
       }, 50);
 
