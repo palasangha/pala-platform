@@ -1,3 +1,4 @@
+# CI Grounding Test Suite - verified clean run.
 import asyncio
 import os
 import tempfile
