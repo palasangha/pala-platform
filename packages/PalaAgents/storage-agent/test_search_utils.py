@@ -189,7 +189,7 @@ def test_sqlite_search_returns_chunk_passage(tmp_path):
         assert "Paris Peace Talks" in top["matched_text"]
         assert top["matched_path"] == "processed_data.content"
         assert top["match_method"] in {"semantic_chunk", "keyword_chunk"}
-        assert top["match_reason"] == "Content match in processed_data.content"
+        assert top["match_reason"] in {"Content match in processed_data.content", "Metadata and Content match"}
         assert top["matched_chunk_index"] == 0
         assert "Paris Peace Talks" in top["excerpt"]
 

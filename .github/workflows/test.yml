@@ -1,0 +1,53 @@
+name: CI Test Suite
+
+on: [push, pull_request]
+
+jobs:
+  test-node:
+    name: Run Node/MCP Server Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9  # Matches workspace lockfile
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run JS/TS Tests
+        run: pnpm test
+
+  test-python:
+    name: Run Python Storage Agent Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+          pip install --upgrade pip setuptools wheel
+          pip install pytest pytest-asyncio
+          pip install -r packages/PalaAgents/storage-agent/requirements.txt
+
+      - name: Run Storage Agent Tests
+        run: |
+          source venv/bin/activate
+          pytest packages/PalaAgents/storage-agent/
