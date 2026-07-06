@@ -15,6 +15,7 @@ import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock, patch
+import pytest
 
 # Ensure local imports resolve when the test is run directly.
 sys.path.append(str(Path(__file__).resolve().parent))
@@ -75,6 +76,7 @@ What questions would a researcher ask about this?"""
         return ""
 
 
+@pytest.mark.asyncio
 async def test_evidence_snippet_preserves_line_window():
     """Test that extracted evidence keeps a readable 6-12 line window."""
     logger.info("\n" + "=" * 80)
@@ -115,6 +117,7 @@ async def test_evidence_snippet_preserves_line_window():
     return True
 
 
+@pytest.mark.asyncio
 async def test_question_generation():
     """Test basic question generation"""
     logger.info("\n" + "="*80)
@@ -186,6 +189,7 @@ async def test_question_generation():
     return True
 
 
+@pytest.mark.asyncio
 async def test_questions_storage():
     """Test storing and retrieving questions"""
     logger.info("\n" + "="*80)
@@ -223,6 +227,7 @@ async def test_questions_storage():
         return True
 
 
+@pytest.mark.asyncio
 async def test_batch_storage():
     """Test batch storing questions"""
     logger.info("\n" + "="*80)
@@ -264,6 +269,7 @@ async def test_batch_storage():
         return True
 
 
+@pytest.mark.asyncio
 async def test_generation_status_tracking():
     """Test tracking generation status"""
     logger.info("\n" + "="*80)
@@ -301,6 +307,7 @@ async def test_generation_status_tracking():
         return True
 
 
+@pytest.mark.asyncio
 async def test_vector_similarity_search():
     """Test vector similarity search"""
     logger.info("\n" + "="*80)
@@ -351,6 +358,7 @@ async def test_vector_similarity_search():
         return True
 
 
+@pytest.mark.asyncio
 async def test_regeneration():
     """Test question regeneration"""
     logger.info("\n" + "="*80)
