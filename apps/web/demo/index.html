@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pala Platform - Job Manager Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: white;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        .controls {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-danger {
+            background: #f56565;
+            color: white;
+        }
+
+        .btn-secondary {
+            background: #cbd5e0;
+            color: #2d3748;
+        }
+
+        .stats {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .stats h2 {
+            margin-bottom: 15px;
+            color: #2d3748;
+        }
+
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+        }
+
+        .stat-item {
+            padding: 15px;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 32px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            text-transform: uppercase;
+            color: #718096;
+        }
+
+        .stat-pending { background: #fef5e7; color: #f39c12; }
+        .stat-progress { background: #e8f4fd; color: #3498db; }
+        .stat-completed { background: #eafaf1; color: #27ae60; }
+        .stat-cancelled { background: #fdedec; color: #e74c3c; }
+        .stat-failed { background: #fdeaea; color: #c0392b; }
+
+        .jobs-container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .jobs-container h2 {
+            margin-bottom: 20px;
+            color: #2d3748;
+        }
+
+        .job-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .job-item {
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 15px;
+            transition: all 0.3s ease;
+        }
+
+        .job-item:hover {
+            border-color: #cbd5e0;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .job-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .job-info {
+            flex: 1;
+        }
+
+        .job-id {
+            font-size: 12px;
+            color: #718096;
+            font-family: monospace;
+        }
+
+        .job-type {
+            font-weight: 600;
+            color: #2d3748;
+            margin-left: 10px;
+        }
+
+        .job-status {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-pending { background: #fef5e7; color: #f39c12; }
+        .status-in_progress { background: #e8f4fd; color: #3498db; }
+        .status-completed { background: #eafaf1; color: #27ae60; }
+        .status-cancelled { background: #fdedec; color: #e74c3c; }
+        .status-failed { background: #fdeaea; color: #c0392b; }
+
+        .job-progress {
+            margin: 10px 0;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e2e8f0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: #667eea;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            font-size: 12px;
+            color: #718096;
+            margin-top: 5px;
+        }
+
+        .job-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #a0aec0;
+        }
+
+        .timestamp {
+            font-size: 11px;
+            color: #a0aec0;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Pala Platform - Job Manager Demo</h1>
+        
+        <div class="controls">
+            <h2 style="margin-bottom: 15px; color: #2d3748;">Controls</h2>
+            <div class="button-group">
+                <button class="btn-primary" onclick="createOCRJob()">Create OCR Job</button>
+                <button class="btn-primary" onclick="createMetadataJob()">Create Metadata Job</button>
+                <button class="btn-primary" onclick="createMultipleJobs()">Create 5 Jobs</button>
+                <button class="btn-secondary" onclick="refreshJobs()">Refresh</button>
+                <button class="btn-danger" onclick="clearHistory()">Clear History</button>
+            </div>
+        </div>
+
+        <div class="stats">
+            <h2>Statistics</h2>
+            <div class="stat-grid">
+                <div class="stat-item stat-pending">
+                    <div class="stat-value" id="stat-pending">0</div>
+                    <div class="stat-label">Pending</div>
+                </div>
+                <div class="stat-item stat-progress">
+                    <div class="stat-value" id="stat-progress">0</div>
+                    <div class="stat-label">In Progress</div>
+                </div>
+                <div class="stat-item stat-completed">
+                    <div class="stat-value" id="stat-completed">0</div>
+                    <div class="stat-label">Completed</div>
+                </div>
+                <div class="stat-item stat-cancelled">
+                    <div class="stat-value" id="stat-cancelled">0</div>
+                    <div class="stat-label">Cancelled</div>
+                </div>
+                <div class="stat-item stat-failed">
+                    <div class="stat-value" id="stat-failed">0</div>
+                    <div class="stat-label">Failed</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="jobs-container">
+            <h2>Job History</h2>
+            <div class="job-list" id="job-list">
+                <div class="empty-state">No jobs yet. Create some jobs to get started!</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="job-manager-client.js"></script>
+</body>
+</html>
